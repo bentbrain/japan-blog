@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jp-bent-build",
+  "account_id": "86ff820ef99c8f2a035eb3ab03ce095a",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jp-bent-build",
+      "database_id": "494e1afb-5e5f-4268-b07d-f298abdc2a7d",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA",
+      "bucket_name": "jp-bent-build-media",
+    },
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "SESSION",
+      "id": "60dafa46ce954aa090382e6729e8f1cb",
+    },
+  ],
+  "triggers": {
+    "crons": ["* * * * *"],
+  },
+  "observability": {
+    "enabled": true,
+  },
+  "routes": [
+    {
+      "pattern": "jp.bent.build",
+      "custom_domain": true,
+    },
+  ],
+}

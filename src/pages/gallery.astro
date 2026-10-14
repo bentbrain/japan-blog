@@ -1,0 +1,54 @@
+---
+import Site from '../layouts/Site.astro';
+import { buttonVariants } from '../components/ui/button';
+import MediaTile from '../components/MediaTile.astro';
+import ShopAd from '../components/ShopAd.astro';
+import Pixel from '../components/Pixel.astro';
+import { tripMedia } from '../lib/content';
+import { categories } from '../lib/model';
+const category = Astro.url.searchParams.get('category') || 'all';
+const allMedia = await tripMedia();
+const filterCategories = [
+  ...new Set([...categories, ...allMedia.flatMap((item) => item.categories)]),
+];
+const media = allMedia.filter(
+  (item) => category === 'all' || item.categories.includes(category),
+);
+---
+
+<Site title="gallery / jp.bent.build">
+  <nav
+    class="filters mb-[18px] flex flex-wrap gap-2 [&_a]:inline-flex [&_a]:items-center [&_a]:gap-[7px] [&_a]:border [&_a]:px-3 [&_a]:py-2 [&_a]:no-underline [&_a[aria-current]]:bg-primary [&_a[aria-current]]:text-primary-foreground"
+    aria-label="Media categories"
+    data-feedback-id="gallery-filters"
+  >
+    {['all', ...filterCategories].map((name) => (
+      <a
+        class={buttonVariants({
+          variant: category === name ? 'default' : 'outline',
+        })}
+        href={
+          name === 'all'
+            ? '/gallery'
+            : `/gallery?category=${encodeURIComponent(name)}`
+        }
+        aria-current={category === name ? 'page' : undefined}
+      >
+        {['food', 'shopping', 'landscape', 'beer'].includes(name) && (
+          <Pixel name={name} />
+        )}
+        {name}
+      </a>
+    ))}
+  </nav>
+  <div
+    class="gallery-grid grid grid-cols-1 gap-[7px] min-[601px]:grid-cols-2 min-[901px]:grid-cols-3"
+    data-feedback-id="gallery-grid"
+  >
+    {media.map((item) => (
+      <MediaTile item={item} />
+    ))}
+  </div>
+  {!media.length && <p>no photos yet</p>}
+  <ShopAd />
+</Site>

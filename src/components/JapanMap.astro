@@ -1,0 +1,48 @@
+---
+import { geoMercator, geoPath } from 'd3-geo';
+import japan from '../lib/japan.json';
+import { z } from 'zod';
+import { posterUrl, type TripMedia } from '../lib/model';
+interface Props {
+  media: TripMedia[];
+}
+const { media } = Astro.props;
+const geometry = z
+  .object({
+    type: z.literal('MultiPolygon'),
+    coordinates: z.array(z.array(z.array(z.array(z.number())))),
+  })
+  .parse(japan.geometry);
+const projection = geoMercator().fitExtent(
+  [
+    [105, 20],
+    [650, 420],
+  ],
+  geometry,
+);
+const land = geoPath(projection)(geometry);
+const groups: { x: number; y: number; items: TripMedia[] }[] = [];
+for (const item of media) {
+  const point = projection([item.longitude, item.latitude]);
+  if (!point) continue;
+  const [x = 0, y = 0] = point;
+  const group = groups.find((g) => Math.hypot(g.x - x, g.y - y) < 25);
+  if (group) group.items.push(item);
+  else groups.push({ x, y, items: [item] });
+}
+
+import { JapanMapView } from './JapanMapView';
+const mapGroups = groups.map((group) => ({
+  x: group.x,
+  y: group.y,
+  items: group.items.map((item) => ({
+    id: item.id,
+    slug: item.slug,
+    title: item.title,
+    place: item.place,
+    src: posterUrl(item),
+  })),
+}));
+---
+
+<JapanMapView land={land || ''} groups={mapGroups} client:load />

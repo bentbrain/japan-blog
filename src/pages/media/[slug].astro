@@ -1,0 +1,76 @@
+---
+import Site from '../../layouts/Site.astro';
+import { buttonVariants } from '../../components/ui/button';
+import ShopAd from '../../components/ShopAd.astro';
+import { tripMedia } from '../../lib/content';
+import { mediaUrl, formatDay, tokyoDay } from '../../lib/model';
+const media = await tripMedia();
+const index = media.findIndex(
+    (item) => item.slug === Astro.params.slug || item.id === Astro.params.slug,
+  ),
+  item = media[index];
+if (!item) return Astro.redirect('/404');
+const previous = media[(index - 1 + media.length) % media.length],
+  next = media[(index + 1) % media.length];
+---
+
+<Site title={`${item.title} / jp.bent.build`}>
+  <section
+    class="viewer mx-auto max-w-[1100px] [&>img]:h-[min(70vh,800px)] [&>img]:w-full [&>img]:object-contain [&>video]:h-[min(70vh,800px)] [&>video]:w-full [&>video]:object-contain"
+    data-feedback-id={`viewer-${item.id}`}
+  >
+    <div class="viewer-toolbar mb-5 flex justify-between gap-3">
+      <span>
+        {index + 1} / {media.length}
+      </span>
+      <a
+        class={buttonVariants({ variant: 'link', className: 'p-0 h-auto' })}
+        href="/gallery"
+      >
+        CLOSE ×
+      </a>
+    </div>
+    {item.kind === 'video' ? (
+      <video
+        src={mediaUrl(item)}
+        controls
+        playsinline
+        preload="metadata"
+        aria-label={item.title}
+      ></video>
+    ) : (
+      <img src={mediaUrl(item)} alt={item.title} />
+    )}
+    <div class="viewer-toolbar mb-5 flex justify-between gap-3">
+      {previous && (
+        <a
+          class={buttonVariants({ variant: 'link', className: 'p-0 h-auto' })}
+          href={`/media/${previous.slug || previous.id}`}
+        >
+          ← PREVIOUS
+        </a>
+      )}
+      {next && (
+        <a
+          class={buttonVariants({ variant: 'link', className: 'p-0 h-auto' })}
+          href={`/media/${next.slug || next.id}`}
+        >
+          NEXT →
+        </a>
+      )}
+    </div>
+    <div class="media-details mt-4 flex flex-wrap justify-between gap-4">
+      <span>
+        {item.place} / {formatDay(tokyoDay(item.captured_at))} /{' '}
+        {item.categories.join(', ')}
+      </span>
+      <a
+        class={buttonVariants({ variant: 'link', className: 'p-0 h-auto' })}
+        href={`/?media=${item.id}#japan-map`}
+      >
+        VIEW ON MAP
+      </a>
+    </div>
+    <ShopAd />
+  </section>
+</Site>
