@@ -133,6 +133,17 @@ test('shared layout installs the toolbar once and keeps owner content private', 
   await expect(embed).toHaveCount(1);
   await expect(page.locator('main')).toHaveAttribute('data-feedback-private');
   await expect(page.locator('main')).toHaveAttribute('data-feedback-redact');
+  await page.getByRole('button', { name: 'LINK', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  expect(
+    await dialog.evaluate((element) => Boolean(element.closest('main'))),
+  ).toBe(false);
+  expect(
+    await dialog.evaluate((element) =>
+      Boolean(element.closest('[data-feedback-redact]')),
+    ),
+  ).toBe(true);
 });
 test('mouse dragging advances the mobile post carousel', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
