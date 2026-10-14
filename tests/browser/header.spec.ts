@@ -29,51 +29,139 @@ for (const width of [390, 1280, 1778]) {
 }
 
 for (const width of [390, 1280]) {
-  test(`beer icon matches the lowercase x-height and baseline at ${String(width)}px`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.goto('/');
-    await page.evaluate(() => document.fonts.ready);
-    const metrics = await page.locator('.beer').evaluate((counter) => {
-      const icon = counter.querySelector('svg');
-      const path = counter.querySelector('path');
-      const label = counter.querySelector('span');
-      if (
-        !(icon instanceof SVGSVGElement) ||
-        !(path instanceof SVGGraphicsElement) ||
-        !label
-      )
-        throw new Error('Beer icon and label required');
-      const style = getComputedStyle(label);
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('Font measurement context required');
-      context.font = style.font;
-      const x = context.measureText('x');
-      const probe = document.createElement('span');
-      probe.style.cssText = 'display:inline-block;width:0;height:0';
-      label.append(probe);
-      const baseline = probe.getBoundingClientRect().bottom;
-      probe.remove();
-      const bounds = path.getBBox();
-      const transform = path.getScreenCTM();
-      if (!transform) throw new Error('Rendered SVG transform required');
-      const top = new DOMPoint(bounds.x, bounds.y).matrixTransform(transform).y;
-      const bottom = new DOMPoint(
-        bounds.x,
-        bounds.y + bounds.height,
-      ).matrixTransform(transform).y;
-      return {
-        height: bottom - top,
-        xHeight: x.actualBoundingBoxAscent,
-        bottom,
-        baseline,
-      };
-    });
-    expect(Math.abs(metrics.height - metrics.xHeight)).toBeLessThanOrEqual(1);
-    expect(Math.abs(metrics.bottom - metrics.baseline)).toBeLessThanOrEqual(1);
-  });
+  for (const fontSize of [16, 32]) {
+    for (const colorScheme of ['light', 'dark']) {
+      test(`header icons match tall glyphs at ${String(width)}px, ${String(fontSize)}px default text, ${colorScheme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 844 });
+        await page.emulateMedia({
+          colorScheme: colorScheme === 'dark' ? 'dark' : 'light',
+        });
+        await page.goto('/');
+        await page.evaluate(async (size) => {
+          document.documentElement.style.fontSize = `${String(size)}px`;
+          await document.fonts.ready;
+        }, fontSize);
+        const metrics = await page
+          .locator('.site-header')
+          .evaluate(async (header) => {
+            const icon = header.querySelector('.beer svg');
+            const path = header.querySelector('.beer path');
+            const label = header.querySelector('.beer span');
+            const brand = header.querySelector('.brand');
+            const flag = brand?.querySelector('img');
+            if (
+              !(icon instanceof SVGSVGElement) ||
+              !(path instanceof SVGGraphicsElement) ||
+              !(flag instanceof HTMLImageElement) ||
+              !label ||
+              !brand
+            )
+              throw new Error('Header icons and labels required');
+            const style = getComputedStyle(label);
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error('Font measurement context required');
+            context.font = style.font;
+            const glyphs = ['0', 'I'].map((glyph) => {
+              const text = context.measureText(glyph);
+              return {
+                ascent: text.actualBoundingBoxAscent,
+                descent: text.actualBoundingBoxDescent,
+              };
+            });
+            const baseline = (element: Element) => {
+              const probe = document.createElement('span');
+              probe.style.cssText = 'display:inline-block;width:0;height:0';
+              element.append(probe);
+              const value = probe.getBoundingClientRect().bottom;
+              probe.remove();
+              return value;
+            };
+            const beerBaseline = baseline(label);
+            // A flex item's baseline is also its last line's text baseline.
+            const brandText = document.createElement('span');
+            brandText.textContent = 'I';
+            brand.append(brandText);
+            const brandBaseline = baseline(brandText);
+            brandText.remove();
+            const bounds = path.getBBox();
+            const transform = path.getScreenCTM();
+            if (!transform) throw new Error('Rendered SVG transform required');
+            const beerTop = new DOMPoint(bounds.x, bounds.y).matrixTransform(
+              transform,
+            ).y;
+            const beerBottom = new DOMPoint(
+              bounds.x,
+              bounds.y + bounds.height,
+            ).matrixTransform(transform).y;
+            await flag.decode();
+            const box = flag.getBoundingClientRect();
+            // Rasterize the actual asset, including transparent padding and stroke.
+            const scale = 16;
+            canvas.width = Math.ceil(box.width * scale);
+            canvas.height = Math.ceil(box.height * scale);
+            context.drawImage(
+              flag,
+              0,
+              0,
+              box.width * scale,
+              box.height * scale,
+            );
+            const pixels = context.getImageData(
+              0,
+              0,
+              canvas.width,
+              canvas.height,
+            ).data;
+            let first = canvas.height;
+            let last = -1;
+            for (let y = 0; y < canvas.height; y++) {
+              for (let x = 0; x < canvas.width; x++) {
+                if ((pixels[(y * canvas.width + x) * 4 + 3] ?? 0) > 127) {
+                  first = Math.min(first, y);
+                  last = Math.max(last, y);
+                }
+              }
+            }
+            if (last < 0) throw new Error('Flag must paint visible pixels');
+            return {
+              glyphs,
+              beer: {
+                height: beerBottom - beerTop,
+                bottom: beerBottom,
+                baseline: beerBaseline,
+              },
+              flag: {
+                height: (last + 1 - first) / scale,
+                bottom: box.top + (last + 1) / scale,
+                baseline: brandBaseline,
+              },
+            };
+          });
+        for (const [name, icon] of Object.entries({
+          beer: metrics.beer,
+          flag: metrics.flag,
+        })) {
+          for (const glyph of metrics.glyphs) {
+            expect
+              .soft(
+                Math.abs(icon.height - glyph.ascent - glyph.descent),
+                `${name} painted height: ${JSON.stringify(metrics)}`,
+              )
+              .toBeLessThanOrEqual((0.5 * fontSize) / 16);
+          }
+          expect
+            .soft(
+              Math.abs(icon.bottom - icon.baseline),
+              `${name} baseline: ${JSON.stringify(metrics)}`,
+            )
+            .toBeLessThanOrEqual(1);
+        }
+      });
+    }
+  }
 }
 
 for (const owner of [false, true]) {
