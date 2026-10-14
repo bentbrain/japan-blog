@@ -1,7 +1,6 @@
 ---
 import '../styles/globals.css';
 import Pixel from '../components/Pixel.astro';
-import { Button } from '../components/ui/button';
 import { beerCounts } from '../lib/content';
 interface Props {
   title?: string;
@@ -27,11 +26,11 @@ const validFeedback =
     {owner && <meta name="robots" content="noindex" />}
     <script is:inline>
       try {
-        document.documentElement.dataset.theme =
-          localStorage.getItem('jp-theme') ||
-          (matchMedia('(prefers-color-scheme: dark)').matches
-            ? 'dark'
-            : 'light');
+        document.documentElement.dataset.theme = matchMedia(
+          '(prefers-color-scheme: dark)',
+        ).matches
+          ? 'dark'
+          : 'light';
       } catch {}
     </script>
   </head>
@@ -81,12 +80,6 @@ const validFeedback =
     <main class="mx-auto max-w-[1400px] p-4 min-[601px]:p-6">
       <slot />
     </main>
-    <footer class="flex items-center justify-between border-t px-4 py-4 min-[601px]:px-6">
-      <a href={owner ? '/' : '/owner'}>{owner ? 'journal' : 'admin'}</a>
-      <Button variant="ghost" id="theme-toggle" aria-label="Toggle dark mode">
-        ◐
-      </Button>
-    </footer>
     {validFeedback && (
       <script
         is:inline
@@ -95,15 +88,5 @@ const validFeedback =
         data-project={feedbackProject}
       ></script>
     )}
-    <script>
-      document.querySelector('#theme-toggle')?.addEventListener('click', () => {
-        const dark =
-          document.documentElement.dataset.theme === 'dark' ||
-          (document.documentElement.dataset.theme !== 'light' &&
-            matchMedia('(prefers-color-scheme: dark)').matches);
-        document.documentElement.dataset.theme = dark ? 'light' : 'dark';
-        localStorage.setItem('jp-theme', dark ? 'light' : 'dark');
-      });
-    </script>
   </body>
 </html>

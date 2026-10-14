@@ -51,7 +51,8 @@ export function JapanMapView({
         role="group"
       >
         <path
-          className="fill-white stroke-[#0647ff] [stroke-width:1.2]"
+          className="fill-white stroke-[#0647ff] [stroke-width:0.8]"
+          strokeLinejoin="round"
           d={land}
         />
         {groups.map((group, groupIndex) => {
