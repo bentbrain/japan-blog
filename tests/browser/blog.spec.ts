@@ -1,10 +1,113 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { Input, BufferSource, ALL_FORMATS } from 'mediabunny';
 import { z } from 'zod';
 const run = promisify(execFile);
+
+async function expectSystemTheme(page: Page, scheme: 'light' | 'dark') {
+  await expect(page.locator('body')).toHaveCSS(
+    'background-color',
+    scheme === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)',
+  );
+  await expect(page.locator('body')).toHaveCSS(
+    'color',
+    scheme === 'dark' ? 'rgb(40, 112, 255)' : 'rgb(6, 71, 255)',
+  );
+  await expect(page.locator('html')).toHaveCSS('color-scheme', scheme);
+  if (new URL(page.url()).pathname === '/') {
+    await expect(page.locator('#japan-map svg > path')).toHaveCSS(
+      'fill',
+      scheme === 'dark' ? 'rgb(11, 19, 41)' : 'rgb(255, 255, 255)',
+    );
+  }
+}
+
+const systemThemes: ('light' | 'dark')[] = ['light', 'dark'];
+for (const initial of systemThemes) {
+  test(`blog follows initial ${initial} and live OS theme changes on every route`, async ({
+    page,
+  }) => {
+    await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+    await page.waitForURL('**/owner');
+    const editRoute = await page
+      .locator('a[href^="/owner/posts/"]:not([href$="/new"])')
+      .first()
+      .getAttribute('href');
+    if (!editRoute) throw new Error('Seeded post editor route required');
+    const opposite = initial === 'dark' ? 'light' : 'dark';
+    const liveThemes: ('light' | 'dark')[] = [opposite, initial];
+    for (const route of [
+      '/',
+      '/gallery',
+      '/posts/tokyo-after-dark',
+      '/media/demo-0',
+      '/404',
+      '/owner',
+      '/owner/media',
+      '/owner/export',
+      '/owner/posts/new',
+      editRoute,
+    ]) {
+      await page.emulateMedia({ colorScheme: initial });
+      const response = await page.goto(route);
+      expect(response?.status()).toBe(route === '/404' ? 404 : 200);
+      expect(new URL(page.url()).pathname).toBe(route);
+      await expectSystemTheme(page, initial);
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+      for (const scheme of liveThemes) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await expectSystemTheme(page, scheme);
+        if (route === '/owner/posts/new') {
+          await expect(page.getByLabel('title', { exact: true })).toHaveCSS(
+            'color-scheme',
+            scheme,
+          );
+        }
+        expect(await page.evaluate(() => performance.timeOrigin)).toBe(
+          timeOrigin,
+        );
+      }
+    }
+  });
+}
+
+test('public themes follow the OS with JavaScript disabled', async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    baseURL,
+    javaScriptEnabled: false,
+    colorScheme: 'dark',
+  });
+  try {
+    const page = await context.newPage();
+    for (const route of [
+      '/',
+      '/gallery',
+      '/posts/tokyo-after-dark',
+      '/media/demo-0',
+      '/404',
+    ]) {
+      await page.emulateMedia({ colorScheme: 'dark' });
+      const response = await page.goto(route);
+      expect(response?.status()).toBe(route === '/404' ? 404 : 200);
+      expect(new URL(page.url()).pathname).toBe(route);
+      await expectSystemTheme(page, 'dark');
+      const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+      await page.emulateMedia({ colorScheme: 'light' });
+      await expectSystemTheme(page, 'light');
+      expect(await page.evaluate(() => performance.timeOrigin)).toBe(
+        timeOrigin,
+      );
+    }
+  } finally {
+    await context.close();
+  }
+});
+
 test.beforeEach(async ({ page }) => {
   await page.route('https://toolbar.bent.build/embed.js', (route) =>
     route.fulfill({ contentType: 'application/javascript', body: '' }),
