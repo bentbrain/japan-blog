@@ -34,17 +34,45 @@ async function request(
   method = body === undefined ? 'GET' : 'POST',
   signed = true,
 ) {
-  return fetch(base + path, {
-    method,
-    redirect: 'manual',
-    headers: {
-      Origin: base,
-      'X-EmDash-Request': '1',
-      ...(signed ? { Cookie: cookie } : {}),
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const retrySafe =
+    method === 'GET' ||
+    /\/_emdash\/api\/(setup\/dev-bypass|auth\/(dev-bypass|invite(?:\/|$)))/.test(
+      path,
+    );
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(base + path, {
+      method,
+      redirect: 'manual',
+      headers: {
+        Origin: base,
+        'X-EmDash-Request': '1',
+        ...(signed ? { Cookie: cookie } : {}),
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const bytes = await response.arrayBuffer();
+    const text = new TextDecoder().decode(bytes);
+    // Dependency optimization can restart workerd while the Vite proxy is
+    // forwarding a request. Retry only its identifiable dispatch error, only
+    // for reads and idempotent setup or denied invitation probes. Application
+    // errors and content mutations are never retried.
+    if (
+      retrySafe &&
+      attempt < 3 &&
+      response.status === 500 &&
+      text.includes('fetch failed') &&
+      text.includes('_Miniflare.dispatchFetch')
+    ) {
+      console.log(`Cloudflare dev proxy reconnected for ${method} ${path}`);
+      await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+      continue;
+    }
+    return new Response([204, 304].includes(response.status) ? null : bytes, {
+      status: response.status,
+      headers: response.headers,
+    });
+  }
 }
 async function publish(collection: string, id: string) {
   const current = item.parse(
@@ -84,6 +112,19 @@ try {
   assert.equal(login.status, 200, loginBody);
   cookie = login.headers.get('set-cookie')?.split(';')[0] || '';
   assert.ok(cookie, 'Development session missing');
+  // Import endpoint modules through safe reads before stateful requests, so
+  // dependency optimization does not interrupt an upload or content save.
+  for (const path of [
+    '/_emdash/api/media',
+    '/api/trip/upload',
+    '/api/trip/posts',
+  ]) {
+    const warmed = await request(path, undefined, 'GET');
+    assert.ok(
+      warmed.status < 500,
+      `Could not initialize ${path}: ${await warmed.text()}\n${logs}`,
+    );
+  }
   for (const { collection, field } of [
     { collection: 'posts', field: 'day' },
     { collection: 'beers', field: 'day' },
@@ -122,9 +163,10 @@ try {
     '/_emdash/api/auth/invite/complete',
   ]) {
     assert.equal((await request(path, {}, 'POST')).status, 403);
+    const anonymous = await request(path, {}, 'POST', false);
     assert.ok(
-      [401, 403].includes((await request(path, {}, 'POST', false)).status),
-      `Invitation endpoint ${path} accepted an anonymous request`,
+      [401, 403].includes(anonymous.status),
+      `Invitation endpoint ${path}: expected denial, received ${String(anonymous.status)} ${await anonymous.text()}\n${logs}`,
     );
   }
   const photo = await readFile('public/demo/tokyo.jpg'),
@@ -256,6 +298,67 @@ try {
   assert.equal(ranged.status, 206);
   assert.match(ranged.headers.get('Cache-Control') || '', /no-store/);
   assert.equal((await ranged.arrayBuffer()).byteLength, 100);
+  const renameRevision = item.parse(
+    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+  ).data._rev;
+  const renamed = await request(
+    `/_emdash/api/content/media_items/${id}`,
+    { slug: `renamed-${crypto.randomUUID()}`, data: {}, _rev: renameRevision },
+    'PUT',
+  );
+  assert.equal(renamed.status, 200, await renamed.text());
+  assert.equal((await publish('media_items', id)).status, 200);
+  assert.equal(
+    (await request(draftAsset.url, undefined, 'GET', false)).status,
+    200,
+    'Renamed media lost file access',
+  );
+
+  const nativeForm = new FormData();
+  nativeForm.set(
+    'file',
+    new File([photo], 'native-photo.jpg', { type: 'image/jpeg' }),
+  );
+  const nativeUpload = await fetch(base + '/_emdash/api/media', {
+    method: 'POST',
+    headers: { Cookie: cookie, Origin: base, 'X-EmDash-Request': '1' },
+    body: nativeForm,
+  });
+  const nativeUploaded = z
+    .object({
+      data: z.object({
+        item: z.object({
+          id: z.string(),
+          url: z.string(),
+          width: z.number(),
+          height: z.number(),
+        }),
+      }),
+    })
+    .parse(await nativeUpload.json()).data.item;
+  assert.equal(nativeUpload.status, 201);
+  assert.equal(
+    (await request(nativeUploaded.url, undefined, 'GET', false)).status,
+    404,
+  );
+  const nativePhoto = await request('/_emdash/api/content/media_items', {
+    slug: `native-${crypto.randomUUID()}`,
+    data: {
+      ...metadata,
+      title: 'Native photo',
+      kind: 'photo',
+      asset: { id: nativeUploaded.id },
+      poster: { id: nativeUploaded.id },
+    },
+  });
+  const nativePhotoId = item.parse(await nativePhoto.json()).data.item.id;
+  assert.equal((await publish('media_items', nativePhotoId)).status, 200);
+  assert.equal(
+    (await request(nativeUploaded.url, undefined, 'GET', false)).status,
+    200,
+    'Native published media file denied',
+  );
+
   const beerSaved = await request('/api/trip/beers', {
     day: '2099-10-15',
     count: 3,
@@ -344,6 +447,33 @@ try {
           type: 'videoBlock',
           attrs: { src: draftAsset.url, mediaId: asset.id, provider: 'local' },
         },
+        {
+          type: 'image',
+          attrs: {
+            src: nativeUploaded.url,
+            mediaId: nativeUploaded.id,
+            provider: 'local',
+            width: nativeUploaded.width,
+            height: nativeUploaded.height,
+            caption: 'Native image',
+          },
+        },
+        {
+          type: 'gallery',
+          attrs: {
+            columns: 2,
+            images: [
+              {
+                _type: 'image',
+                _key: 'native-photo',
+                asset: { _ref: nativeUploaded.id, url: nativeUploaded.url },
+                width: nativeUploaded.width,
+                height: nativeUploaded.height,
+                alt: 'Native gallery image',
+              },
+            ],
+          },
+        },
       ],
     },
   });
@@ -355,6 +485,11 @@ try {
   const home = await (await request('/', undefined, 'GET', false)).text();
   assert.ok(home.includes('Full post body verification'));
   assert.ok(home.includes('Integration video'));
+  assert.ok(home.includes('Native gallery image'));
+  assert.ok(
+    !/src="[^"]*\/_image/.test(home),
+    'Dimensioned content uses blocked image transforms',
+  );
   assert.ok(
     (
       await (

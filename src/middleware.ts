@@ -47,11 +47,21 @@ export const onRequest = defineMiddleware(async (context, next) => {
     const owner = context.locals.user && context.locals.user.role >= 50;
     if (!owner) {
       const key = mediaFile[2] || '';
-      const assetId = mediaFile[1] === 'asset' ? key.split('/')[0] : undefined;
-      const tripSlug =
-        mediaFile[1] === 'file' && key.startsWith('trip/')
-          ? key.split('/')[1]
-          : undefined;
+      const assetId =
+        mediaFile[1] === 'asset'
+          ? key.split('/')[0]
+          : (
+              await context.locals.emdash.db
+                .selectFrom('media')
+                .select('id')
+                .where('storage_key', '=', key)
+                .executeTakeFirst()
+            )?.id;
+      if (!assetId)
+        return new Response('Not found', {
+          status: 404,
+          headers: { 'Cache-Control': 'private, no-store' },
+        });
       let allowed = false;
       let cursor: string | undefined;
       do {
@@ -61,7 +71,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
             status: 'published',
             limit: 100,
             cursor,
-            q: tripSlug,
           },
         );
         if (!result.success) break;
@@ -69,25 +78,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
           .object({
             items: z.array(
               z.object({
-                slug: z.string().nullable(),
                 data: z.object({
                   asset: z.object({ id: z.string() }).nullish(),
                   poster: z.object({ id: z.string() }).nullish(),
-                  source_url: z.string().nullish(),
-                  poster_url: z.string().nullish(),
                 }),
               }),
             ),
             nextCursor: z.string().nullish(),
           })
           .parse(result.data);
-        allowed = page.items.some(({ slug, data }) =>
-          assetId
-            ? data.asset?.id === assetId || data.poster?.id === assetId
-            : slug === tripSlug &&
-              [data.source_url, data.poster_url].includes(
-                `/_emdash/api/media/file/${key}`,
-              ),
+        allowed = page.items.some(
+          ({ data }) =>
+            data.asset?.id === assetId || data.poster?.id === assetId,
         );
         cursor = page.nextCursor ?? undefined;
       } while (!allowed && cursor);

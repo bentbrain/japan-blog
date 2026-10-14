@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { getSchema } from '@tiptap/core';
 import { editorExtensions } from '../../../lib/editor-extensions';
 import { portableTextToProsemirror, prosemirrorToPortableText } from 'emdash';
-import { postInputSchema } from '../../../lib/editor-model';
+import { editorPostSchema, postInputSchema } from '../../../lib/editor-model';
+import { preservesContent } from '../../../lib/editor-conversion';
 import { publishItem, savedItemSchema } from '../../../lib/publish';
 const portableBlocks = z.array(
   z.looseObject({ _type: z.string(), _key: z.string() }),
@@ -25,17 +26,19 @@ export const GET: APIRoute = async ({ locals, url }) => {
     .parse(result.data.item.data);
   let document;
   try {
+    document = portableTextToProsemirror(data.content || [], {
+      preserveIdentity: true,
+    });
+    const reconstructed = getSchema(editorExtensions).nodeFromJSON(document);
+    reconstructed.check();
+    document = editorPostSchema.shape.data.shape.document.parse(
+      reconstructed.toJSON(),
+    );
     if (
-      (data.content || []).some(
-        (block) =>
-          !['block', 'image', 'video', 'gallery', 'code', 'break'].includes(
-            block._type,
-          ),
-      )
+      data.content?.length &&
+      !preservesContent(data.content, prosemirrorToPortableText(document))
     )
-      throw new Error('Unsupported block');
-    document = portableTextToProsemirror(data.content || []);
-    getSchema(editorExtensions).nodeFromJSON(document).check();
+      throw new Error('Lossy conversion');
   } catch {
     return Response.json(
       {

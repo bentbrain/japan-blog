@@ -5,6 +5,7 @@ import { portableTextToProsemirror, prosemirrorToPortableText } from 'emdash';
 import { z } from 'zod';
 import { editorExtensions } from '../src/lib/editor-extensions';
 import { editorPostSchema } from '../src/lib/editor-model';
+import { preservesContent } from '../src/lib/editor-conversion';
 
 void test('native image metadata and gallery survive the actual editor schema', () => {
   const image = {
@@ -51,5 +52,51 @@ void test('native image metadata and gallery survive the actual editor schema', 
   assert.deepEqual(
     galleryFields.parse(restored[1]),
     galleryFields.parse(gallery),
+  );
+});
+
+void test('native video shapes unsupported by the toolbar retain their complete block', () => {
+  const nativeVideo = {
+    _type: 'video',
+    _key: 'video-extra',
+    asset: { _ref: 'asset-1', url: '/video.mp4' },
+    poster: '/poster.jpg',
+    caption: 'A short clip',
+  };
+  const converted = portableTextToProsemirror([nativeVideo], {
+    preserveIdentity: true,
+  });
+  const node = getSchema(editorExtensions).nodeFromJSON(converted);
+  node.check();
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  assert.deepEqual(prosemirrorToPortableText(document), [nativeVideo]);
+});
+
+void test('editing detects ignored properties inside otherwise supported gallery blocks', () => {
+  const gallery = {
+    _type: 'gallery',
+    _key: 'custom-gallery',
+    columns: 2,
+    layout: 'custom-layout',
+    images: [],
+  };
+  const node = getSchema(editorExtensions).nodeFromJSON(
+    portableTextToProsemirror([gallery], { preserveIdentity: true }),
+  );
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  assert.equal(
+    preservesContent([gallery], prosemirrorToPortableText(document)),
+    false,
+  );
+  assert.equal(
+    preservesContent(
+      [{ asset: { _ref: 'photo', _type: 'reference', provider: 'local' } }],
+      [{ asset: { _ref: 'photo' } }],
+    ),
+    true,
   );
 });

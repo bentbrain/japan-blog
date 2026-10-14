@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from '@tiptap/core';
+import { Extension, Mark, Node, mergeAttributes } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { z } from 'zod';
@@ -82,4 +82,81 @@ const TripGallery = Node.create({
     ];
   },
 });
-export const editorExtensions = [StarterKit, TripImage, TripVideo, TripGallery];
+// EmDash converter identity attributes stay in the document, without importing
+// its server entrypoint into the browser editor.
+const ContentIdentity = Extension.create({
+  name: 'tripContentIdentity',
+  addGlobalAttributes() {
+    return [
+      {
+        types: [
+          'paragraph',
+          'heading',
+          'blockquote',
+          'codeBlock',
+          'image',
+          'videoBlock',
+          'horizontalRule',
+          'gallery',
+          'emdashPortableTextBlock',
+        ],
+        attributes: {
+          emdashPortableTextKey: { default: null, rendered: false },
+        },
+      },
+    ];
+  },
+});
+const SpanIdentity = Mark.create({
+  name: 'emdashPortableTextSpan',
+  inclusive: false,
+  spanning: false,
+  addAttributes() {
+    return {
+      key: { default: null, rendered: false },
+      markDefs: { default: [], rendered: false },
+    };
+  },
+  parseHTML() {
+    return [];
+  },
+  renderHTML() {
+    return ['span', 0];
+  },
+});
+const SavedBlock = Node.create({
+  name: 'emdashPortableTextBlock',
+  group: 'block',
+  atom: true,
+  draggable: true,
+  addAttributes() {
+    return { emdashPortableTextBlock: { default: null, rendered: false } };
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-saved-block]' }];
+  },
+  renderHTML({ node }) {
+    const value = z
+      .object({ _type: z.string() })
+      .safeParse(node.attrs.emdashPortableTextBlock);
+    const label = value.success ? `${value.data._type} block` : 'saved block';
+    return [
+      'div',
+      {
+        'data-saved-block': '',
+        contenteditable: 'false',
+        class: 'my-4 border p-3 text-xs',
+      },
+      label,
+    ];
+  },
+});
+export const editorExtensions = [
+  StarterKit,
+  TripImage,
+  TripVideo,
+  TripGallery,
+  ContentIdentity,
+  SpanIdentity,
+  SavedBlock,
+];

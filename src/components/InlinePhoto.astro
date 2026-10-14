@@ -1,0 +1,57 @@
+---
+import { z } from 'zod';
+import { mediaUrl } from '../lib/model';
+interface Props {
+  node: unknown;
+}
+const parsed = z
+  .object({
+    asset: z.object({ _ref: z.string().optional(), id: z.string().optional() }),
+    alt: z.string().optional(),
+    caption: z.string().optional(),
+    link: z
+      .object({ href: z.string(), blank: z.boolean().optional() })
+      .optional(),
+  })
+  .safeParse(Astro.props.node);
+const node = parsed.success ? parsed.data : undefined;
+const reference = node?.asset._ref || node?.asset.id;
+const item = Astro.locals.publishedTripMedia?.find(
+  (media) => media.asset?.id === reference && media.kind === 'photo',
+);
+let href: string | undefined;
+if (node?.link) {
+  try {
+    const target = new URL(node.link.href, Astro.url);
+    if (['http:', 'https:'].includes(target.protocol)) href = node.link.href;
+  } catch {}
+}
+const blank = node?.link?.blank && !href?.startsWith('#');
+---
+
+{item && (
+  <figure class="my-4 space-y-2">
+    {href ? (
+      <a
+        href={href}
+        target={blank ? '_blank' : undefined}
+        rel={blank ? 'noopener noreferrer' : undefined}
+      >
+        <img
+          src={mediaUrl(item)}
+          alt={node?.alt || item.title}
+          loading="lazy"
+          class="h-auto w-full"
+        />
+      </a>
+    ) : (
+      <img
+        src={mediaUrl(item)}
+        alt={node?.alt || item.title}
+        loading="lazy"
+        class="h-auto w-full"
+      />
+    )}
+    {node?.caption && <figcaption class="text-xs">{node.caption}</figcaption>}
+  </figure>
+)}

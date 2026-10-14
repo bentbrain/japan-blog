@@ -10,6 +10,7 @@ export default defineConfig({
   output: 'server',
   vite: { plugins: [tailwindcss()] },
   adapter: cloudflare({
+    imageService: 'passthrough',
     persistState: process.env.TEST_EPHEMERAL === '1' ? false : undefined,
   }),
   integrations: [
@@ -18,6 +19,7 @@ export default defineConfig({
       database: d1({ binding: 'DB', session: 'auto' }),
       storage: r2({ binding: 'MEDIA' }),
       toolbar: false,
+      images: false,
       maxUploadSize: 64 * 1024 * 1024,
       plugins: [
         {

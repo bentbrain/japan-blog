@@ -10,3 +10,9 @@ type ExportedHandlerScheduledHandler<
   E = unknown,
   P = unknown,
 > = import('@cloudflare/workers-types').ExportedHandlerScheduledHandler<E, P>;
+
+declare namespace App {
+  interface Locals {
+    publishedTripMedia?: import('./lib/model').TripMedia[];
+  }
+}
