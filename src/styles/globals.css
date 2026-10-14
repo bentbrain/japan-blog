@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import '@fontsource/geist-mono/400.css';
+@import '@fontsource/geist-mono/700.css';
 
 @custom-variant dark (@media (prefers-color-scheme: dark));
 

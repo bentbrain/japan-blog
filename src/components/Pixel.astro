@@ -1,8 +1,10 @@
 ---
 interface Props {
   name?: string;
+  compact?: boolean;
 }
-const { name = 'beer' } = Astro.props;
+const { name = 'beer', compact = false } = Astro.props;
+const counterIcon = compact && name === 'beer';
 const sprites: Record<string, string[]> = {
   beer: [
     '0000000000000000',
@@ -71,8 +73,12 @@ const path = sprite
 ---
 
 <svg
-  class="pixel size-[1.7em] shrink-0 align-middle"
-  viewBox="0 0 16 16"
+  class:list={[
+    'pixel shrink-0',
+    counterIcon ? 'h-[1ex] w-[calc(12ex/13)]' : 'size-[1.7em] align-middle',
+  ]}
+  data-feedback-id={counterIcon ? 'beer-icon' : undefined}
+  viewBox={counterIcon ? '2 2 12 13' : '0 0 16 16'}
   aria-hidden="true"
   shape-rendering="crispEdges"
 >
