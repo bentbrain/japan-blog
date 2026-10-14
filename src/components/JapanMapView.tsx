@@ -40,7 +40,7 @@ export function JapanMapView({
   }, [groups]);
   return (
     <div
-      className="map-wrap relative h-[390px] overflow-hidden bg-white text-[#0647ff] [background-image:radial-gradient(#0647ff24_0.75px,transparent_0.75px)] [background-size:8px_8px] min-[601px]:h-[440px]"
+      className="map-wrap relative h-[390px] overflow-hidden bg-background text-foreground [background-image:radial-gradient(color-mix(in_srgb,var(--foreground)_15%,transparent)_0.75px,transparent_0.75px)] [background-size:8px_8px] min-[601px]:h-[440px]"
       id="japan-map"
       data-feedback-id="japan-map"
     >
@@ -51,7 +51,7 @@ export function JapanMapView({
         role="group"
       >
         <path
-          className="fill-white stroke-[#0647ff] [stroke-width:0.8]"
+          className="fill-background stroke-foreground [stroke-width:0.8] dark:fill-muted"
           strokeLinejoin="round"
           d={land}
         />
@@ -81,7 +81,7 @@ export function JapanMapView({
               >
                 <PopoverTrigger
                   disabled={!ready}
-                  className="map-marker flex size-[30px] items-center justify-center rounded-full border-[1.5px] border-white bg-[#0647ff] p-0 text-[10px] text-white outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+                  className="map-marker flex size-[30px] items-center justify-center rounded-full border-[1.5px] border-background bg-foreground p-0 text-[10px] text-white outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   aria-label={`${group.items[0]?.place || 'location'}, ${String(group.items.length)} items`}
                   onPointerEnter={(event) => {
                     if (event.pointerType === 'mouse') {
@@ -94,7 +94,7 @@ export function JapanMapView({
                 </PopoverTrigger>
               </foreignObject>
               <text
-                className="fill-[#0647ff] font-mono text-[10px] min-[601px]:text-[11px]"
+                className="fill-foreground stroke-background font-mono text-[10px] [paint-order:stroke] [stroke-width:3] min-[601px]:text-[11px]"
                 x={group.x + 20}
                 y={group.y + 4}
               >
@@ -102,14 +102,14 @@ export function JapanMapView({
               </text>
               {selected && (
                 <PopoverContent
-                  className="map-detail data-open:animate-none data-closed:animate-none relative w-[160px] gap-2 rounded-none border border-[#0647ff] bg-white p-2 text-[#0647ff] shadow-none ring-0 min-[601px]:w-[190px]"
+                  className="map-detail data-open:animate-none data-closed:animate-none relative w-[160px] gap-2 rounded-none border border-border bg-background p-2 text-foreground shadow-none ring-0 min-[601px]:w-[190px]"
                   side="bottom"
                   align="end"
                   sideOffset={10}
                   data-feedback-id="map-preview"
                 >
                   <Button
-                    className="map-close absolute top-1 right-1 z-10 size-[26px] min-h-[26px] border-[#0647ff] bg-white p-0 text-[#0647ff] hover:bg-[#0647ff] hover:text-white dark:bg-white dark:border-[#0647ff] dark:hover:bg-[#0647ff]"
+                    className="map-close absolute top-1 right-1 z-10 size-[26px] min-h-[26px] bg-background p-0 text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground"
                     aria-label="Close map preview"
                     onClick={() => {
                       setActive(null);
@@ -128,7 +128,7 @@ export function JapanMapView({
                   <div className="flex justify-between gap-3">
                     <Button
                       size="sm"
-                      className="border-[#0647ff] bg-white text-[#0647ff] hover:bg-[#0647ff] hover:text-white"
+                      className="bg-background text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground"
                       aria-label="Previous photo at this location"
                       onClick={() => {
                         setIndex(
@@ -142,7 +142,7 @@ export function JapanMapView({
                     </Button>
                     <Button
                       size="sm"
-                      className="border-[#0647ff] bg-white text-[#0647ff] hover:bg-[#0647ff] hover:text-white"
+                      className="bg-background text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground"
                       aria-label="Next photo at this location"
                       onClick={() => {
                         setIndex(
@@ -156,7 +156,7 @@ export function JapanMapView({
                   <a
                     className={buttonVariants({
                       variant: 'link',
-                      className: 'h-auto justify-start p-0 text-[#0647ff]',
+                      className: 'h-auto justify-start p-0 text-foreground',
                     })}
                     href={`/media/${selected.slug || selected.id}`}
                   >
