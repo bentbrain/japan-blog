@@ -28,7 +28,9 @@ test('owner account link opens native passkey settings', async ({
     name: 'Get Started',
     exact: true,
   });
-  await expect(welcome.or(security)).toBeVisible();
+  // A cold Vite cache compiles the native admin and can reload it once.
+  // Wait for its first usable screen before checking the passkey controls.
+  await expect(welcome.or(security)).toBeVisible({ timeout: 30_000 });
   if (await welcome.isVisible()) await welcome.click();
   await expect(security).toBeVisible();
   await expect(page.getByRole('heading', { name: /passkeys/i })).toBeVisible();
