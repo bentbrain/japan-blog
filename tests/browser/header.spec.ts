@@ -63,14 +63,30 @@ for (const width of [390, 1280]) {
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             if (!context) throw new Error('Font measurement context required');
-            context.font = style.font;
-            const glyphs = ['0', 'I'].map((glyph) => {
+            const font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+            const faces = await document.fonts.load(font, '0I');
+            const fontLoaded = faces.some(
+              (face) =>
+                face.family === 'Geist Mono' &&
+                face.weight === '700' &&
+                face.status === 'loaded',
+            );
+            // Linux rounds small canvas glyph bounds to raster pixels. Measure
+            // outlines at high resolution, then scale back to the rendered size.
+            // This retains the curved 0's overshoot without counting hinting pixels.
+            const measureGlyph = (glyph: string, scale: number) => {
+              context.font = `${style.fontWeight} ${String(parseFloat(style.fontSize) * scale)}px ${style.fontFamily}`;
               const text = context.measureText(glyph);
-              return {
-                ascent: text.actualBoundingBoxAscent,
-                descent: text.actualBoundingBoxDescent,
-              };
-            });
+              return (
+                (text.actualBoundingBoxAscent + text.actualBoundingBoxDescent) /
+                scale
+              );
+            };
+            const glyphs = ['0', 'I'].map((glyph) => ({
+              glyph,
+              height: measureGlyph(glyph, 64),
+              doubledResolutionHeight: measureGlyph(glyph, 128),
+            }));
             const baseline = (element: Element) => {
               const probe = document.createElement('span');
               probe.style.cssText = 'display:inline-block;width:0;height:0';
@@ -127,6 +143,8 @@ for (const width of [390, 1280]) {
             }
             if (last < 0) throw new Error('Flag must paint visible pixels');
             return {
+              fontLoaded,
+              font,
               glyphs,
               beer: {
                 height: beerBottom - beerTop,
@@ -140,6 +158,13 @@ for (const width of [390, 1280]) {
               },
             };
           });
+        expect(metrics.fontLoaded, metrics.font).toBe(true);
+        for (const glyph of metrics.glyphs) {
+          expect(
+            Math.abs(glyph.height - glyph.doubledResolutionHeight),
+            `${glyph.glyph} measurement must converge at higher resolution`,
+          ).toBeLessThanOrEqual(0.05);
+        }
         for (const [name, icon] of Object.entries({
           beer: metrics.beer,
           flag: metrics.flag,
@@ -147,7 +172,7 @@ for (const width of [390, 1280]) {
           for (const glyph of metrics.glyphs) {
             expect
               .soft(
-                Math.abs(icon.height - glyph.ascent - glyph.descent),
+                Math.abs(icon.height - glyph.height),
                 `${name} painted height: ${JSON.stringify(metrics)}`,
               )
               .toBeLessThanOrEqual((0.5 * fontSize) / 16);
@@ -203,7 +228,7 @@ for (const owner of [false, true]) {
 }
 
 for (const owner of [false, true]) {
-  for (const width of [360, 601]) {
+  for (const width of [360, 601, 602, 800]) {
     test(`${owner ? 'owner' : 'public'} header fits enlarged default text at ${String(width)}px`, async ({
       page,
       baseURL,
