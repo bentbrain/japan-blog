@@ -1,0 +1,76 @@
+---
+import { getEmDashCollection } from 'emdash';
+import { PortableText } from 'emdash/ui';
+import Site from '../layouts/Site.astro';
+import JapanMap from '../components/JapanMap.astro';
+import MediaTile from '../components/MediaTile.astro';
+import ShopAd from '../components/ShopAd.astro';
+import { tripMedia } from '../lib/content';
+import { formatDay, galleryIds } from '../lib/model';
+const { entries: posts, nextCursor } = await getEmDashCollection('posts', {
+  status: 'published',
+  limit: 24,
+  cursor: Astro.url.searchParams.get('cursor') || undefined,
+  orderBy: { day: 'desc' },
+});
+const media = await tripMedia();
+---
+
+<Site>
+  <div class="journal-grid">
+    <section class="journal-card journal-map-card">
+      <div class="journal-card-inner">
+        <JapanMap media={media} />
+      </div>
+    </section>
+    {posts.map((post) => (
+      <article class="journal-card" data-feedback-id={`post-${post.data.id}`}>
+        <div class="journal-card-inner">
+          <div class="post-heading">
+            <h1>
+              <a href={`/posts/${post.id}`}>{post.data.title}</a>
+            </h1>
+            <time datetime={post.data.day}>{formatDay(post.data.day)}</time>
+          </div>
+          <div class="post-body prose">
+            <PortableText value={post.data.content} />
+          </div>
+          <div class="post-media" aria-label={`${post.data.title} media`}>
+            {galleryIds(post.data.gallery).flatMap((id) => {
+              const item = media.find((m) => m.id === id);
+              return item ? [<MediaTile item={item} inline />] : [];
+            })}
+          </div>
+        </div>
+      </article>
+    ))}
+  </div>
+  {nextCursor && (
+    <a
+      class="button pagination"
+      href={`/?cursor=${encodeURIComponent(nextCursor)}`}
+    >
+      EARLIER →
+    </a>
+  )}
+  <ShopAd />
+</Site>
+<script>
+  const grid = document.querySelector('.journal-grid');
+  function layout() {
+    if (!(grid instanceof HTMLElement)) return;
+    const style = getComputedStyle(grid),
+      row = parseFloat(style.gridAutoRows),
+      gap = parseFloat(style.rowGap);
+    grid.querySelectorAll('.journal-card').forEach((card) => {
+      const inner = card.querySelector('.journal-card-inner');
+      if (card instanceof HTMLElement && inner)
+        card.style.gridRowEnd = `span ${Math.ceil((inner.getBoundingClientRect().height + gap) / (row + gap))}`;
+    });
+  }
+  const observer = new ResizeObserver(layout);
+  document
+    .querySelectorAll('.journal-card-inner')
+    .forEach((el) => observer.observe(el));
+  layout();
+</script>

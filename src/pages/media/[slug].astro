@@ -1,0 +1,50 @@
+---
+import Site from '../../layouts/Site.astro';
+import ShopAd from '../../components/ShopAd.astro';
+import { tripMedia } from '../../lib/content';
+import { mediaUrl, formatDay, tokyoDay } from '../../lib/model';
+const media = await tripMedia();
+const index = media.findIndex(
+    (item) => item.slug === Astro.params.slug || item.id === Astro.params.slug,
+  ),
+  item = media[index];
+if (!item) return Astro.redirect('/404');
+const previous = media[(index - 1 + media.length) % media.length],
+  next = media[(index + 1) % media.length];
+---
+
+<Site title={`${item.title} / jp.bent.build`}>
+  <section class="viewer" data-feedback-id={`viewer-${item.id}`}>
+    <div class="viewer-toolbar">
+      <span>
+        {index + 1} / {media.length}
+      </span>
+      <a href="/gallery">CLOSE ×</a>
+    </div>
+    {item.kind === 'video' ? (
+      <video
+        src={mediaUrl(item)}
+        controls
+        playsinline
+        preload="metadata"
+        aria-label={item.title}
+      ></video>
+    ) : (
+      <img src={mediaUrl(item)} alt={item.title} />
+    )}
+    <div class="viewer-toolbar">
+      {previous && (
+        <a href={`/media/${previous.slug || previous.id}`}>← PREVIOUS</a>
+      )}
+      {next && <a href={`/media/${next.slug || next.id}`}>NEXT →</a>}
+    </div>
+    <div class="media-details">
+      <span>
+        {item.place} / {formatDay(tokyoDay(item.captured_at))} /{' '}
+        {item.categories.join(', ')}
+      </span>
+      <a href={`/?media=${item.id}#japan-map`}>VIEW ON MAP</a>
+    </div>
+    <ShopAd />
+  </section>
+</Site>

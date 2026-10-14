@@ -1,0 +1,15 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "types": ["node"],
+    "noUncheckedIndexedAccess": true
+  },
+  "include": [
+    "src",
+    ".astro/types.d.ts",
+    "emdash-env.d.ts",
+    "worker-configuration.d.ts",
+    "scripts",
+    "tests"
+  ]
+}

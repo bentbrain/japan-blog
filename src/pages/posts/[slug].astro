@@ -1,0 +1,33 @@
+---
+import { getEmDashEntry } from 'emdash';
+import { PortableText } from 'emdash/ui';
+import Site from '../../layouts/Site.astro';
+import ShopAd from '../../components/ShopAd.astro';
+import MediaTile from '../../components/MediaTile.astro';
+import { tripMedia } from '../../lib/content';
+import { formatDay, galleryIds } from '../../lib/model';
+const { slug } = Astro.params;
+if (!slug) return Astro.redirect('/404');
+const { entry: post } = await getEmDashEntry('posts', slug);
+if (!post || post.data.status !== 'published') return Astro.redirect('/404');
+const media = await tripMedia();
+---
+
+<Site title={`${post.data.title} / jp.bent.build`}>
+  <article class="single-post">
+    <div class="post-heading">
+      <h1>{post.data.title}</h1>
+      <time datetime={post.data.day}>{formatDay(post.data.day)}</time>
+    </div>
+    <div class="post-body prose">
+      <PortableText value={post.data.content} />
+    </div>
+    <div class="post-media">
+      {galleryIds(post.data.gallery).flatMap((id) => {
+        const item = media.find((m) => m.id === id);
+        return item ? [<MediaTile item={item} inline />] : [];
+      })}
+    </div>
+    <ShopAd />
+  </article>
+</Site>

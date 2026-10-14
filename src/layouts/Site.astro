@@ -1,0 +1,99 @@
+---
+import '@fontsource/geist-mono/400.css';
+import '../styles/site.css';
+import Pixel from '../components/Pixel.astro';
+import { beerCounts } from '../lib/content';
+interface Props {
+  title?: string;
+  owner?: boolean;
+}
+const { title = 'jp.bent.build', owner = false } = Astro.props;
+const counts = await beerCounts();
+const feedbackServer = import.meta.env.PUBLIC_FEEDBACK_SERVER;
+const feedbackProject = import.meta.env.PUBLIC_FEEDBACK_PROJECT_ID;
+const validFeedback =
+  feedbackServer && feedbackProject && /^https:\/\//.test(feedbackServer);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0647ff" />
+    <meta name="description" content="Japan travel journal" />
+    <title>{title}</title>
+    <link rel="icon" href="/brand/favicon.svg" />
+    {owner && <meta name="robots" content="noindex" />}
+    <script is:inline>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem('jp-theme') || 'system';
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" data-feedback-id="brand" href={owner ? '/owner' : '/'}>
+        jp.bent.build{owner ? ' / admin' : ''}
+      </a>
+      <nav aria-label="Main navigation" data-feedback-id="navigation">
+        {owner ? (
+          <>
+            <a href="/owner">posts</a>
+            <a href="/owner/media">media</a>
+            <a href="/owner/export">export</a>
+          </>
+        ) : (
+          <>
+            <a
+              href="/"
+              aria-current={Astro.url.pathname === '/' ? 'page' : undefined}
+            >
+              journal
+            </a>
+            <a
+              href="/gallery"
+              aria-current={
+                Astro.url.pathname === '/gallery' ? 'page' : undefined
+              }
+            >
+              gallery
+            </a>
+          </>
+        )}
+      </nav>
+      <div class="beer" data-feedback-id="beer-counter">
+        <Pixel />
+        <span>{counts.total} beers</span>
+      </div>
+    </header>
+    <main>
+      <slot />
+    </main>
+    <footer>
+      <a href={owner ? '/' : '/owner'}>{owner ? 'journal' : 'admin'}</a>
+      <button id="theme-toggle" aria-label="Toggle dark mode">
+        ◐
+      </button>
+    </footer>
+    {validFeedback && (
+      <script
+        is:inline
+        defer
+        src={`${feedbackServer}/embed.js`}
+        data-project={feedbackProject}
+      ></script>
+    )}
+    <script>
+      document.querySelector('#theme-toggle')?.addEventListener('click', () => {
+        const dark =
+          document.documentElement.dataset.theme === 'dark' ||
+          (document.documentElement.dataset.theme !== 'light' &&
+            matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+        localStorage.setItem('jp-theme', dark ? 'light' : 'dark');
+      });
+    </script>
+  </body>
+</html>

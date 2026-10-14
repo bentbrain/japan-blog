@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      emdash:
+        patterns: [emdash, '@emdash-cms/*']
+      astro:
+        patterns: [astro, '@astrojs/*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

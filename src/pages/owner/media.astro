@@ -1,0 +1,331 @@
+---
+import Site from '../../layouts/Site.astro';
+import { categories } from '../../lib/model';
+---
+
+<Site owner title="media / jp.bent.build">
+  <div class="section-heading">
+    <h1>media</h1>
+    <label class="button primary" style="margin:0">
+      UPLOAD
+      <input
+        id="upload"
+        type="file"
+        multiple
+        accept="image/*,video/mp4,video/quicktime"
+        style="display:none"
+      />
+    </label>
+  </div>
+  <p id="upload-status" class="status" role="status"></p>
+  <div class="owner-layout">
+    <div class="gallery-grid" id="media-list"></div>
+    <aside class="owner-side">
+      <form id="metadata" hidden>
+        <img id="selected-poster" alt="Selected media" />
+        <label>
+          title
+          <input name="title" required />
+        </label>
+        <label>
+          captured in japan
+          <input name="captured" type="datetime-local" required />
+        </label>
+        <div class="coordinates">
+          <label>
+            latitude
+            <input
+              name="latitude"
+              type="number"
+              step="any"
+              min="-90"
+              max="90"
+              required
+            />
+          </label>
+          <label>
+            longitude
+            <input
+              name="longitude"
+              type="number"
+              step="any"
+              min="-180"
+              max="180"
+              required
+            />
+          </label>
+        </div>
+        <div
+          id="pin-picker"
+          class="pin-picker"
+          role="group"
+          aria-label="Choose a location on Japan map"
+        ></div>
+        <label>
+          place
+          <input name="place" />
+        </label>
+        <div class="tag-options">
+          {categories.map((category) => (
+            <label>
+              <input type="checkbox" name="category" value={category} />
+              {category}
+            </label>
+          ))}
+        </div>
+        <label>
+          other categories
+          <input name="other" placeholder="comma separated" />
+        </label>
+        <label>
+          <input name="publish" type="checkbox" /> public
+        </label>
+        <button class="primary" type="submit">
+          SAVE
+        </button>
+        <p id="save-status" class="status" role="status"></p>
+      </form>
+    </aside>
+  </div>
+</Site>
+<script>
+  import { z } from 'zod';
+  import { api } from '../../lib/api-client';
+  import { prepareMedia } from '../../lib/prepare-media';
+  import { geoMercator, geoPath } from 'd3-geo';
+  import japan from '../../lib/japan.json';
+  const schema = z.object({
+    id: z.string(),
+    status: z.string(),
+    _rev: z.string(),
+    data: z.object({
+      title: z.string(),
+      captured_at: z.string().nullish(),
+      latitude: z.number().nullish(),
+      longitude: z.number().nullish(),
+      place: z.string().nullish(),
+      categories: z.array(z.string()).nullish(),
+      poster: z.object({ src: z.string().optional() }).nullish(),
+      asset: z
+        .object({ url: z.string().optional(), src: z.string().optional() })
+        .nullish(),
+      poster_url: z.string().nullish(),
+      source_url: z.string().nullish(),
+    }),
+  });
+  type Media = z.infer<typeof schema>;
+  let items: Media[] = [],
+    selected: Media | undefined;
+  const form = document.querySelector('#metadata'),
+    list = document.querySelector('#media-list'),
+    uploadStatus = document.querySelector('#upload-status'),
+    saveStatus = document.querySelector('#save-status');
+  function input(name: string) {
+    return form?.querySelector(`[name="${name}"]`);
+  }
+  function set(name: string, value: string) {
+    const el = input(name);
+    if (el instanceof HTMLInputElement) el.value = value;
+  }
+  function show(item: Media) {
+    selected = item;
+    if (form instanceof HTMLFormElement) form.hidden = false;
+    set('title', item.data.title);
+    set(
+      'captured',
+      item.data.captured_at
+        ? new Date(new Date(item.data.captured_at).getTime() + 9 * 3600_000)
+            .toISOString()
+            .slice(0, 16)
+        : '',
+    );
+    set('latitude', item.data.latitude?.toString() || '');
+    set('longitude', item.data.longitude?.toString() || '');
+    set('place', item.data.place || '');
+    const known = Array.from(form?.querySelectorAll('[name=category]') || []);
+    known.forEach((el) => {
+      if (el instanceof HTMLInputElement)
+        el.checked = item.data.categories?.includes(el.value) || false;
+    });
+    set(
+      'other',
+      (item.data.categories || [])
+        .filter(
+          (c) =>
+            !known.some(
+              (el) => el instanceof HTMLInputElement && el.value === c,
+            ),
+        )
+        .join(', '),
+    );
+    const publish = input('publish');
+    if (publish instanceof HTMLInputElement)
+      publish.checked = item.status === 'published';
+    const poster = document.querySelector('#selected-poster');
+    if (poster instanceof HTMLImageElement)
+      poster.src =
+        item.data.poster?.src ||
+        item.data.poster_url ||
+        item.data.asset?.url ||
+        item.data.source_url ||
+        '';
+    if (saveStatus) saveStatus.textContent = '';
+  }
+  async function reload() {
+    const data = z
+      .object({ items: z.array(schema) })
+      .parse(await api('/api/trip/media'));
+    items = data.items;
+    if (list) {
+      list.replaceChildren();
+      for (const item of items) {
+        const button = document.createElement('button');
+        button.className = 'media-tile';
+        button.setAttribute('aria-label', `${item.data.title}, ${item.status}`);
+        button.dataset.feedbackId = `owner-media-${item.id}`;
+        const img = document.createElement('img');
+        img.src =
+          item.data.poster?.src ||
+          item.data.poster_url ||
+          item.data.asset?.url ||
+          item.data.source_url ||
+          '';
+        img.alt = item.data.title;
+        button.append(img);
+        const state = document.createElement('span');
+        state.className = 'clip';
+        state.textContent = item.status;
+        button.append(state);
+        button.addEventListener('click', () => show(item));
+        list.append(button);
+      }
+    }
+    if (selected) {
+      const current = items.find((item) => item.id === selected?.id);
+      if (current) show(current);
+    }
+  }
+  document
+    .querySelector('#upload')
+    ?.addEventListener('change', async (event) => {
+      const el = event.target;
+      if (!(el instanceof HTMLInputElement) || !el.files) return;
+      const files = Array.from(el.files);
+      el.disabled = true;
+      try {
+        for (const [i, file] of files.entries()) {
+          if (uploadStatus)
+            uploadStatus.textContent = `${i + 1} / ${files.length} preparing ${file.name}`;
+          const prepared = await prepareMedia(file),
+            body = new FormData();
+          body.set('original', file);
+          body.set('display', prepared.display);
+          body.set('poster', prepared.poster);
+          if (uploadStatus)
+            uploadStatus.textContent = `${i + 1} / ${files.length} uploading`;
+          const res = await fetch('/api/trip/upload', {
+            method: 'POST',
+            headers: { 'X-EmDash-Request': '1' },
+            body,
+          });
+          if (!res.ok) {
+            const data: unknown = await res.json();
+            throw new Error(JSON.stringify(data));
+          }
+          await reload();
+        }
+        if (uploadStatus) uploadStatus.textContent = 'uploaded';
+      } catch (error) {
+        if (uploadStatus)
+          uploadStatus.textContent =
+            error instanceof Error ? error.message : 'Upload failed';
+      } finally {
+        el.disabled = false;
+        el.value = '';
+      }
+    });
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!(form instanceof HTMLFormElement) || !selected) return;
+    const data = new FormData(form);
+    try {
+      await api(
+        '/api/trip/media',
+        {
+          id: selected.id,
+          revision: selected._rev,
+          publish: data.get('publish') === 'on',
+          metadata: {
+            title: data.get('title'),
+            captured_at: `${data.get('captured')}:00+09:00`,
+            latitude: Number(data.get('latitude')),
+            longitude: Number(data.get('longitude')),
+            place: data.get('place'),
+            categories: [
+              ...data.getAll('category').map(String),
+              ...String(data.get('other') || '')
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean),
+            ],
+          },
+        },
+        'PATCH',
+      );
+      await reload();
+      if (saveStatus) saveStatus.textContent = 'saved';
+    } catch (error) {
+      if (saveStatus)
+        saveStatus.textContent =
+          error instanceof Error ? error.message : 'Save failed';
+    }
+  });
+  const picker = document.querySelector('#pin-picker'),
+    geometry = z
+      .object({
+        type: z.literal('MultiPolygon'),
+        coordinates: z.array(z.array(z.array(z.array(z.number())))),
+      })
+      .parse(japan.geometry),
+    projection = geoMercator().fitExtent(
+      [
+        [10, 10],
+        [260, 330],
+      ],
+      geometry,
+    );
+  if (picker) {
+    const ns = 'http://www.w3.org/2000/svg',
+      svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 270 340');
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    const land = document.createElementNS(ns, 'path');
+    land.setAttribute('d', geoPath(projection)(geometry) || '');
+    land.setAttribute('fill', 'none');
+    land.setAttribute('stroke', 'currentColor');
+    svg.append(land);
+    const pin = document.createElementNS(ns, 'circle');
+    pin.setAttribute('r', '5');
+    pin.setAttribute('fill', 'currentColor');
+    svg.append(pin);
+    svg.addEventListener('click', (event) => {
+      const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
+          svg.getScreenCTM()?.inverse(),
+        ),
+        coords = projection.invert?.([point.x, point.y]);
+      if (coords) {
+        set('latitude', String(coords[1]));
+        set('longitude', String(coords[0]));
+        pin.setAttribute('cx', String(point.x));
+        pin.setAttribute('cy', String(point.y));
+      }
+    });
+    picker.append(svg);
+  }
+  reload().catch((error) => {
+    if (uploadStatus)
+      uploadStatus.textContent =
+        error instanceof Error ? error.message : 'Could not load media';
+  });
+</script>

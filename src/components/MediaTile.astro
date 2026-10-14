@@ -1,0 +1,33 @@
+---
+import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
+interface Props {
+  item: TripMedia;
+  inline?: boolean;
+}
+const { item, inline = false } = Astro.props;
+---
+
+{inline && item.kind === 'video' ? (
+  <div class="media-tile" data-feedback-id={`media-${item.id}`}>
+    <video
+      src={mediaUrl(item)}
+      poster={posterUrl(item)}
+      controls
+      playsinline
+      preload="metadata"
+      aria-label={item.title}
+    ></video>
+  </div>
+) : (
+  <a
+    class="media-tile"
+    href={`/media/${item.slug || item.id}`}
+    data-feedback-id={`media-${item.id}`}
+    aria-label={item.title}
+  >
+    <img src={posterUrl(item)} alt={item.title} loading="lazy" />
+    {item.kind === 'video' && (
+      <span class="clip">▶ {Math.round(item.duration || 0)}s</span>
+    )}
+  </a>
+)}

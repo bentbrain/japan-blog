@@ -1,0 +1,23 @@
+.trip-gallery-field {
+  font-family: 'Geist Mono', monospace;
+  color: #0647ff;
+  border: 1px solid;
+  padding: 12px;
+}
+.trip-gallery-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.trip-gallery-options img {
+  width: 100%;
+  aspect-ratio: 1.15;
+  object-fit: cover;
+}
+.trip-gallery-options > div {
+  min-width: 0;
+}
+.trip-gallery-field a {
+  text-decoration: underline;
+}
