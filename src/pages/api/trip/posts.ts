@@ -2,9 +2,12 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { getSchema } from '@tiptap/core';
 import { editorExtensions } from '../../../lib/editor-extensions';
-import { portableTextToProsemirror, prosemirrorToPortableText } from 'emdash';
 import { editorPostSchema, postInputSchema } from '../../../lib/editor-model';
-import { preservesContent } from '../../../lib/editor-conversion';
+import {
+  fromEditorDocument,
+  preservesContent,
+  toEditorDocument,
+} from '../../../lib/editor-conversion';
 import { publishItem, savedItemSchema } from '../../../lib/publish';
 const portableBlocks = z.array(
   z.looseObject({ _type: z.string(), _key: z.string() }),
@@ -26,9 +29,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
     .parse(result.data.item.data);
   let document;
   try {
-    document = portableTextToProsemirror(data.content || [], {
-      preserveIdentity: true,
-    });
+    document = toEditorDocument(data.content || []);
     const reconstructed = getSchema(editorExtensions).nodeFromJSON(document);
     reconstructed.check();
     document = editorPostSchema.shape.data.shape.document.parse(
@@ -36,7 +37,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
     );
     if (
       data.content?.length &&
-      !preservesContent(data.content, prosemirrorToPortableText(document))
+      !preservesContent(data.content, fromEditorDocument(document))
     )
       throw new Error('Lossy conversion');
   } catch {
@@ -71,7 +72,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
   let content;
   try {
     getSchema(editorExtensions).nodeFromJSON(document).check();
-    content = prosemirrorToPortableText(document);
+    content = fromEditorDocument(document);
   } catch {
     return Response.json(
       { error: 'Unsupported editor content' },

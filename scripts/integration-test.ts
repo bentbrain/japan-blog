@@ -419,6 +419,9 @@ try {
   const postId = item.parse(await post.json()).data.item.id;
   assert.equal((await publish('posts', postId)).status, 200);
 
+  const nativeEditView = await request(`/api/trip/posts?id=${postId}`);
+  assert.equal(nativeEditView.status, 200, await nativeEditView.text());
+
   const postRevision = item.parse(
     await (await request(`/_emdash/api/content/posts/${postId}`)).json(),
   ).data._rev;
@@ -442,6 +445,9 @@ try {
               marks: [{ type: 'bold' }],
             },
           ],
+        },
+        {
+          type: 'paragraph',
         },
         {
           type: 'videoBlock',

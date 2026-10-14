@@ -127,8 +127,18 @@ test('owner writes and publishes rich text through the shadcn editor', async ({
   await page
     .getByRole('textbox', { name: 'Post content' })
     .fill('A real published paragraph.');
+  await page.getByRole('textbox', { name: 'Post content' }).press('Enter');
+  await page.getByRole('textbox', { name: 'Post content' }).press('Enter');
+  await page.keyboard.type('After the blank paragraph.');
   await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('published');
+  await page.reload();
+  await expect(
+    page.getByRole('textbox', { name: 'Post content' }),
+  ).toContainText('After the blank paragraph.');
+  await expect(
+    page.getByRole('textbox', { name: 'Post content' }).locator('p'),
+  ).toHaveCount(3);
   await page.goto('/');
   await expect(page.getByText('A real published paragraph.')).toBeVisible();
 });

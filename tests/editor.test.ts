@@ -5,7 +5,94 @@ import { portableTextToProsemirror, prosemirrorToPortableText } from 'emdash';
 import { z } from 'zod';
 import { editorExtensions } from '../src/lib/editor-extensions';
 import { editorPostSchema } from '../src/lib/editor-model';
-import { preservesContent } from '../src/lib/editor-conversion';
+import {
+  fromEditorDocument,
+  preservesContent,
+  toEditorDocument,
+} from '../src/lib/editor-conversion';
+
+void test('blank paragraphs survive saving and reopening through the actual editor schema', () => {
+  const original = prosemirrorToPortableText({
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'First' }] },
+      { type: 'paragraph' },
+      { type: 'paragraph', content: [{ type: 'text', text: 'Last' }] },
+    ],
+  });
+  const node = getSchema(editorExtensions).nodeFromJSON(
+    toEditorDocument(original),
+  );
+  node.check();
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  const restored = fromEditorDocument(document);
+  assert.equal(preservesContent(original, restored), true);
+  assert.deepEqual(restored, original);
+});
+
+void test('native text with explicit empty marks and mark definitions can reopen', () => {
+  const original = [
+    {
+      _type: 'block',
+      _key: 'paragraph',
+      style: 'normal',
+      markDefs: [],
+      children: [
+        { _type: 'span', _key: 'text', text: 'Native text', marks: [] },
+      ],
+    },
+  ];
+  const node = getSchema(editorExtensions).nodeFromJSON(
+    toEditorDocument(original),
+  );
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  assert.equal(preservesContent(original, fromEditorDocument(document)), true);
+});
+
+void test('empty defaults do not excuse lost formatting or unrelated fields', () => {
+  assert.equal(
+    preservesContent({ _type: 'span', marks: ['strong'] }, { _type: 'span' }),
+    false,
+  );
+  assert.equal(
+    preservesContent(
+      {
+        _type: 'block',
+        markDefs: [
+          { _type: 'link', _key: 'link', href: 'https://shop.bent.build' },
+        ],
+      },
+      { _type: 'block' },
+    ),
+    false,
+  );
+  assert.equal(
+    preservesContent({ _type: 'gallery', images: [] }, { _type: 'gallery' }),
+    false,
+  );
+});
+
+void test('typing into a restored blank paragraph keeps the new text', () => {
+  const original = [
+    {
+      _type: 'block',
+      _key: 'blank',
+      style: 'normal',
+      children: [{ _type: 'span', _key: 'blank-span', text: '' }],
+    },
+  ];
+  const document = toEditorDocument(original);
+  const paragraph = document.content[0];
+  assert.ok(paragraph);
+  paragraph.content = [{ type: 'text', text: 'New text' }];
+  const restored = fromEditorDocument(document);
+  assert.equal(JSON.stringify(restored).includes('New text'), true);
+  assert.equal(JSON.stringify(restored).includes('blank-span'), false);
+});
 
 void test('native image metadata and gallery survive the actual editor schema', () => {
   const image = {

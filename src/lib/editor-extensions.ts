@@ -102,6 +102,7 @@ const ContentIdentity = Extension.create({
         ],
         attributes: {
           emdashPortableTextKey: { default: null, rendered: false },
+          tripEmptySpanKey: { default: null, rendered: false },
         },
       },
     ];
