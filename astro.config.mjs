@@ -1,6 +1,7 @@
 import cloudflare from '@astrojs/cloudflare';
 import react from '@astrojs/react';
 import { d1, r2 } from '@emdash-cms/cloudflare';
+import { cloudflareEmail } from '@emdash-cms/cloudflare/plugins';
 import { defineConfig } from 'astro/config';
 import emdash from 'emdash/astro';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +23,9 @@ export default defineConfig({
       images: false,
       maxUploadSize: 64 * 1024 * 1024,
       plugins: [
+        cloudflareEmail({
+          from: { email: 'login@auth.jp.bent.build', name: 'jp.bent.build' },
+        }),
         {
           id: 'japan-trip',
           version: '1.0.0',

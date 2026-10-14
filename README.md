@@ -45,7 +45,7 @@ Capture times group into days in `Asia/Tokyo`. Photos without an offset are inte
 
 The shared layout loads the independent [feedback-toolbar](https://github.com/bentbrain/feedback-toolbar) once from https://toolbar.bent.build. Production CI supplies `PUBLIC_FEEDBACK_SERVER=https://toolbar.bent.build` and `PUBLIC_FEEDBACK_PROJECT_ID=prj_bc74b93bb6f44574`. Both values are public; incomplete or invalid configuration fails instead of loading an unintended script.
 
-Toolbar sign-in uses its own GitHub account and Japan project membership. Blog owner login remains independent. Content and controls carry stable `data-feedback-id` attributes; owner page content is marked private so unpublished drafts and metadata are excluded from captured element text. Comments still require explicit submission.
+Toolbar sign-in uses its own GitHub account and Japan project membership. Blog owner login remains independent. Content and controls carry stable `data-feedback-id` attributes; owner page content uses `data-feedback-redact` so controls remain selectable while unpublished drafts and metadata are excluded from captured text and accessible labels. The accompanying `data-feedback-private` marker keeps older embeds from capturing that content. Comments still require explicit submission.
 
 The public `.feedback-toolbar.json` links local agent tools to this Japan project. Agent credentials stay in private user configuration outside the repository. An existing harness can use the connector's MCP tools to read threads and claim explicitly queued work; its schedule and execution permissions remain in that harness.
 
@@ -60,6 +60,8 @@ The review status is a PR merge gate. Squash merging creates a different main SH
 Secrets and local data are excluded from Git. Deployment configuration lives in `wrangler.jsonc`; application secrets belong in Cloudflare's encrypted secret storage.
 
 The production account is the sole author. Public account creation and invitations are disabled. First-time passkey setup requires a short-lived private setup cookie. Generate a setup capability and keep it private; clear `SETUP_TOKEN` after registering the owner account.
+
+Email-link sign-in uses EmDash's native Cloudflare email provider and the `EMAIL` sending binding. It sends from `login@auth.jp.bent.build`; Cloudflare Email Sending must be enabled for `auth.jp.bent.build` with its generated DKIM, SPF and return-path records. This sending subdomain is separate from the existing `bent.build` inbound mail forwarding. Passkeys remain available, and email links sign in only to an existing account. Open the emailed link in the browser session you want to authenticate.
 
 ## Design review and sample assets
 
