@@ -22,7 +22,11 @@ const validFeedback =
     <meta name="theme-color" content="#0647ff" />
     <meta name="description" content="Japan travel journal" />
     <title>{title}</title>
-    <link rel="icon" href="/brand/favicon.svg" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="/brand/favicon.svg?v=blue-flag"
+    />
     {owner && <meta name="robots" content="noindex" />}
     <script is:inline>
       try {
@@ -37,10 +41,17 @@ const validFeedback =
   <body>
     <header class="site-header flex flex-wrap items-center justify-between gap-2 border-b px-4 py-[13px] min-[601px]:flex-nowrap min-[601px]:gap-[18px] min-[601px]:px-6 min-[601px]:py-[15px] [&_nav]:order-3 [&_nav]:flex [&_nav]:w-full [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-[7px] min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline">
       <a
-        class="brand whitespace-nowrap no-underline"
+        class="brand inline-flex items-center gap-2 whitespace-nowrap no-underline"
         data-feedback-id="brand"
         href={owner ? '/owner' : '/'}
       >
+        <img
+          src="/brand/favicon.svg"
+          alt=""
+          width="32"
+          height="32"
+          class="size-6 shrink-0"
+        />
         jp.bent.build{owner ? ' / admin' : ''}
       </a>
       <nav aria-label="Main navigation" data-feedback-id="navigation">
