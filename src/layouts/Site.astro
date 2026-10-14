@@ -40,16 +40,16 @@ const feedback = feedbackConfiguration(
       ]}
     >
       <a
-        class="brand inline-flex items-center max-w-full gap-[0.5em] no-underline min-[601px]:flex-1"
+        class="brand inline-flex items-baseline max-w-full min-[601px]:min-w-fit gap-[0.5em] no-underline min-[601px]:flex-1"
         data-feedback-id="brand"
         href={owner ? '/owner' : '/'}
       >
         <img
-          src="/brand/favicon.svg"
+          src="/brand/favicon.svg#header"
           alt=""
-          width="32"
-          height="32"
-          class="size-[1em] shrink-0"
+          width="31"
+          height="21"
+          class="h-[1cap] w-auto shrink-0"
         />
         jp.bent.build{owner ? ' / admin' : ''}
       </a>
