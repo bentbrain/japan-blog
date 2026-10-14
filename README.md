@@ -43,7 +43,11 @@ Capture times group into days in `Asia/Tokyo`. Photos without an offset are inte
 
 ## Feedback toolbar
 
-The shared layout accepts `PUBLIC_FEEDBACK_SERVER` and `PUBLIC_FEEDBACK_PROJECT_ID`. It loads the independent [feedback-toolbar](https://github.com/bentbrain/feedback-toolbar) script once, with no embedded credentials. Content and controls carry stable `data-feedback-id` attributes. Set these variables when the feedback service is deployed and its Japan project is registered.
+The shared layout loads the independent [feedback-toolbar](https://github.com/bentbrain/feedback-toolbar) once from https://toolbar.bent.build. Production CI supplies `PUBLIC_FEEDBACK_SERVER=https://toolbar.bent.build` and `PUBLIC_FEEDBACK_PROJECT_ID=prj_bc74b93bb6f44574`. Both values are public; incomplete or invalid configuration fails instead of loading an unintended script.
+
+Toolbar sign-in uses its own GitHub account and Japan project membership. Blog owner login remains independent. Content and controls carry stable `data-feedback-id` attributes; owner page content is marked private so unpublished drafts and metadata are excluded from captured element text. Comments still require explicit submission.
+
+The public `.feedback-toolbar.json` links local agent tools to this Japan project. Agent credentials stay in private user configuration outside the repository. An existing harness can use the connector's MCP tools to read threads and claim explicitly queued work; its schedule and execution permissions remain in that harness.
 
 ## Deployment and repository controls
 
