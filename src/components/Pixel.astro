@@ -2,8 +2,9 @@
 interface Props {
   name?: string;
   compact?: boolean;
+  centerPaint?: boolean;
 }
-const { name = 'beer', compact = false } = Astro.props;
+const { name = 'beer', compact = false, centerPaint = false } = Astro.props;
 const counterIcon = compact && name === 'beer';
 const sprites: Record<string, string[]> = {
   beer: [
@@ -63,6 +64,11 @@ const sprites: Record<string, string[]> = {
   ],
 };
 const sprite = sprites[name] || sprites.beer || [];
+const firstPaintedRow = sprite.findIndex((row) => row.includes('1'));
+const lastPaintedRow = sprite.findLastIndex((row) => row.includes('1'));
+// Move the 16px canvas around the paint without resizing the sprite.
+const centeredY =
+  firstPaintedRow < 0 ? 0 : (firstPaintedRow + lastPaintedRow + 1) / 2 - 8;
 const path = sprite
   .flatMap((row, y) =>
     row
@@ -78,7 +84,7 @@ const path = sprite
     counterIcon ? 'h-[1cap] w-[calc(12cap/13)]' : 'size-[1.7em] align-middle',
   ]}
   data-feedback-id={counterIcon ? 'beer-icon' : undefined}
-  viewBox={counterIcon ? '2 2 12 13' : '0 0 16 16'}
+  viewBox={counterIcon ? '2 2 12 13' : `0 ${centerPaint ? centeredY : 0} 16 16`}
   aria-hidden="true"
   shape-rendering="crispEdges"
 >
