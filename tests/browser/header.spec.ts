@@ -226,7 +226,7 @@ for (const owner of [false, true]) {
     });
     await expect(navigation).toBeVisible();
     for (const name of owner
-      ? ['posts', 'media', 'export']
+      ? ['posts', 'media', 'export', 'account']
       : ['journal', 'gallery'])
       await expect(
         navigation.getByRole('link', { name, exact: true }),
