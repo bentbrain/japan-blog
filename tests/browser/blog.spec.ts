@@ -164,6 +164,45 @@ test('draft posts stay available to the owner and hidden from the journal', asyn
   await expect(page.getByText('Private draft paragraph.')).toBeHidden();
 });
 
+test('a delayed save keeps newer edits unsaved', async ({ page }) => {
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+  await page.waitForURL('**/owner/posts/new');
+  await page.getByLabel('title', { exact: true }).fill('Delayed save');
+  const editor = page.getByRole('textbox', { name: 'Post content' });
+  await editor.fill('Submitted text');
+  let releaseResponse = () => {};
+  const gate = new Promise<void>((resolve) => {
+    releaseResponse = resolve;
+  });
+  await page.route('**/api/trip/posts', async (route) => {
+    const response = await route.fetch();
+    await gate;
+    await route.fulfill({ response });
+  });
+  await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'SAVE DRAFT', exact: true }),
+  ).toBeDisabled();
+  await editor.fill('Newer unsaved text');
+  releaseResponse();
+  await expect(
+    page.getByRole('button', { name: 'SAVE DRAFT', exact: true }),
+  ).toBeEnabled();
+  expect(
+    await page.evaluate(() => {
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(true);
+  await expect(page.getByRole('status')).toContainText('newer edits unsaved');
+  await page.unroute('**/api/trip/posts');
+  await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('draft saved');
+  await page.reload();
+  await expect(editor).toHaveText('Newer unsaved text');
+});
+
 test('owner uploads a photo and publishes it with manual GPS and categories', async ({
   page,
 }) => {
@@ -192,6 +231,8 @@ test('owner uploads a photo and publishes it with manual GPS and categories', as
   ).toBeVisible();
   await page.goto('/owner/posts/new');
   await page.getByLabel('title', { exact: true }).fill('Photo publication');
+  await page.getByRole('textbox', { name: 'Post content' }).fill('Dinner');
+  await page.getByRole('button', { name: 'LIST', exact: true }).click();
   await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
   const uploadedTile = page.locator('.trip-gallery-options > div').filter({
     has: page.getByRole('img', { name: 'Browser upload photo', exact: true }),
@@ -203,6 +244,8 @@ test('owner uploads a photo and publishes it with manual GPS and categories', as
     'src',
     /^\/_emdash\/api\/media\/file\/trip\//,
   );
+  await expect(page.locator('.tiptap li img')).toHaveCount(0);
+  await expect(page.locator('.tiptap > img')).toHaveCount(1);
   await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('published');
   await page.goto('/');

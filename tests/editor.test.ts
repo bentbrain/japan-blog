@@ -7,6 +7,7 @@ import { editorExtensions } from '../src/lib/editor-extensions';
 import { editorPostSchema } from '../src/lib/editor-model';
 import {
   fromEditorDocument,
+  contentForSave,
   preservesContent,
   toEditorDocument,
 } from '../src/lib/editor-conversion';
@@ -30,6 +31,7 @@ void test('blank paragraphs survive saving and reopening through the actual edit
   const restored = fromEditorDocument(document);
   assert.equal(preservesContent(original, restored), true);
   assert.deepEqual(restored, original);
+  assert.deepEqual(contentForSave(document), original);
 });
 
 void test('native text with explicit empty marks and mark definitions can reopen', () => {
@@ -92,6 +94,136 @@ void test('typing into a restored blank paragraph keeps the new text', () => {
   const restored = fromEditorDocument(document);
   assert.equal(JSON.stringify(restored).includes('New text'), true);
   assert.equal(JSON.stringify(restored).includes('blank-span'), false);
+});
+
+void test('saving rejects a schema-valid nested image that the converter would discard', () => {
+  const original = getSchema(editorExtensions).nodeFromJSON({
+    type: 'doc',
+    content: [
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Dinner' }],
+              },
+              {
+                type: 'image',
+                attrs: { src: '/dinner.jpg', mediaId: 'dinner', alt: 'Dinner' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  original.check();
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    original.toJSON(),
+  );
+  assert.throws(() => contentForSave(document), /Lossy editor conversion/);
+});
+
+void test('saving rejects a nested list in a quote without losing its text', () => {
+  const document: Parameters<typeof contentForSave>[0] = {
+    type: 'doc',
+    content: [
+      {
+        type: 'blockquote',
+        content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'Quote' }] },
+          {
+            type: 'bulletList',
+            content: [
+              {
+                type: 'listItem',
+                content: [
+                  {
+                    type: 'paragraph',
+                    content: [{ type: 'text', text: 'Nested dinner' }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  assert.throws(() => contentForSave(document), /Lossy editor conversion/);
+});
+
+void test('ordinary formatting, nested lists and top-level media can save safely', () => {
+  assert.doesNotThrow(() =>
+    contentForSave({
+      type: 'doc',
+      content: [
+        {
+          type: 'heading',
+          attrs: { level: 2 },
+          content: [{ type: 'text', text: 'Tokyo' }],
+        },
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'Bold', marks: [{ type: 'bold' }] },
+            {
+              type: 'text',
+              text: 'Link',
+              marks: [
+                { type: 'link', attrs: { href: 'https://shop.bent.build' } },
+              ],
+            },
+            { type: 'hardBreak' },
+            { type: 'text', text: 'Italic', marks: [{ type: 'italic' }] },
+          ],
+        },
+        {
+          type: 'bulletList',
+          content: [
+            {
+              type: 'listItem',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'Food' }],
+                },
+                {
+                  type: 'bulletList',
+                  content: [
+                    {
+                      type: 'listItem',
+                      content: [
+                        {
+                          type: 'paragraph',
+                          content: [{ type: 'text', text: 'Ramen' }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'blockquote',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'Walk' }] },
+          ],
+        },
+        {
+          type: 'image',
+          attrs: { src: '/dinner.jpg', mediaId: 'dinner', alt: 'Dinner' },
+        },
+        { type: 'videoBlock', attrs: { src: '/walk.mp4', mediaId: 'walk' } },
+        { type: 'paragraph' },
+      ],
+    }),
+  );
 });
 
 void test('native image metadata and gallery survive the actual editor schema', () => {

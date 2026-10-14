@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { getSchema } from '@tiptap/core';
+import { editorExtensions } from './editor-extensions';
+import { editorPostSchema } from './editor-model';
 import {
   portableTextToProsemirror,
   prosemirrorToPortableText,
@@ -55,8 +58,32 @@ export function toEditorDocument(
 }
 
 export function fromEditorDocument(document: ProseMirrorDocument) {
+  function retainEmptyParagraph(node: ProseMirrorNode): ProseMirrorNode {
+    return {
+      ...node,
+      ...(node.type === 'paragraph' &&
+      !node.content?.length &&
+      !node.attrs?.emdashPortableTextKey
+        ? {
+            attrs: {
+              ...node.attrs,
+              emdashPortableTextKey: crypto.randomUUID(),
+            },
+          }
+        : {}),
+      ...(node.content
+        ? { content: node.content.map(retainEmptyParagraph) }
+        : {}),
+    };
+  }
+  // EmDash omits an unkeyed trailing paragraph, including one inserted after
+  // an image. Give empty paragraphs identities before serializing them.
+  const retained = {
+    ...document,
+    content: document.content.map(retainEmptyParagraph),
+  };
   const emptyKeys = new Map<string, string>();
-  visitNodes(document.content, (node) => {
+  visitNodes(retained.content, (node) => {
     const key = node.attrs?.emdashPortableTextKey;
     const spanKey = node.attrs?.tripEmptySpanKey;
     if (
@@ -66,7 +93,7 @@ export function fromEditorDocument(document: ProseMirrorDocument) {
     )
       emptyKeys.set(key, spanKey);
   });
-  return prosemirrorToPortableText(document).map((block) => {
+  return prosemirrorToPortableText(retained).map((block) => {
     const empty = emptyTextBlock.safeParse(block);
     const spanKey = emptyKeys.get(block._key);
     if (!empty.success || !spanKey) return block;
@@ -75,6 +102,53 @@ export function fromEditorDocument(document: ProseMirrorDocument) {
       children: [{ ...empty.data.children[0], _key: spanKey }],
     };
   });
+}
+
+function editorMeaning(node: ProseMirrorNode): unknown {
+  const attrs = Object.fromEntries(
+    Object.entries(node.attrs || {}).filter(
+      ([key, value]) =>
+        !['emdashPortableTextKey', 'tripEmptySpanKey'].includes(key) &&
+        value !== null &&
+        value !== undefined &&
+        !(value === '' && ['alt', 'title', 'caption'].includes(key)),
+    ),
+  );
+  const marks = (node.marks || [])
+    .filter((mark) => mark.type !== 'emdashPortableTextSpan')
+    .map((mark) => editorMeaning(mark))
+    .sort((left, right) =>
+      JSON.stringify(left).localeCompare(JSON.stringify(right)),
+    );
+  return {
+    type: node.type,
+    ...(node.text !== undefined ? { text: node.text } : {}),
+    ...(Object.keys(attrs).length ? { attrs } : {}),
+    ...(marks.length ? { marks } : {}),
+    ...(node.content?.length
+      ? { content: node.content.map(editorMeaning) }
+      : {}),
+  };
+}
+
+// Validate the submitted editor tree as well as its stored Portable Text form.
+// A valid ProseMirror composition is not necessarily supported by the converter.
+export function contentForSave(document: ProseMirrorDocument) {
+  const schema = getSchema(editorExtensions);
+  const submitted = schema.nodeFromJSON(document);
+  submitted.check();
+  const parsed = editorPostSchema.shape.data.shape.document.parse(
+    submitted.toJSON(),
+  );
+  const content = fromEditorDocument(parsed);
+  const restored = schema.nodeFromJSON(toEditorDocument(content));
+  restored.check();
+  const reconstructed = editorPostSchema.shape.data.shape.document.parse(
+    restored.toJSON(),
+  );
+  if (!preservesContent(editorMeaning(parsed), editorMeaning(reconstructed)))
+    throw new Error('Lossy editor conversion');
+  return content;
 }
 
 // Reject editing when conversion or the actual editor schema drops stored data.

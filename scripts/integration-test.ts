@@ -425,6 +425,47 @@ try {
   const postRevision = item.parse(
     await (await request(`/_emdash/api/content/posts/${postId}`)).json(),
   ).data._rev;
+  const unsafeEdit = await request('/api/trip/posts', {
+    id: postId,
+    revision: postRevision,
+    title: 'Must not overwrite existing post',
+    day: '2099-10-15',
+    place: '',
+    gallery: [],
+    publish: false,
+    document: {
+      type: 'doc',
+      content: [
+        {
+          type: 'bulletList',
+          content: [
+            {
+              type: 'listItem',
+              content: [
+                {
+                  type: 'paragraph',
+                  content: [{ type: 'text', text: 'Dinner' }],
+                },
+                {
+                  type: 'image',
+                  attrs: {
+                    src: nativeUploaded.url,
+                    mediaId: nativeUploaded.id,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.equal(unsafeEdit.status, 400, await unsafeEdit.text());
+  const unchanged = item.parse(
+    await (await request(`/_emdash/api/content/posts/${postId}`)).json(),
+  );
+  assert.equal(unchanged.data._rev, postRevision);
+  assert.equal(unchanged.data.item.data.title, 'integration post');
   const edited = await request('/api/trip/posts', {
     id: postId,
     revision: postRevision,

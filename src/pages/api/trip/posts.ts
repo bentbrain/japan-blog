@@ -5,6 +5,7 @@ import { editorExtensions } from '../../../lib/editor-extensions';
 import { editorPostSchema, postInputSchema } from '../../../lib/editor-model';
 import {
   fromEditorDocument,
+  contentForSave,
   preservesContent,
   toEditorDocument,
 } from '../../../lib/editor-conversion';
@@ -71,11 +72,13 @@ export const POST: APIRoute = async ({ locals, request }) => {
     return Response.json({ error: 'Post revision required' }, { status: 400 });
   let content;
   try {
-    getSchema(editorExtensions).nodeFromJSON(document).check();
-    content = fromEditorDocument(document);
+    content = contentForSave(document);
   } catch {
     return Response.json(
-      { error: 'Unsupported editor content' },
+      {
+        error:
+          'This layout cannot be saved safely. Move media outside lists and quotes, or use the CMS editor.',
+      },
       { status: 400 },
     );
   }

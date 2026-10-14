@@ -1,4 +1,4 @@
-import { useEffect, useState, type SubmitEvent } from 'react';
+import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { editorExtensions } from '../lib/editor-extensions';
 import { z } from 'zod';
@@ -51,6 +51,12 @@ function EditorForm({
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const editGeneration = useRef(0);
+  function markDirty() {
+    editGeneration.current++;
+    setDirty(true);
+    setStatus('');
+  }
   const [pickerOpen, setPickerOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [href, setHref] = useState('');
@@ -69,7 +75,7 @@ function EditorForm({
       },
     },
     onUpdate: () => {
-      setDirty(true);
+      markDirty();
     },
   });
   const formatting = useEditorState({
@@ -119,6 +125,7 @@ function EditorForm({
       submitted.submitter instanceof HTMLButtonElement &&
       submitted.submitter.dataset.publish === 'true';
     setSaving(true);
+    const submittedGeneration = editGeneration.current;
     try {
       const result = z
         .object({
@@ -138,10 +145,14 @@ function EditorForm({
           }),
         );
       const saved = result.post;
-      setDirty(false);
+      const newerEdits = editGeneration.current !== submittedGeneration;
+      setDirty(newerEdits);
       onSaved(saved);
       setStatus(
-        result.publicationError || (publish ? 'published' : 'draft saved'),
+        [
+          result.publicationError || (publish ? 'published' : 'draft saved'),
+          ...(newerEdits ? ['newer edits unsaved'] : []),
+        ].join('\n'),
       );
       if (!post.id) history.replaceState(null, '', `/owner/posts/${saved.id}`);
     } catch (error) {
@@ -156,7 +167,7 @@ function EditorForm({
         void save(event);
       }}
       onChange={() => {
-        setDirty(true);
+        markDirty();
       }}
       className="space-y-5"
     >
@@ -331,7 +342,7 @@ function EditorForm({
                                       ? [...current, item.id]
                                       : current.filter((id) => id !== item.id),
                                   );
-                                  setDirty(true);
+                                  markDirty();
                                 }}
                               />
                               <FieldLabel htmlFor={`post-gallery-${item.id}`}>
@@ -344,24 +355,27 @@ function EditorForm({
                               disabled={!item.data.asset}
                               onClick={() => {
                                 if (!editor || !item.data.asset) return;
-                                editor
-                                  .chain()
-                                  .focus()
-                                  .insertContent({
-                                    type:
-                                      item.data.kind === 'video'
-                                        ? 'videoBlock'
-                                        : 'image',
-                                    attrs: {
-                                      src:
-                                        item.data.source_url ||
-                                        item.data.asset.url,
-                                      mediaId: item.data.asset.id,
-                                      provider: 'local',
-                                      alt: item.data.title,
-                                    },
-                                  })
-                                  .run();
+                                const mediaNode = {
+                                  type:
+                                    item.data.kind === 'video'
+                                      ? 'videoBlock'
+                                      : 'image',
+                                  attrs: {
+                                    src:
+                                      item.data.source_url ||
+                                      item.data.asset.url,
+                                    mediaId: item.data.asset.id,
+                                    provider: 'local',
+                                    alt: item.data.title,
+                                  },
+                                };
+                                const { $from } = editor.state.selection;
+                                const chain = editor.chain().focus();
+                                if ($from.depth > 1)
+                                  chain
+                                    .insertContentAt($from.after(1), mediaNode)
+                                    .run();
+                                else chain.insertContent(mediaNode).run();
                                 setPickerOpen(false);
                               }}
                             >
