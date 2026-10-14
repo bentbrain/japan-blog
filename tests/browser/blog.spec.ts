@@ -250,11 +250,17 @@ test('exports require owner auth and PNG has story dimensions', async ({
   page,
 }, info) => {
   const denied = await page.request.post('/api/trip/story', {
-    data: { day: '2026-10-15', ids: [], counter: 'both' },
+    data: { day: '2026-10-15', ids: [], counter: 'total' },
   });
   expect(denied.status()).toBe(401);
   await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/export');
   await page.waitForURL('**/owner/export');
+  await expect(page.locator('#story-preview canvas')).toBeVisible();
+  await page.getByRole('combobox', { name: 'card angle' }).click();
+  await page.getByRole('option', { name: 'no skew' }).click();
+  await expect(page.getByRole('combobox', { name: 'card angle' })).toHaveText(
+    /no skew/,
+  );
   await expect(page.locator('#story-preview canvas')).toBeVisible();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'EXPORT PNG' }).click();

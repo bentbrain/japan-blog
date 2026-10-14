@@ -12,7 +12,7 @@ import {
   embeddedMediaReferences,
 } from '../src/plugins/trip-policy';
 import { iso6709 } from '../src/lib/metadata';
-import { tileCenters } from '../src/lib/story';
+import { storyTitle, tileCenters } from '../src/lib/story';
 
 void test('capture times group into Japan days across UTC midnight', () => {
   assert.equal(tokyoDay(new Date('2026-10-14T14:59:59Z')), '2026-10-14');
@@ -114,11 +114,26 @@ void test('QuickTime GPS handles signed coordinates and optional altitude', () =
   assert.equal(iso6709('missing'), undefined);
 });
 void test('all story tiles remain within Instagram safe margins at maximum selection', () => {
-  for (const count of [1, 3, 10, 15])
-    for (const tile of tileCenters(count)) {
-      assert.ok(tile.x - ((620 + 420) * 0.707) / 2 > 64);
-      assert.ok(tile.x + ((620 + 420) * 0.707) / 2 < 1016);
-      assert.ok(tile.y - ((620 + 420) * 0.408) / 2 - 8 > 280);
-      assert.ok(tile.y + ((620 + 420) * 0.408) / 2 + 8 < 1400);
+  for (const count of [1, 3, 10, 15]) {
+    const centers = tileCenters(count);
+    for (let i = 1; i < centers.length; i++) {
+      const current = centers[i],
+        previous = centers[i - 1];
+      assert.ok(current && previous);
+      assert.ok(current.x > previous.x);
+      assert.ok(current.y > previous.y);
     }
+    for (const tile of tileCenters(count)) {
+      // The unskewed cards are wider; the angled cards extend further vertically.
+      assert.ok(tile.x - 636 / 2 > 64);
+      assert.ok(tile.x + 636 / 2 < 1016);
+      assert.ok(tile.y - (636 * 0.23 + 436) / 2 - 8 > 400);
+      assert.ok(tile.y + (636 * 0.23 + 436) / 2 + 8 < 1320);
+    }
+  }
+});
+void test('story day numbers count calendar days from the trip start', () => {
+  assert.equal(storyTitle('2026-10-13', '2026-10-13', 'tokyo'), 'day 1: tokyo');
+  assert.equal(storyTitle('2026-10-15', '2026-10-13', 'tokyo'), 'day 3: tokyo');
+  assert.equal(storyTitle('2027-01-01', '2026-12-31', ''), 'day 2: japan');
 });

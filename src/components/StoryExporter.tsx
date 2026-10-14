@@ -17,6 +17,7 @@ import { Progress } from './ui/progress';
 
 type Media = { id: string; day: string; title: string; poster: string };
 const counterSchema = storySchema.shape.counter;
+const perspectiveSchema = storySchema.shape.perspective;
 export function StoryExporter({ media }: { media: Media[] }) {
   const days = [...new Set(media.map((item) => item.day))].sort().reverse();
   const [day, setDay] = useState(days[0] || '');
@@ -26,7 +27,9 @@ export function StoryExporter({ media }: { media: Media[] }) {
       .slice(0, 15)
       .map((item) => item.id),
   );
-  const [counter, setCounter] = useState<Story['counter']>('both');
+  const [counter, setCounter] = useState<Story['counter']>('total');
+  const [perspective, setPerspective] =
+    useState<Story['perspective']>('angled');
   const [guides, setGuides] = useState(true);
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState(0);
@@ -52,7 +55,12 @@ export function StoryExporter({ media }: { media: Media[] }) {
     }
     async function update() {
       const manifest = storySchema.parse(
-        await api('/api/trip/story', { day, ids: selected, counter }),
+        await api('/api/trip/story', {
+          day,
+          ids: selected,
+          counter,
+          perspective,
+        }),
       );
       const loaded = await loadStory(manifest, controller.signal);
       if (!isActive()) {
@@ -79,7 +87,7 @@ export function StoryExporter({ media }: { media: Media[] }) {
       renderer.current = undefined;
       preview.current?.replaceChildren();
     };
-  }, [day, selected, counter]);
+  }, [day, selected, counter, perspective]);
   useEffect(() => {
     if (!playing || rendering) return;
     let frameId = 0,
@@ -243,7 +251,6 @@ export function StoryExporter({ media }: { media: Media[] }) {
               value={counter}
               disabled={rendering}
               items={[
-                { value: 'both', label: 'today + trip total' },
                 { value: 'today', label: 'today' },
                 { value: 'total', label: 'trip total' },
                 { value: 'hidden', label: 'hidden' },
@@ -260,10 +267,35 @@ export function StoryExporter({ media }: { media: Media[] }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="both">today + trip total</SelectItem>
                 <SelectItem value="today">today</SelectItem>
                 <SelectItem value="total">trip total</SelectItem>
                 <SelectItem value="hidden">hidden</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="story-perspective">card angle</FieldLabel>
+            <Select
+              value={perspective}
+              disabled={rendering}
+              items={[
+                { value: 'angled', label: 'right edge up' },
+                { value: 'straight', label: 'no skew' },
+              ]}
+              onValueChange={(value) => {
+                const next = perspectiveSchema.safeParse(value);
+                if (next.success) {
+                  setPlaying(false);
+                  setPerspective(next.data);
+                }
+              }}
+            >
+              <SelectTrigger id="story-perspective" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="angled">right edge up</SelectItem>
+                <SelectItem value="straight">no skew</SelectItem>
               </SelectContent>
             </Select>
           </Field>

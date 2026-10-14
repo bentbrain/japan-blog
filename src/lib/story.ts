@@ -3,7 +3,8 @@ import { daySchema } from './model';
 export const storySchema = z.object({
   day: daySchema,
   title: z.string(),
-  counter: z.enum(['both', 'today', 'total', 'hidden']),
+  counter: z.enum(['today', 'total', 'hidden']),
+  perspective: z.enum(['angled', 'straight']).default('angled'),
   beers: z.object({ today: z.number(), total: z.number() }),
   media: z
     .array(
@@ -19,11 +20,21 @@ export const storySchema = z.object({
     .max(15),
 });
 export type Story = z.infer<typeof storySchema>;
+export function storyTitle(day: string, firstDay: string, place: string) {
+  const number =
+    Math.round(
+      (Date.parse(`${day}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) /
+        86_400_000,
+    ) + 1;
+  return `day ${String(number)}: ${place.toLowerCase() || 'japan'}`;
+}
 export function tileCenters(count: number) {
-  const gap = Math.min(75, 480 / Math.max(1, count - 1));
+  const steps = Math.max(1, count - 1);
+  const spreadX = Math.min(220, (count - 1) * 44);
+  const spreadY = Math.min(260, (count - 1) * 52);
   return Array.from({ length: count }, (_, i) => ({
-    x: 540,
-    y: 660 + i * gap,
+    x: 540 - spreadX / 2 + (i * spreadX) / steps,
+    y: 850 - spreadY / 2 + (i * spreadY) / steps,
   }));
 }
 export function drawStory(
@@ -35,15 +46,31 @@ export function drawStory(
   ctx.fillStyle = '#0647ff';
   ctx.fillRect(0, 0, 1080, 1920);
   ctx.fillStyle = '#fff';
-  ctx.font = '44px "Geist Mono", monospace';
-  ctx.fillText(story.title, 85, 350, 900);
+  const count =
+    story.counter === 'total' ? story.beers.total : story.beers.today;
+  const label = `${String(count)} ${count === 1 ? 'beer' : 'beers'}`;
+  const iconAspectRatio = 12 / 11;
+  const gap = 20;
+  ctx.font = '34px "Geist Mono", monospace';
+  const width = Math.max(
+    ctx.measureText(story.title).width,
+    story.counter === 'hidden'
+      ? 0
+      : ctx.measureText(label).width + 34 * iconAspectRatio + gap,
+  );
+  const textSize = Math.min(34, (34 * 900) / Math.max(1, width));
+  ctx.font = `${String(textSize)}px "Geist Mono", monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(story.title, 540, 350);
   const centers = tileCenters(images.length);
   images.forEach((image, index) => {
     const center = centers[index];
     if (!center) return;
     ctx.save();
     ctx.translate(center.x, center.y + Math.sin(time * 1.5 + index) * 8);
-    ctx.transform(0.707, -0.408, 0.707, 0.408, 0, 0);
+    // Upright panels, drawn from the upper-left back card to the lower-right front.
+    if (story.perspective === 'angled') ctx.transform(0.78, -0.23, 0, 1, 0, 0);
     ctx.fillStyle = '#fff';
     ctx.fillRect(-318, -218, 636, 436);
     ctx.drawImage(image, -310, -210, 620, 420);
@@ -54,6 +81,8 @@ export function drawStory(
   });
   if (story.counter !== 'hidden') {
     ctx.fillStyle = '#fff';
+    const iconWidth = textSize * iconAspectRatio;
+    const left = (1080 - iconWidth - gap - ctx.measureText(label).width) / 2;
     const mug = [
       '0001111111100000',
       '0011000000110000',
@@ -67,27 +96,19 @@ export function drawStory(
       '0010000000100000',
       '0001111111000000',
     ];
+    const pixelSize = textSize / mug.length;
     mug.forEach((row, y) => {
       row.split('').forEach((bit, x) => {
-        if (bit === '1') ctx.fillRect(700 + x * 5, 1430 + y * 5, 5, 5);
+        if (bit === '1')
+          ctx.fillRect(
+            left + (x - 2) * pixelSize,
+            1395 - textSize / 2 + y * pixelSize,
+            pixelSize,
+            pixelSize,
+          );
       });
     });
-    ctx.font = '44px "Geist Mono", monospace';
-    ctx.fillText(
-      String(
-        story.counter === 'total' ? story.beers.total : story.beers.today,
-      ).padStart(2, '0'),
-      800,
-      1468,
-    );
-    ctx.font = '30px "Geist Mono", monospace';
-    ctx.fillText(
-      story.counter === 'both'
-        ? `today / ${String(story.beers.total)} total`
-        : story.counter,
-      700,
-      1530,
-      310,
-    );
+    ctx.textAlign = 'left';
+    ctx.fillText(label, left + iconWidth + gap, 1395);
   }
 }
