@@ -377,7 +377,7 @@ try {
   const manifest = await request('/api/trip/story', {
     day: '2099-10-15',
     ids: [id],
-    counter: 'both',
+    counter: 'total',
   });
   assert.equal(manifest.status, 200);
   const story = z
@@ -393,7 +393,7 @@ try {
       await request('/api/trip/story', {
         day: '2099-10-14',
         ids: [id],
-        counter: 'both',
+        counter: 'total',
       })
     ).status,
     400,

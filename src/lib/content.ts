@@ -1,5 +1,5 @@
 import { getEmDashCollection } from 'emdash';
-import { mediaSchema, tokyoDay, type TripMedia } from './model';
+import { daySchema, mediaSchema, tokyoDay, type TripMedia } from './model';
 import { z } from 'zod';
 
 export async function tripMedia() {
@@ -21,6 +21,26 @@ export async function tripMedia() {
     cursor = nextCursor;
   } while (cursor);
   return items;
+}
+export async function tripStartDay(media: TripMedia[]) {
+  const firstEntries = await Promise.all(
+    ['posts', 'beers'].map((collection) =>
+      getEmDashCollection(collection, {
+        status: 'published',
+        limit: 1,
+        orderBy: { day: 'asc' },
+      }),
+    ),
+  );
+  return [
+    ...media.map((item) => tokyoDay(item.captured_at)),
+    ...firstEntries.flatMap(({ entries }) =>
+      entries.flatMap((entry) => {
+        const parsed = daySchema.safeParse(entry.data.day);
+        return parsed.success ? [parsed.data] : [];
+      }),
+    ),
+  ].sort()[0];
 }
 const beerSchema = z.object({
   day: z.string(),
