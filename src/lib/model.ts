@@ -38,6 +38,25 @@ export const mediaSchema = metadataSchema.extend({
   demo: z.coerce.boolean().nullish(),
 });
 export type TripMedia = z.infer<typeof mediaSchema>;
+export function captureInputValue(value?: string | null): string {
+  if (!value) return '';
+  const instant = new Date(value).getTime();
+  if (!Number.isFinite(instant)) return '';
+  return new Date(instant + 9 * 3600_000).toISOString().slice(0, 23);
+}
+export function captureTimeFromInput(
+  value: string,
+  original?: string | null,
+): string {
+  // datetime-local may omit zero seconds even when the input supports them.
+  const local = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)
+    ? `${value}:00`
+    : value;
+  const captured = z.iso.datetime({ offset: true }).parse(`${local}+09:00`);
+  if (original && new Date(original).getTime() === new Date(captured).getTime())
+    return original;
+  return captured;
+}
 export function tokyoDay(value: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Tokyo',

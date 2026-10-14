@@ -4,7 +4,11 @@ import { geoMercator, geoPath } from 'd3-geo';
 import japan from '../lib/japan.json';
 import { api } from '../lib/api-client';
 import { prepareMedia } from '../lib/prepare-media';
-import { categories } from '../lib/model';
+import {
+  categories,
+  captureInputValue,
+  captureTimeFromInput,
+} from '../lib/model';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Checkbox } from './ui/checkbox';
@@ -91,7 +95,10 @@ function Metadata({
           publish: data.get('publish') === 'on',
           metadata: {
             title: data.get('title'),
-            captured_at: `${formString(data, 'captured')}:00+09:00`,
+            captured_at: captureTimeFromInput(
+              formString(data, 'captured'),
+              item.data.captured_at,
+            ),
             latitude: Number(latitude),
             longitude: Number(longitude),
             place: data.get('place'),
@@ -145,15 +152,8 @@ function Metadata({
             id="media-captured"
             name="captured"
             type="datetime-local"
-            defaultValue={
-              item.data.captured_at
-                ? new Date(
-                    new Date(item.data.captured_at).getTime() + 9 * 3600_000,
-                  )
-                    .toISOString()
-                    .slice(0, 16)
-                : ''
-            }
+            step="0.001"
+            defaultValue={captureInputValue(item.data.captured_at)}
             required
           />
         </Field>

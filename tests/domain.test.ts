@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { daySchema, tokyoDay, metadataSchema } from '../src/lib/model';
+import {
+  daySchema,
+  tokyoDay,
+  metadataSchema,
+  captureInputValue,
+  captureTimeFromInput,
+} from '../src/lib/model';
 import {
   validateMedia,
   embeddedMediaReferences,
@@ -11,6 +17,28 @@ import { tileCenters } from '../src/lib/story';
 void test('capture times group into Japan days across UTC midnight', () => {
   assert.equal(tokyoDay(new Date('2026-10-14T14:59:59Z')), '2026-10-14');
   assert.equal(tokyoDay(new Date('2026-10-14T15:00:00Z')), '2026-10-15');
+});
+void test('Japan capture inputs preserve precision and unchanged ISO timestamps', () => {
+  const original = '2026-10-15T11:15:42.123Z';
+  const input = captureInputValue(original);
+  assert.equal(input, '2026-10-15T20:15:42.123');
+  assert.equal(captureTimeFromInput(input, original), original);
+  assert.equal(
+    captureTimeFromInput('2026-10-15T20:15', '2026-10-15T11:15:00Z'),
+    '2026-10-15T11:15:00Z',
+  );
+  assert.equal(
+    new Date(
+      captureTimeFromInput('2026-10-16T00:01:07.456', original),
+    ).toISOString(),
+    '2026-10-15T15:01:07.456Z',
+  );
+  assert.equal(
+    captureTimeFromInput('2026-10-15T20:15'),
+    '2026-10-15T20:15:00+09:00',
+  );
+  assert.equal(captureInputValue(null), '');
+  assert.throws(() => captureTimeFromInput(''));
 });
 void test('inline and gallery media cannot bypass location checks', () => {
   assert.deepEqual(

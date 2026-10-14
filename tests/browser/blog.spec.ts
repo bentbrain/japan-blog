@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { Input, BufferSource, ALL_FORMATS } from 'mediabunny';
+import { z } from 'zod';
 const run = promisify(execFile);
 test.beforeAll(async ({ request }) => {
   await request.post('/_emdash/api/setup/dev-bypass', {
@@ -255,6 +256,81 @@ test('owner uploads a photo and publishes it with manual GPS and categories', as
       .filter({ hasText: 'Photo publication' })
       .getByRole('img', { name: 'Browser upload photo', exact: true }),
   ).toBeVisible();
+});
+
+test('category-only edits retain capture seconds and milliseconds', async ({
+  page,
+}) => {
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/media');
+  await page.waitForURL('**/owner/media');
+  await expect(
+    page.getByRole('button', { name: 'UPLOAD', exact: true }),
+  ).toBeEnabled();
+  const captured = '2026-10-15T11:15:42.123Z';
+  const created = await page.request.post('/_emdash/api/content/media_items', {
+    headers: { 'X-EmDash-Request': '1', Origin: 'http://127.0.0.1:4391' },
+    data: {
+      slug: `capture-precision-${crypto.randomUUID()}`,
+      data: {
+        title: 'Capture precision',
+        kind: 'photo',
+        captured_at: captured,
+        latitude: 35.6895,
+        longitude: 139.6917,
+        categories: ['food'],
+        source_url: '/demo/japan.jpg',
+      },
+    },
+  });
+  expect(created.ok()).toBe(true);
+  const id = z
+    .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
+    .parse(await created.json()).data.item.id;
+  await page.reload();
+  await page
+    .getByRole('button', { name: 'Capture precision, draft', exact: true })
+    .click();
+  await page.getByRole('checkbox', { name: 'shopping', exact: true }).check();
+  await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+  await expect(page.locator('#save-status')).toHaveText('saved');
+  const saved = await page.request.get(
+    `/_emdash/api/content/media_items/${id}`,
+  );
+  const metadata = z
+    .object({
+      data: z.object({
+        item: z.object({
+          data: z.object({
+            captured_at: z.string(),
+            categories: z.array(z.string()),
+          }),
+        }),
+      }),
+    })
+    .parse(await saved.json()).data.item.data;
+  expect(metadata.categories).toContain('shopping');
+  expect(metadata.captured_at).toBe(captured);
+  await page.getByLabel('captured in japan').fill('2026-10-16T00:01:07.456');
+  const secondSave = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/trip/media') &&
+      response.request().method() === 'PATCH',
+  );
+  await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+  await secondSave;
+  await expect(page.locator('#save-status')).toHaveText('saved');
+  const edited = await page.request.get(
+    `/_emdash/api/content/media_items/${id}`,
+  );
+  expect(
+    z
+      .object({
+        data: z.object({
+          item: z.object({ data: z.object({ captured_at: z.string() }) }),
+        }),
+      })
+      .parse(await edited.json()).data.item.data.captured_at,
+  ).toBe('2026-10-15T15:01:07.456Z');
 });
 
 test('cancelling PNG export during loading or saving prevents a download', async ({
