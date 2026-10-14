@@ -112,6 +112,12 @@ try {
   assert.equal(login.status, 200, loginBody);
   cookie = login.headers.get('set-cookie')?.split(';')[0] || '';
   assert.ok(cookie, 'Development session missing');
+  const emptyGallery = await (
+    await request('/gallery', undefined, 'GET', false)
+  ).text();
+  assert.ok(!emptyGallery.includes('aria-label="Media categories"'));
+  assert.ok(!emptyGallery.includes('<footer'));
+  assert.ok(!emptyGallery.includes('theme-toggle'));
   // Import endpoint modules through safe reads before stateful requests, so
   // dependency optimization does not interrupt an upload or content save.
   for (const path of [
@@ -533,6 +539,13 @@ try {
   assert.ok(home.includes('Full post body verification'));
   assert.ok(home.includes('Integration video'));
   assert.ok(home.includes('Native gallery image'));
+  const gallery = await (
+    await request('/gallery', undefined, 'GET', false)
+  ).text();
+  assert.ok(gallery.includes('aria-label="Media categories"'));
+  assert.ok(gallery.includes('/gallery?category=food'));
+  assert.ok(gallery.includes('/gallery?category=shopping'));
+  assert.ok(!gallery.includes('/gallery?category=people'));
   assert.ok(
     !/src="[^"]*\/_image/.test(home),
     'Dimensioned content uses blocked image transforms',

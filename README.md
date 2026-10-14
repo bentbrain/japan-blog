@@ -53,4 +53,4 @@ The production account is the sole author. Public account creation and invitatio
 
 `node mockups/server.mjs` serves the approved mockups at `http://127.0.0.1:4317`. Their publishing and export actions are simulations. Saved feedback and private tunnel credentials live in the ignored `review-data/` directory.
 
-The interface follows shop.bent.build and stay.bent.build. The shirt mark belongs to the same owner. Sample photographs and provenance are listed in `mockups/assets/sources.json`; the sample video pans a sample photograph. Map geometry comes from Natural Earth's public-domain data via world-atlas. Geist Mono uses the SIL Open Font License. Dependency licences remain with their packages.
+The interface follows shop.bent.build and stay.bent.build. The shirt mark belongs to the same owner. Sample photographs and provenance are listed in `mockups/assets/sources.json`; the sample video pans a sample photograph. The application map uses Natural Earth's public-domain 1:10m country geometry, with its pinned source recorded in `src/lib/japan.json`. Geist Mono uses the SIL Open Font License. Dependency licences remain with their packages.
