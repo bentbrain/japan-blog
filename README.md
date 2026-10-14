@@ -51,7 +51,13 @@ The public `.feedback-toolbar.json` links local agent tools to this Japan projec
 
 ## Deployment and repository controls
 
-PRs run strict ESLint, formatting, TypeScript, unit and full-flow tests, Knip and a production build. Main requires all quality and security checks, an up-to-date branch and resolved review conversations. Independent T3 review precedes auto-merge; GitHub reviewer approvals are not required for this single-contributor repository. Secrets and local data are excluded from Git. Deployment configuration lives in `wrangler.jsonc`; application secrets belong in Cloudflare's encrypted secret storage.
+PRs run strict ESLint, formatting, TypeScript, unit and full-flow tests, Knip and a production build. Main requires all nine quality and security checks, an up-to-date branch and resolved review conversations, with administrator enforcement. A separate T3 GPT-6.1 agent must review the exact PR head against the current main base before merge or auto-merge. Any head or base change requires another review. GitHub reviewer approvals are not required for this single-contributor repository. The complete authorization and review procedure lives in [AGENTS.md](AGENTS.md).
+
+The `Independent review` commit status links the reviewed head SHA to independent review evidence. The owner may add that exact context to required branch-protection checks after the policy PR passes review. Preserve the existing nine contexts, strict checks, administrator enforcement and resolved-conversation requirement. Until that control change, agents must still enforce the documented review gate. Publish review status through the commit-status API; do not create an Actions job with the same name or treat a CI result as review evidence.
+
+The review status is a PR merge gate. Squash merging creates a different main SHA; Quality runs again on main, and Deploy requires the latest run of each of the nine CI jobs to succeed for its checked-out SHA through `scripts/require-checks.mjs`. Leave that deployment list unchanged. Requiring the PR-head review status on the new squash SHA would block normal deployment, and copying success would falsely attest to a review of that SHA. Agents must use normal CI deployment and cannot push to main, bypass protection or deploy manually.
+
+Secrets and local data are excluded from Git. Deployment configuration lives in `wrangler.jsonc`; application secrets belong in Cloudflare's encrypted secret storage.
 
 The production account is the sole author. Public account creation and invitations are disabled. First-time passkey setup requires a short-lived private setup cookie. Generate a setup capability and keep it private; clear `SETUP_TOKEN` after registering the owner account.
 
