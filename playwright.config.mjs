@@ -13,7 +13,11 @@ export default defineConfig({
     command: 'pnpm dev --host 127.0.0.1 --port 4391 --ignore-lock',
     url: 'http://127.0.0.1:4391/_emdash/api/health',
     reuseExistingServer: false,
-    env: { TEST_EPHEMERAL: '1' },
+    env: {
+      TEST_EPHEMERAL: '1',
+      PUBLIC_FEEDBACK_SERVER: 'https://toolbar.bent.build',
+      PUBLIC_FEEDBACK_PROJECT_ID: 'prj_0000000000000000',
+    },
     timeout: 60_000,
   },
 });

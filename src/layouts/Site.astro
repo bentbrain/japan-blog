@@ -2,16 +2,17 @@
 import '../styles/globals.css';
 import Pixel from '../components/Pixel.astro';
 import { beerCounts } from '../lib/content';
+import { feedbackConfiguration } from '../lib/feedback';
 interface Props {
   title?: string;
   owner?: boolean;
 }
 const { title = 'jp.bent.build', owner = false } = Astro.props;
 const counts = await beerCounts();
-const feedbackServer = import.meta.env.PUBLIC_FEEDBACK_SERVER;
-const feedbackProject = import.meta.env.PUBLIC_FEEDBACK_PROJECT_ID;
-const validFeedback =
-  feedbackServer && feedbackProject && /^https:\/\//.test(feedbackServer);
+const feedback = feedbackConfiguration(
+  import.meta.env.PUBLIC_FEEDBACK_SERVER,
+  import.meta.env.PUBLIC_FEEDBACK_PROJECT_ID,
+);
 ---
 
 <!doctype html>
@@ -88,15 +89,18 @@ const validFeedback =
         <span>{counts.total} beers</span>
       </div>
     </header>
-    <main class="mx-auto max-w-[1400px] p-4 min-[601px]:p-6">
+    <main
+      data-feedback-private={owner ? true : undefined}
+      class="mx-auto max-w-[1400px] p-4 min-[601px]:p-6"
+    >
       <slot />
     </main>
-    {validFeedback && (
+    {feedback && (
       <script
         is:inline
         defer
-        src={`${feedbackServer}/embed.js`}
-        data-project={feedbackProject}
+        src={`${feedback.server}/embed.js`}
+        data-project={feedback.projectId}
       ></script>
     )}
   </body>
