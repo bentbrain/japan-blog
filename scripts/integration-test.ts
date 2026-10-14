@@ -124,6 +124,7 @@ try {
     '/_emdash/api/media',
     '/api/trip/upload',
     '/api/trip/posts',
+    '/api/trip/category-icons',
   ]) {
     const warmed = await request(path, undefined, 'GET');
     assert.ok(
@@ -175,6 +176,71 @@ try {
       `Invitation endpoint ${path}: expected denial, received ${String(anonymous.status)} ${await anonymous.text()}\n${logs}`,
     );
   }
+  for (const method of ['GET', 'POST']) {
+    const anonymous = await request(
+      '/api/trip/category-icons',
+      method === 'POST' ? { category: 'private fixture' } : undefined,
+      method,
+      false,
+    );
+    assert.equal(anonymous.status, 401);
+  }
+  for (const headers of [
+    new Headers({ Cookie: cookie, 'Content-Type': 'application/json' }),
+    new Headers({
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+      Origin: 'https://attacker.invalid',
+      'X-EmDash-Request': '1',
+    }),
+    new Headers({
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+      Origin: base,
+    }),
+  ])
+    assert.equal(
+      (
+        await fetch(base + '/api/trip/category-icons', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ category: 'private fixture' }),
+        })
+      ).status,
+      403,
+    );
+  assert.equal(
+    (
+      await request('/api/trip/category-icons', {
+        category: 'not a saved category',
+      })
+    ).status,
+    404,
+  );
+  const iconStatus = await request('/api/trip/category-icons');
+  assert.match(iconStatus.headers.get('Cache-Control') || '', /no-store/);
+  assert.equal(
+    (
+      await request(
+        '/_emdash/api/media/file/category-icons/guessed/key.png',
+        undefined,
+        'GET',
+        false,
+      )
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(
+        '/_emdash/api/media/file/category%2Dicons/guessed/key.png',
+        undefined,
+        'GET',
+        false,
+      )
+    ).status,
+    404,
+  );
   const photo = await readFile('public/demo/tokyo.jpg'),
     video = await readFile('public/demo/sample.mp4');
   const form = new FormData();
@@ -241,7 +307,7 @@ try {
     latitude: 35.6895,
     longitude: 139.6917,
     place: 'tokyo',
-    categories: ['food', 'shopping'],
+    categories: ['food', 'shopping', '  Synthetic Ramen  '],
   };
   for (const encoded of ['trip%2Dprivate', '%2574rip-private']) {
     const path = originalKey.replace('trip-private', encoded);
@@ -274,6 +340,85 @@ try {
     'PATCH',
   );
   assert.equal(saved.status, 200, await saved.text());
+  const customStatus = await request('/api/trip/category-icons');
+  const customIcons = z
+    .object({
+      icons: z.array(
+        z.object({
+          label: z.string(),
+          normalized: z.string(),
+          state: z.string(),
+          canRetry: z.boolean(),
+        }),
+      ),
+    })
+    .parse(await customStatus.json()).icons;
+  assert.deepEqual(
+    customIcons.find((icon) => icon.normalized === 'synthetic ramen'),
+    {
+      label: 'Synthetic Ramen',
+      normalized: 'synthetic ramen',
+      state: 'setup',
+      canRetry: false,
+    },
+  );
+  const afterSave = item.parse(
+    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+  );
+  assert.deepEqual(afterSave.data.item.data.categories, [
+    'food',
+    'shopping',
+    'Synthetic Ramen',
+  ]);
+  const draftCategory = 'private-only-icon-fixture';
+  const draftEdit = await request(
+    `/_emdash/api/content/media_items/${id}`,
+    { _rev: afterSave.data._rev, data: { categories: [draftCategory] } },
+    'PUT',
+  );
+  assert.equal(draftEdit.status, 200, await draftEdit.text());
+  const draftStatuses = JSON.stringify(
+    await (await request('/api/trip/category-icons')).json(),
+  );
+  assert.ok(
+    draftStatuses.includes(draftCategory),
+    'Owner cannot see staged category status',
+  );
+  const publicBeforePublish = await (
+    await request('/gallery', undefined, 'GET', false)
+  ).text();
+  assert.ok(
+    !publicBeforePublish.includes(draftCategory),
+    'Draft category leaked in public gallery',
+  );
+  assert.ok(
+    publicBeforePublish.includes('Synthetic Ramen'),
+    'Published category disappeared after draft save',
+  );
+  const staged = item.parse(
+    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+  );
+  const restored = await request(
+    '/api/trip/media',
+    { id, revision: staged.data._rev, publish: true, metadata },
+    'PATCH',
+  );
+  assert.equal(restored.status, 200, await restored.text());
+  const privateHash = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode('never-published-icon-fixture'),
+  );
+  const iconId = [...new Uint8Array(privateHash)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+  const deniedIcon = await request(
+    `/category-icons/${iconId}/${'a'.repeat(64)}.png`,
+    undefined,
+    'GET',
+    false,
+  );
+  assert.equal(deniedIcon.status, 404, `${await deniedIcon.text()}\n${logs}`);
+  assert.match(deniedIcon.headers.get('Cache-Control') || '', /no-store/);
   for (let index = 0; index < 101; index++) {
     const draft = await request('/_emdash/api/content/media_items', {
       slug: `pagination-${String(index)}-${crypto.randomUUID()}`,
