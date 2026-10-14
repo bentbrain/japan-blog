@@ -35,7 +35,7 @@ const media = allMedia.filter(
           aria-current={category === name ? 'page' : undefined}
         >
           {['food', 'shopping', 'landscape', 'beer'].includes(name) && (
-            <Pixel name={name} />
+            <Pixel name={name} centerPaint />
           )}
           {name}
         </a>
