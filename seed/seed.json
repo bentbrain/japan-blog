@@ -54,6 +54,11 @@
           "widget": "japan-trip:gallery"
         },
         {
+          "slug": "shop_design",
+          "type": "json",
+          "label": "shop design"
+        },
+        {
           "slug": "demo",
           "type": "boolean",
           "label": "demo"

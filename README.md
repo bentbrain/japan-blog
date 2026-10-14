@@ -6,6 +6,8 @@ Public journal, categorised gallery, geolocated media map and beer counter. The 
 
 The application uses Tailwind utilities and shadcn components on Base UI. Theme tokens and the official shadcn state utilities live in `src/styles/globals.css`.
 
+Post media uses the shadcn carousel with Embla below 601px, with mouse dragging, touch swiping, keyboard arrows and navigation buttons. An attached shop design is its final slide. Wider layouts show the media grid followed by the design with a 16px gap. Video controls retain their native interaction.
+
 ## Development
 
 Use Node 24 and pnpm 12.11.2.
@@ -32,7 +34,7 @@ pnpm build
 ## Owner tools
 
 - `/owner`: posts and daily beer entries.
-- `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, drafts and publishing.
+- `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, optional shop design, drafts and publishing. Paste a public shop.bent.build product or featured link and choose black or white. The journal and post page show its flat t-shirt image and link to that product with the chosen colour.
 - `/owner/media`: uploads, capture times, coordinates and multiple categories. Missing metadata keeps an upload unpublished.
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
 - `/_emdash/admin`: native CMS maintenance, revisions and passkey management.
@@ -52,5 +54,9 @@ The production account is the sole author. Public account creation and invitatio
 ## Design review and sample assets
 
 `node mockups/server.mjs` serves the approved mockups at `http://127.0.0.1:4317`. Their publishing and export actions are simulations. Saved feedback and private tunnel credentials live in the ignored `review-data/` directory.
+
+The separate `/post-design.html` review page uses sample travel content and an existing public shop design. Its controls change only the preview. The shop project remains independent; the blog uses its public flat-image endpoint.
+
+For an existing database, add the optional field before deploying this feature: `pnpm exec emdash schema add-field posts shop_design --type json --label "shop design" --url <instance-url>`. New databases receive it from the seed. Schema changes and deployment require a separate approved rollout.
 
 The interface follows shop.bent.build and stay.bent.build. The shirt mark belongs to the same owner. Sample photographs and provenance are listed in `mockups/assets/sources.json`; the sample video pans a sample photograph. The application map uses Natural Earth's public-domain 1:10m country geometry, with its pinned source recorded in `src/lib/japan.json`. Geist Mono uses the SIL Open Font License. Dependency licences remain with their packages.
