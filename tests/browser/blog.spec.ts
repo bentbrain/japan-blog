@@ -108,6 +108,28 @@ test('public themes follow the OS with JavaScript disabled', async ({
   }
 });
 
+test.beforeEach(async ({ page }) => {
+  await page.route('https://toolbar.bent.build/embed.js', (route) =>
+    route.fulfill({ contentType: 'application/javascript', body: '' }),
+  );
+});
+test('shared layout installs the toolbar once and keeps owner content private', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const embed = page.locator(
+    'script[src="https://toolbar.bent.build/embed.js"]',
+  );
+  await expect(embed).toHaveCount(1);
+  await expect(embed).toHaveAttribute('data-project', 'prj_0000000000000000');
+  await expect(page.locator('main')).not.toHaveAttribute(
+    'data-feedback-private',
+  );
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+  await page.waitForURL('**/owner/posts/new');
+  await expect(embed).toHaveCount(1);
+  await expect(page.locator('main')).toHaveAttribute('data-feedback-private');
+});
 test('mouse dragging advances the mobile post carousel', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
