@@ -30,7 +30,7 @@ const feedback = feedbackConfiguration(
     />
     {owner && <meta name="robots" content="noindex" />}
   </head>
-  <body>
+  <body data-feedback-redact={owner ? true : undefined}>
     <header
       data-feedback-id="site-header"
       class:list={[
