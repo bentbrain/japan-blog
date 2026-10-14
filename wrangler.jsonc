@@ -5,6 +5,12 @@
   "main": "./src/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["login@auth.jp.bent.build"],
+    },
+  ],
   "d1_databases": [
     {
       "binding": "DB",

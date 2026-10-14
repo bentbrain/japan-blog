@@ -90,6 +90,7 @@ const feedback = feedbackConfiguration(
     </header>
     <main
       data-feedback-private={owner ? true : undefined}
+      data-feedback-redact={owner ? true : undefined}
       class="mx-auto max-w-[1400px] p-4 min-[601px]:p-6"
     >
       <slot />
