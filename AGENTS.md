@@ -7,6 +7,7 @@
 - Store GPS and capture time on every published media record. Extract originals before conversions; require manual coordinates if GPS is missing. Use Asia/Tokyo for daily grouping.
 - Match the existing bent identity: Geist Mono, cobalt #0647ff on white and #2870ff on black, thin borders, square controls, lowercase interface copy and uppercase actions.
 - Keep interface copy minimal. Let the travel content speak. Use small, original pixel icons for playful details.
+- Use Tailwind utilities for application styling. Use shadcn components built on Base UI whenever a component fits, with small modifications for the approved bent identity.
 - Keep sample content clearly identified in the review tools.
 - Keep review feedback in ignored local storage and preserve it during edits.
 - Never present simulated publishing, login, uploads, or exports as real operations.

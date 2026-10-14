@@ -112,9 +112,21 @@ try {
     403,
   );
   assert.equal(
-    (await request('/_emdash/api/users', undefined, 'GET')).status,
+    (await request('/_emdash/api/admin/users', undefined, 'GET')).status,
     403,
   );
+  for (const path of [
+    '/_emdash/api/auth/invite',
+    '/_emdash/api/auth/invite/accept',
+    '/_emdash/api/auth/invite/register-options',
+    '/_emdash/api/auth/invite/complete',
+  ]) {
+    assert.equal((await request(path, {}, 'POST')).status, 403);
+    assert.ok(
+      [401, 403].includes((await request(path, {}, 'POST', false)).status),
+      `Invitation endpoint ${path} accepted an anonymous request`,
+    );
+  }
   const photo = await readFile('public/demo/tokyo.jpg'),
     video = await readFile('public/demo/sample.mp4');
   const form = new FormData();
@@ -134,14 +146,40 @@ try {
     422,
     'Locationless upload published',
   );
-  let current = item.parse(
+  const current = item.parse(
     await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+  );
+  const draftAsset = {
+    id: z.object({ id: z.string() }).parse(current.data.item.data.asset).id,
+    url: z.string().parse(current.data.item.data.source_url),
+  };
+  assert.equal(
+    (await request(draftAsset.url, undefined, 'GET', false)).status,
+    404,
+    'Draft media bytes exposed',
+  );
+  assert.equal(
+    (await request(`/_emdash/api/media/asset/${draftAsset.id}/video.mp4`))
+      .status,
+    200,
+    'Owner draft preview denied',
   );
   const originalKey = z.string().parse(current.data.item.data.original_key);
   assert.equal(
     (
       await request(
         `/_emdash/api/media/file/${originalKey}`,
+        undefined,
+        'GET',
+        false,
+      )
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(
+        `/_image?href=${encodeURIComponent('/_emdash/api/media/file/' + originalKey)}&w=100`,
         undefined,
         'GET',
         false,
@@ -188,12 +226,9 @@ try {
     'PATCH',
   );
   assert.equal(saved.status, 200, await saved.text());
-  current = item.parse(
-    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
-  );
   for (let index = 0; index < 101; index++) {
     const draft = await request('/_emdash/api/content/media_items', {
-      slug: `pagination-${index}-${crypto.randomUUID()}`,
+      slug: `pagination-${String(index)}-${crypto.randomUUID()}`,
       data: { title: 'Pagination fixture', kind: 'photo' },
     });
     assert.equal(draft.status, 201, await draft.text());
@@ -206,17 +241,20 @@ try {
       items: z.array(
         z.object({
           id: z.string(),
-          data: z.object({ asset: z.object({ url: z.string() }).nullish() }),
+          data: z.object({
+            asset: z.object({ id: z.string(), url: z.string() }).nullish(),
+          }),
         }),
       ),
     })
     .parse(libraryBody);
   const asset = library.items.find((entry) => entry.id === id)?.data.asset;
   assert.ok(asset);
-  const ranged = await fetch(base + asset.url, {
+  const ranged = await fetch(base + draftAsset.url, {
     headers: { Range: 'bytes=0-99' },
   });
   assert.equal(ranged.status, 206);
+  assert.match(ranged.headers.get('Cache-Control') || '', /no-store/);
   assert.equal((await ranged.arrayBuffer()).byteLength, 100);
   const beerSaved = await request('/api/trip/beers', {
     day: '2099-10-15',
@@ -277,6 +315,43 @@ try {
   });
   const postId = item.parse(await post.json()).data.item.id;
   assert.equal((await publish('posts', postId)).status, 200);
+
+  const postRevision = item.parse(
+    await (await request(`/_emdash/api/content/posts/${postId}`)).json(),
+  ).data._rev;
+  const edited = await request('/api/trip/posts', {
+    id: postId,
+    revision: postRevision,
+    title: 'integration post',
+    day: '2099-10-15',
+    place: 'tokyo',
+    gallery: [id],
+    publish: true,
+    document: {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'Full post body verification',
+              marks: [{ type: 'bold' }],
+            },
+          ],
+        },
+        {
+          type: 'videoBlock',
+          attrs: { src: draftAsset.url, mediaId: asset.id, provider: 'local' },
+        },
+      ],
+    },
+  });
+  assert.equal(edited.status, 200, await edited.text());
+  const editView = await request(`/api/trip/posts?id=${postId}`);
+  assert.equal(editView.status, 200);
+  assert.ok(JSON.stringify(await editView.json()).includes('videoBlock'));
+
   const home = await (await request('/', undefined, 'GET', false)).text();
   assert.ok(home.includes('Full post body verification'));
   assert.ok(home.includes('Integration video'));
@@ -287,6 +362,53 @@ try {
       ).text()
     ).includes('Integration video'),
   );
+  const unpublishRevision = item.parse(
+    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+  ).data._rev;
+  assert.equal(
+    (
+      await request(`/_emdash/api/content/media_items/${id}/unpublish`, {
+        _rev: unpublishRevision,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request(draftAsset.url, undefined, 'GET', false)).status,
+    404,
+    'Unpublished media bytes exposed',
+  );
+  const rejected = await request('/api/trip/posts', {
+    title: 'Rejected publish',
+    day: '2099-10-15',
+    place: '',
+    gallery: [id],
+    publish: true,
+    document: { type: 'doc', content: [{ type: 'paragraph' }] },
+  });
+  assert.equal(rejected.status, 200);
+  const rejectedBody = z
+    .object({
+      post: z.object({
+        id: z.string(),
+        revision: z.string(),
+        status: z.string(),
+      }),
+      publicationError: z.string(),
+    })
+    .parse(await rejected.json());
+  assert.equal(rejectedBody.post.status, 'draft');
+  const recovered = await request('/api/trip/posts', {
+    id: rejectedBody.post.id,
+    revision: rejectedBody.post.revision,
+    title: 'Recovered draft',
+    day: '2099-10-15',
+    place: '',
+    gallery: [],
+    publish: false,
+    document: { type: 'doc', content: [{ type: 'paragraph' }] },
+  });
+  assert.equal(recovered.status, 200, await recovered.text());
   await request(`/_emdash/api/content/posts/${postId}`, undefined, 'DELETE');
   await request(`/_emdash/api/content/media_items/${id}`, undefined, 'DELETE');
   console.log(

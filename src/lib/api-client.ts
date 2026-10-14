@@ -1,3 +1,4 @@
+import { z } from 'zod';
 export async function api(
   path: string,
   body?: unknown,
@@ -13,10 +14,16 @@ export async function api(
   });
   const data: unknown = await response.json();
   if (!response.ok) {
-    const message =
-      data && typeof data === 'object' && 'error' in data
-        ? JSON.stringify(data.error)
-        : 'Request failed';
+    const parsed = z
+      .object({
+        error: z.union([z.string(), z.object({ message: z.string() })]),
+      })
+      .safeParse(data);
+    const message = parsed.success
+      ? typeof parsed.data.error === 'string'
+        ? parsed.data.error
+        : parsed.data.error.message
+      : 'Request failed';
     throw new Error(message);
   }
   return data;

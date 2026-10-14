@@ -86,10 +86,9 @@ test('exports require owner auth and PNG has story dimensions', async ({
 test('rich editor exposes the published trip media picker', async ({
   page,
 }) => {
-  await page.goto(
-    '/_emdash/api/auth/dev-bypass?redirect=/_emdash/admin/content/posts/new',
-  );
-  await page.waitForURL('**/content/posts/new');
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+  await page.waitForURL('**/owner/posts/new');
+  await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
   await expect(page.locator('.trip-gallery-field')).toBeVisible();
   await expect(page.locator('.trip-gallery-options img').first()).toBeVisible();
 });
@@ -116,5 +115,126 @@ test('MP4 story export contains a portrait AVC video track', async ({
     expect(await input.computeDuration()).toBeCloseTo(8);
   } finally {
     input.dispose();
+  }
+});
+
+test('owner writes and publishes rich text through the shadcn editor', async ({
+  page,
+}) => {
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+  await page.waitForURL('**/owner/posts/new');
+  await page.getByLabel('title', { exact: true }).fill('Browser post');
+  await page
+    .getByRole('textbox', { name: 'Post content' })
+    .fill('A real published paragraph.');
+  await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('published');
+  await page.goto('/');
+  await expect(page.getByText('A real published paragraph.')).toBeVisible();
+});
+
+test('draft posts stay available to the owner and hidden from the journal', async ({
+  page,
+}) => {
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+  await page.waitForURL('**/owner/posts/new');
+  await page
+    .getByLabel('title', { exact: true })
+    .fill('Unpublished browser draft');
+  await page
+    .getByRole('textbox', { name: 'Post content' })
+    .fill('Private draft paragraph.');
+  await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('draft saved');
+  await page.goto('/owner');
+  await expect(
+    page.getByRole('row').filter({ hasText: 'Unpublished browser draft' }),
+  ).toContainText('draft');
+  await page.goto('/');
+  await expect(page.getByText('Private draft paragraph.')).toBeHidden();
+});
+
+test('owner uploads a photo and publishes it with manual GPS and categories', async ({
+  page,
+}) => {
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/media');
+  await page.waitForURL('**/owner/media');
+  await expect(
+    page.getByRole('button', { name: 'UPLOAD', exact: true }),
+  ).toBeEnabled();
+  await page.locator('#upload').setInputFiles('public/demo/japan.jpg');
+  await expect(page.locator('#upload-status')).toHaveText('uploaded', {
+    timeout: 30_000,
+  });
+  await expect(page.locator('#metadata')).toBeVisible();
+  await page.getByLabel('title', { exact: true }).fill('Browser upload photo');
+  await page.getByLabel('captured in japan').fill('2026-10-15T20:15');
+  await page.getByLabel('latitude', { exact: true }).fill('35.6895');
+  await page.getByLabel('longitude', { exact: true }).fill('139.6917');
+  await page.getByRole('checkbox', { name: 'food', exact: true }).check();
+  await page.getByLabel('other categories').fill('ramen');
+  await page.getByRole('checkbox', { name: 'public', exact: true }).check();
+  await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+  await expect(page.locator('#save-status')).toHaveText('saved');
+  await page.goto('/gallery?category=ramen');
+  await expect(
+    page.getByRole('img', { name: 'Browser upload photo', exact: true }),
+  ).toBeVisible();
+  await page.goto('/owner/posts/new');
+  await page.getByLabel('title', { exact: true }).fill('Photo publication');
+  await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
+  const uploadedTile = page.locator('.trip-gallery-options > div').filter({
+    has: page.getByRole('img', { name: 'Browser upload photo', exact: true }),
+  });
+  await uploadedTile
+    .getByRole('button', { name: 'INSERT IN POST', exact: true })
+    .click();
+  await expect(page.locator('.tiptap img')).toHaveAttribute(
+    'src',
+    /^\/_emdash\/api\/media\/file\/trip\//,
+  );
+  await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('published');
+  await page.goto('/');
+  await expect(
+    page
+      .locator('article')
+      .filter({ hasText: 'Photo publication' })
+      .getByRole('img', { name: 'Browser upload photo', exact: true }),
+  ).toBeVisible();
+});
+
+test('cancelling PNG export during loading or saving prevents a download', async ({
+  page,
+}) => {
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/export');
+  await page.waitForURL('**/owner/export');
+  await expect(page.locator('#story-preview canvas')).toBeVisible();
+  let downloads = 0;
+  page.on('download', () => {
+    downloads++;
+  });
+  for (const phase of ['loading', 'saving']) {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pattern =
+      phase === 'loading' ? '**/demo/*.jpg' : '**/api/trip/exports';
+    await page.route(pattern, async (route) => {
+      await gate;
+      await route.continue().catch(() => {});
+    });
+    const pending = page.waitForRequest(
+      phase === 'loading' ? /\/demo\/.*\.jpg/ : /\/api\/trip\/exports$/,
+    );
+    await page.getByRole('button', { name: 'EXPORT PNG', exact: true }).click();
+    await pending;
+    await page.getByRole('button', { name: 'CANCEL', exact: true }).click();
+    release();
+    await expect(page.locator('#export-status')).toHaveText('cancelled');
+    expect(downloads).toBe(0);
+    await expect(page.locator('#download')).toHaveCount(0);
+    await page.unroute(pattern);
   }
 });

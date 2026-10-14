@@ -1,6 +1,7 @@
 {
   "extends": "astro/tsconfigs/strict",
   "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] },
     "types": ["node"],
     "noUncheckedIndexedAccess": true
   },

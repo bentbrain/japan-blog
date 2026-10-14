@@ -1,7 +1,7 @@
 ---
-import '@fontsource/geist-mono/400.css';
-import '../styles/site.css';
+import '../styles/globals.css';
 import Pixel from '../components/Pixel.astro';
+import { Button } from '../components/ui/button';
 import { beerCounts } from '../lib/content';
 interface Props {
   title?: string;
@@ -28,13 +28,20 @@ const validFeedback =
     <script is:inline>
       try {
         document.documentElement.dataset.theme =
-          localStorage.getItem('jp-theme') || 'system';
+          localStorage.getItem('jp-theme') ||
+          (matchMedia('(prefers-color-scheme: dark)').matches
+            ? 'dark'
+            : 'light');
       } catch {}
     </script>
   </head>
   <body>
-    <header class="site-header">
-      <a class="brand" data-feedback-id="brand" href={owner ? '/owner' : '/'}>
+    <header class="site-header flex flex-wrap items-center justify-between gap-2 border-b px-4 py-[13px] min-[601px]:flex-nowrap min-[601px]:gap-[18px] min-[601px]:px-6 min-[601px]:py-[15px] [&_nav]:order-3 [&_nav]:flex [&_nav]:w-full [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-[7px] min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline">
+      <a
+        class="brand whitespace-nowrap no-underline"
+        data-feedback-id="brand"
+        href={owner ? '/owner' : '/'}
+      >
         jp.bent.build{owner ? ' / admin' : ''}
       </a>
       <nav aria-label="Main navigation" data-feedback-id="navigation">
@@ -63,19 +70,22 @@ const validFeedback =
           </>
         )}
       </nav>
-      <div class="beer" data-feedback-id="beer-counter">
+      <div
+        class="beer flex items-center gap-[7px] whitespace-nowrap"
+        data-feedback-id="beer-counter"
+      >
         <Pixel />
         <span>{counts.total} beers</span>
       </div>
     </header>
-    <main>
+    <main class="mx-auto max-w-[1400px] p-4 min-[601px]:p-6">
       <slot />
     </main>
-    <footer>
+    <footer class="flex items-center justify-between border-t px-4 py-4 min-[601px]:px-6">
       <a href={owner ? '/' : '/owner'}>{owner ? 'journal' : 'admin'}</a>
-      <button id="theme-toggle" aria-label="Toggle dark mode">
+      <Button variant="ghost" id="theme-toggle" aria-label="Toggle dark mode">
         ◐
-      </button>
+      </Button>
     </footer>
     {validFeedback && (
       <script

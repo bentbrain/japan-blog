@@ -73,3 +73,25 @@ jobs:
           build-mode: none
           queries: security-and-quality
       - uses: github/codeql-action/analyze@f3c49fd1ef3281abc41069b3dd22807a60c963f6 # v4
+        with:
+          output: ${{ runner.temp }}/codeql-results
+      - name: Require clean CodeQL results
+        env:
+          SARIF_DIRECTORY: ${{ runner.temp }}/codeql-results
+        run: |
+          python3 - <<'PYCODE'
+          import json
+          import os
+          from pathlib import Path
+
+          reports = list(Path(os.environ['SARIF_DIRECTORY']).glob('*.sarif'))
+          if not reports:
+              raise SystemExit('CodeQL did not produce a SARIF report')
+          findings = [result for report in reports
+                      for run in json.loads(report.read_text())['runs']
+                      for result in run.get('results', [])]
+          for result in findings:
+              print(f"{result['ruleId']}: {result['message']['text']}")
+          if findings:
+              raise SystemExit(f'CodeQL reported {len(findings)} findings')
+          PYCODE

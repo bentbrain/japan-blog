@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Checkbox } from '@cloudflare/kumo';
+import { Checkbox } from '../components/ui/checkbox';
+import { Field, FieldLabel } from '../components/ui/field';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '../components/ui/dialog';
+import { Button } from '../components/ui/button';
 import { z } from 'zod';
 import { galleryIds } from '../lib/model';
 import { api } from '../lib/api-client';
-import './admin.css';
+import '../styles/globals.css';
 
 const itemSchema = z.object({
   id: z.string(),
@@ -48,39 +57,53 @@ function GalleryField({
     };
   }, []);
   return (
-    <fieldset className="trip-gallery-field">
+    <fieldset className="trip-gallery-field border p-3 font-mono text-foreground">
       <legend>{label}</legend>
       <a href="/owner/media" target="_blank" rel="noopener">
         UPLOAD / EDIT MEDIA ↗
       </a>
       {error && <p role="alert">{error}</p>}
-      <div className="trip-gallery-options">
-        {items.map((item) => (
-          <div key={item.id}>
-            <img
-              src={
-                item.data.poster?.src ||
-                item.data.poster_url ||
-                item.data.asset?.url ||
-                item.data.source_url ||
-                ''
-              }
-              alt=""
-            />
-            <Checkbox
-              label={item.data.title}
-              checked={selected.includes(item.id)}
-              onCheckedChange={(checked) => {
-                onChange(
-                  checked
-                    ? [...selected, item.id]
-                    : selected.filter((id) => id !== item.id),
-                );
-              }}
-            />
+      <Dialog>
+        <DialogTrigger render={<Button />}>CHOOSE MEDIA</DialogTrigger>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{label}</DialogTitle>
+          </DialogHeader>
+          <div className="trip-gallery-options mt-3 grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2">
+            {items.map((item) => (
+              <div key={item.id}>
+                <img
+                  src={
+                    item.data.poster?.src ||
+                    item.data.poster_url ||
+                    item.data.asset?.url ||
+                    item.data.source_url ||
+                    ''
+                  }
+                  alt=""
+                  className="aspect-[1.15] w-full object-cover"
+                />
+                <Field orientation="horizontal" className="mt-2 gap-2">
+                  <Checkbox
+                    id={`trip-${item.id}`}
+                    checked={selected.includes(item.id)}
+                    onCheckedChange={(checked) => {
+                      onChange(
+                        checked
+                          ? [...selected, item.id]
+                          : selected.filter((id) => id !== item.id),
+                      );
+                    }}
+                  />
+                  <FieldLabel htmlFor={`trip-${item.id}`}>
+                    {item.data.title}
+                  </FieldLabel>
+                </Field>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </DialogContent>
+      </Dialog>
     </fieldset>
   );
 }

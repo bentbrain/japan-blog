@@ -2,7 +2,9 @@
 
 Japan travel journal. Astro and emDash on Cloudflare Workers, with D1 records and R2 media.
 
-Public journal, categorised gallery, geolocated media map and beer counter. The owner uses emDash's rich text editor and passkey login. Owner tools preserve original media, edit capture metadata and export Instagram stories as PNG or animated MP4.
+Public journal, categorised gallery, geolocated media map and beer counter. The owner uses a TipTap rich text editor with shadcn/Base UI controls and emDash passkey login. Owner tools preserve original media, edit capture metadata and export Instagram stories as PNG or animated MP4.
+
+The application uses Tailwind utilities and shadcn components on Base UI. Theme tokens and the official shadcn state utilities live in `src/styles/globals.css`.
 
 ## Development
 
@@ -30,11 +32,12 @@ pnpm build
 ## Owner tools
 
 - `/owner`: posts and daily beer entries.
+- `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, drafts and publishing.
 - `/owner/media`: uploads, capture times, coordinates and multiple categories. Missing metadata keeps an upload unpublished.
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
-- `/_emdash/admin`: rich text, drafts, revisions and passkey management.
+- `/_emdash/admin`: native CMS maintenance, revisions and passkey management.
 
-Capture times group into days in `Asia/Tokyo`. Photos without an offset are interpreted as Japan time. Originals remain in private R2 storage. The owner browser converts HEIC previews and short videos before upload and renders story exports with WebCodecs. MP4 rendering needs a current Safari or Chrome with AVC encoding support. Story exports are silent.
+Capture times group into days in `Asia/Tokyo`. Photos without an offset are interpreted as Japan time. Originals remain in private R2 storage. Draft previews require owner access; published files check the live media record and disable caching so unpublication takes effect immediately. The image-transform endpoint is disabled because previews are already resized. The owner browser converts HEIC previews and short videos before upload and renders story exports with WebCodecs. MP4 rendering needs a current Safari or Chrome with AVC encoding support. Story exports are silent.
 
 ## Feedback toolbar
 
@@ -42,7 +45,7 @@ The shared layout accepts `PUBLIC_FEEDBACK_SERVER` and `PUBLIC_FEEDBACK_PROJECT_
 
 ## Deployment and repository controls
 
-PRs run strict ESLint, formatting, TypeScript, unit and full-flow tests, Knip and a production build. Secrets and local data are excluded from Git. Deployment configuration lives in `wrangler.jsonc`; application secrets belong in Cloudflare's encrypted secret storage.
+PRs run strict ESLint, formatting, TypeScript, unit and full-flow tests, Knip and a production build. Main requires all quality and security checks, an up-to-date branch and resolved review conversations. Independent T3 review precedes auto-merge; GitHub reviewer approvals are not required for this single-contributor repository. Secrets and local data are excluded from Git. Deployment configuration lives in `wrangler.jsonc`; application secrets belong in Cloudflare's encrypted secret storage.
 
 The production account is the sole author. Public account creation and invitations are disabled. First-time passkey setup requires a short-lived private setup cookie. Generate a setup capability and keep it private; clear `SETUP_TOKEN` after registering the owner account.
 

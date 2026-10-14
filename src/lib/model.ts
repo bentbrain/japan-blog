@@ -13,7 +13,9 @@ export const daySchema = z
   }, 'Choose a valid day');
 export const metadataSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  captured_at: z.coerce.date(),
+  captured_at: z
+    .union([z.iso.datetime({ offset: true }), z.date()])
+    .pipe(z.coerce.date()),
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   place: z.string().trim().max(100).default(''),

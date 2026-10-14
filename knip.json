@@ -8,6 +8,10 @@
     "tests/**/*.ts",
     "mockups/{server.mjs,review.js}"
   ],
-  "project": ["src/**/*.{ts,tsx,astro}", "scripts/**/*.ts", "tests/**/*.ts"],
+  "project": [
+    "src/**/*.{ts,tsx,astro,css}",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ],
   "ignoreDependencies": ["cloudflare"]
 }

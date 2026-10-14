@@ -11,16 +11,22 @@ import {
 } from 'mediabunny';
 import { drawStory, type Story } from './story';
 
-export async function loadStory(story: Story) {
+export async function loadStory(story: Story, signal?: AbortSignal) {
   const inputs: Input[] = [];
   const bitmaps: ImageBitmap[] = [];
   const frames: ((time: number) => Promise<CanvasImageSource>)[] = [];
+  const cancel = () => {
+    for (const input of inputs) input.dispose();
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
     for (const media of story.media) {
+      signal?.throwIfAborted();
       if (media.kind === 'photo') {
-        const blob = await (await fetch(media.url)).blob();
+        const blob = await (await fetch(media.url, { signal })).blob();
         const bitmap = await createImageBitmap(blob);
         bitmaps.push(bitmap);
+        signal?.throwIfAborted();
         const tile = document.createElement('canvas');
         tile.width = 620;
         tile.height = 420;
@@ -43,6 +49,7 @@ export async function loadStory(story: Story) {
           formats: ALL_FORMATS,
         });
         inputs.push(input);
+        signal?.throwIfAborted();
         const track = await input.getPrimaryVideoTrack();
         if (!track || !(await track.canDecode()))
           throw new Error('Video cannot be decoded in this browser');
@@ -66,18 +73,23 @@ export async function loadStory(story: Story) {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas unavailable');
     await document.fonts.ready;
+    signal?.throwIfAborted();
     return {
       canvas,
       async draw(time: number) {
+        signal?.throwIfAborted();
         const images = await Promise.all(frames.map((frame) => frame(time)));
+        signal?.throwIfAborted();
         drawStory(ctx, story, images, time);
       },
       dispose() {
+        signal?.removeEventListener('abort', cancel);
         for (const input of inputs) input.dispose();
         for (const bitmap of bitmaps) bitmap.close();
       },
     };
   } catch (error) {
+    signal?.removeEventListener('abort', cancel);
     for (const bitmap of bitmaps) bitmap.close();
     inputs.forEach((input) => {
       input.dispose();
@@ -91,13 +103,16 @@ export async function renderStory(
   progress: (value: number) => void,
   signal?: AbortSignal,
 ) {
-  const renderer = await loadStory(story);
+  signal?.throwIfAborted();
+  const renderer = await loadStory(story, signal);
   try {
     if (format === 'png') {
       await renderer.draw(0);
       return await new Promise<Blob>((resolve, reject) => {
         renderer.canvas.toBlob((blob) => {
-          if (blob) resolve(blob);
+          if (signal?.aborted)
+            reject(new DOMException('Export cancelled', 'AbortError'));
+          else if (blob) resolve(blob);
           else reject(new Error('PNG export failed'));
         }, 'image/png');
       });
@@ -126,6 +141,7 @@ export async function renderStory(
       }
       source.close();
       await output.finalize();
+      signal?.throwIfAborted();
       const buffer = output.target.buffer;
       if (!buffer) throw new Error('MP4 export failed');
       return new Blob([buffer], { type: 'video/mp4' });

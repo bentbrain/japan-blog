@@ -2,7 +2,7 @@
 import { geoMercator, geoPath } from 'd3-geo';
 import japan from '../lib/japan.json';
 import { z } from 'zod';
-import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
+import { posterUrl, type TripMedia } from '../lib/model';
 interface Props {
   media: TripMedia[];
 }
@@ -30,155 +30,19 @@ for (const item of media) {
   if (group) group.items.push(item);
   else groups.push({ x, y, items: [item] });
 }
+
+import { JapanMapView } from './JapanMapView';
+const mapGroups = groups.map((group) => ({
+  x: group.x,
+  y: group.y,
+  items: group.items.map((item) => ({
+    id: item.id,
+    slug: item.slug,
+    title: item.title,
+    place: item.place,
+    src: posterUrl(item),
+  })),
+}));
 ---
 
-<div class="map-wrap" id="japan-map" data-feedback-id="japan-map">
-  <svg viewBox="0 0 760 440" aria-label="Japan media map" role="group">
-    <path class="map-land" d={land} />
-    {groups.map((g, i) => (
-      <g
-        class="map-marker"
-        data-group={i}
-        role="button"
-        tabindex="0"
-        aria-label={`${g.items[0]?.place || 'location'}, ${g.items.length} items`}
-      >
-        <circle class="map-pin" cx={g.x} cy={g.y} r="14" />
-        <text
-          x={g.x}
-          y={g.y + 4}
-          text-anchor="middle"
-          fill="white"
-          font-size="10"
-        >
-          {g.items.length}
-        </text>
-        <text class="map-label" x={g.x + 20} y={g.y + 4}>
-          {g.items[0]?.place}
-        </text>
-      </g>
-    ))}
-  </svg>
-  <div class="map-detail" data-feedback-id="map-preview" hidden>
-    <button class="map-close" aria-label="Close map preview">
-      ×
-    </button>
-    <img alt="" />
-    <p class="map-caption"></p>
-    <div class="viewer-toolbar">
-      <button class="map-prev" aria-label="Previous photo at this location">
-        ←
-      </button>
-      <button class="map-next" aria-label="Next photo at this location">
-        →
-      </button>
-    </div>
-    <a class="map-view" href="/gallery">
-      VIEW MEDIA →
-    </a>
-  </div>
-  {!media.length && <span class="map-note">no photos yet</span>}
-</div>
-<div
-  id="map-data"
-  hidden
-  data-groups={JSON.stringify(
-    groups.map((g) =>
-      g.items.map((item) => ({
-        id: item.id,
-        slug: item.slug,
-        title: item.title,
-        place: item.place,
-        src: posterUrl(item),
-        video: item.kind === 'video',
-        url: mediaUrl(item),
-      })),
-    ),
-  ).replace(/</g, '\\u003c')}
-></div>
-<script>
-  import { z } from 'zod';
-  const groups = z
-    .array(
-      z.array(
-        z.object({
-          id: z.string(),
-          slug: z.string().nullable(),
-          title: z.string(),
-          place: z.string(),
-          src: z.string(),
-          video: z.boolean(),
-          url: z.string(),
-        }),
-      ),
-    )
-    .parse(
-      JSON.parse(
-        document.querySelector('#map-data')?.getAttribute('data-groups') ||
-          '[]',
-      ),
-    );
-  let group = 0,
-    index = 0;
-  const panel = document.querySelector('.map-detail');
-  function show() {
-    const item = groups[group]?.[index];
-    if (!item || !(panel instanceof HTMLElement)) return;
-    panel.hidden = false;
-    const img = panel.querySelector('img'),
-      link = panel.querySelector('.map-view'),
-      caption = panel.querySelector('.map-caption');
-    if (img) {
-      img.src = item.src;
-      img.alt = item.title;
-    }
-    if (link instanceof HTMLAnchorElement)
-      link.href = `/media/${item.slug || item.id}`;
-    if (caption)
-      caption.textContent = `${item.place} / ${index + 1} of ${groups[group]?.length}`;
-  }
-  const selected = new URLSearchParams(location.search).get('media');
-  if (selected) {
-    const match = groups.findIndex((items) =>
-      items.some((item) => item.id === selected),
-    );
-    if (match >= 0) {
-      group = match;
-      index = groups[match]?.findIndex((item) => item.id === selected) ?? 0;
-      show();
-    }
-  }
-  document.querySelectorAll('.map-marker').forEach((marker) => {
-    const select = () => {
-      group = Number(marker.getAttribute('data-group'));
-      index = 0;
-      show();
-    };
-    marker.addEventListener('pointerenter', (event) => {
-      if (event instanceof PointerEvent && event.pointerType === 'mouse')
-        select();
-    });
-    marker.addEventListener('click', select);
-    marker.addEventListener('keydown', (event) => {
-      if (
-        event instanceof KeyboardEvent &&
-        ['Enter', ' '].includes(event.key)
-      ) {
-        event.preventDefault();
-        select();
-      }
-    });
-  });
-  document.querySelector('.map-close')?.addEventListener('click', () => {
-    if (panel instanceof HTMLElement) panel.hidden = true;
-  });
-  for (const [selector, delta] of [
-    ['.map-prev', -1],
-    ['.map-next', 1],
-  ])
-    document.querySelector(String(selector))?.addEventListener('click', () => {
-      const length = groups[group]?.length || 1;
-      index = (index + Number(delta) + length) % length;
-      show();
-    });
-</script>
+<JapanMapView land={land || ''} groups={mapGroups} client:load />

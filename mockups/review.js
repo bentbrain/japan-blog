@@ -7,6 +7,7 @@ const form = document.getElementById('note-form');
 const commentText = document.getElementById('comment-text');
 const state = { surface: 'journal', viewport: 'desktop', dark: false, commenting: false, category: 'all', selectedMedia: 0, selectedExport: new Set([0, 1, 3, 5, 6, 7]), beers: 3, notes: [], target: null, mapCity: 'tokyo', playing: false, exportDay: 'tokyo', counterMode: 'both', showSafeAreas: true, mapPreviewOpen: false };
 const assets = '/assets/';
+const escapeHtml = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
 const media = [
   { image: 'tokyo.jpg', place: 'tokyo', category: 'shopping', lat: 35.6895, lng: 139.6917 },
   { image: 'japan.jpg', place: 'tokyo', category: 'food', lat: 35.6938, lng: 139.7034 },
@@ -27,7 +28,7 @@ const sprites = {
   bag: ['0000000000000000','0000011111000000','0000100000100000','0000100000100000','0001111111110000','0001000000010000','0001000000010000','0001001010010000','0001000000010000','0001001110010000','0001000000010000','0001000000010000','0001111111110000','0000000000000000','0000000000000000','0000000000000000'],
 };
 const icon = name => `<span class="pixel" data-pixel="${name}" aria-hidden="true"></span>`;
-const review = (target, label) => `data-review="${state.surface}-${target}" data-review-label="${label}"`;
+const review = (target, label) => `data-review="${escapeHtml(state.surface)}-${escapeHtml(target)}" data-review-label="${escapeHtml(label)}"`;
 function header(admin = false) {
   return `<header class="site-header"><button class="brand" data-go="${admin ? 'posts' : 'journal'}" ${review('brand', 'Brand')}>jp.bent.build${admin ? ' / admin' : ''}</button>${!admin ? `<nav class="site-nav" ${review('navigation', 'Public navigation')}>${['journal','gallery'].map(name => `<button data-go="${name}" class="${state.surface === name ? 'active' : ''}">${name}</button>`).join('')}</nav><div class="beer" ${review('beer', 'Trip beer counter')}>${icon('beer')}<strong>27</strong><span>beers</span></div>` : '<span>liam</span>'}</header>${admin ? `<nav class="admin-tabs" ${review('navigation', 'Admin navigation')}>${[['posts','posts'],['media','media'],['export','export']].map(([id,name]) => `<button class="${state.surface === id || id === 'posts' && state.surface === 'editor' ? 'active' : ''}" data-go="${id}">${name}</button>`).join('')}</nav>` : ''}`;
 }
@@ -63,7 +64,7 @@ function gallery() {
 }
 function viewer() {
   const item=media[state.selectedMedia];
-  return `${header()}<section class="lightbox" ${review('viewer','Media viewer')}><div class="lightbox-top"><span>${state.selectedMedia+1} / ${media.length}</span><button data-go="gallery" aria-label="Close media">CLOSE ×</button></div>${item.video ? `<video src="${assets}sample.mp4" poster="${assets}${item.image}" controls playsinline preload="metadata"></video>` : `<img src="${assets}${item.image}" alt="Sample ${item.place} image">`}<div class="actions"><button data-action="previous">← PREVIOUS</button><button data-action="next">NEXT →</button></div></section><div class="media-details" ${review('details','Media metadata')}><span>${item.place} / 15 oct / ${item.categories.join(', ')}</span><button data-go="map">VIEW ON MAP</button></div>`;
+  return `${header()}<section class="lightbox" ${review('viewer','Media viewer')}><div class="lightbox-top"><span>${state.selectedMedia+1} / ${media.length}</span><button data-go="gallery" aria-label="Close media">CLOSE ×</button></div>${item.video ? `<video src="${assets}sample.mp4" poster="${assets}${item.image}" controls playsinline preload="metadata"></video>` : `<img src="${assets}${item.image}" alt="Sample ${item.place} image">`}<div class="actions"><button data-action="previous">← PREVIOUS</button><button data-action="next">NEXT →</button></div></section><div class="media-details" ${review('details','Media metadata')}><span>${item.place} / 15 oct / ${escapeHtml(item.categories.join(', '))}</span><button data-go="map">VIEW ON MAP</button></div>`;
 }
 function map() { return journal(); }
 
@@ -85,7 +86,7 @@ function exporter() {
   const selected=dayMedia.filter(({index})=>state.selectedExport.has(index));
   const cards=selected.slice(0,3).map(({item},index)=>`<div class="stack ${index===2?'back':index===1?'middle':''}">${item.video?`<video src="${assets}sample.mp4" poster="${assets}${item.image}" muted loop playsinline ${state.playing?'autoplay':''}></video>`:`<img src="${assets}${item.image}" alt="Sample photo tile">`}</div>`).reverse().join('');
   const today=state.exportDay==='tokyo'?'03':'04',total=state.exportDay==='tokyo'?'27':'24';
-  return `${header(true)}<div class="content"><div class="section-heading"><h1>story export</h1><small>1080 × 1920</small></div><div class="export-layout"><div class="export-settings"><label ${review('export-day','Export day selection')}>day<select id="export-day"><option value="tokyo" ${state.exportDay==='tokyo'?'selected':''}>15 oct / tokyo</option><option value="kyoto" ${state.exportDay==='kyoto'?'selected':''}>14 oct / kyoto</option></select></label><div class="photo-grid" ${review('export-selection','Export media selection')}>${dayMedia.map(({item,index})=>tile(item,index,'select-export')).join('')}</div><p class="export-status" id="selected-count">${selected.length} selected</p><label ${review('beer-setting','Export beer counter setting')}>beer counter<select id="counter-mode">${[['both','today + trip total'],['today','today'],['total','trip total'],['hidden','hidden']].map(([value,label])=>`<option value="${value}" ${state.counterMode===value?'selected':''}>${label}</option>`).join('')}</select></label><label class="safe-area-toggle"><input id="safe-areas" type="checkbox" ${state.showSafeAreas?'checked':''}> safe area guides</label><div class="actions" ${review('export-actions','Story export actions')}><button data-action="play-stack">${state.playing?'PAUSE':'PLAY PREVIEW'}</button><button data-action="export-mp4" class="primary">EXPORT MP4</button><button data-action="export-png">EXPORT PNG</button></div></div><div class="story ${state.playing?'running':''} ${state.showSafeAreas?'show-guides':''}" ${review('story-composition','Isometric story composition')}><div class="story-safe-area" aria-hidden="true"></div><div class="story-title">${state.exportDay} / ${state.exportDay==='tokyo'?'15':'14'} oct</div>${cards}${state.counterMode!=='hidden'?`<div class="story-beer" ${review('story-beer','Story beer counter')}>${icon('beer')}<div><strong>${state.counterMode==='total'?total:today}</strong><small>${state.counterMode==='both'?`today / ${total} total`:state.counterMode==='total'?'total':'today'}</small></div></div>`:''}</div></div></div>`;
+  return `${header(true)}<div class="content"><div class="section-heading"><h1>story export</h1><small>1080 × 1920</small></div><div class="export-layout"><div class="export-settings"><label ${review('export-day','Export day selection')}>day<select id="export-day"><option value="tokyo" ${state.exportDay==='tokyo'?'selected':''}>15 oct / tokyo</option><option value="kyoto" ${state.exportDay==='kyoto'?'selected':''}>14 oct / kyoto</option></select></label><div class="photo-grid" ${review('export-selection','Export media selection')}>${dayMedia.map(({item,index})=>tile(item,index,'select-export')).join('')}</div><p class="export-status" id="selected-count">${selected.length} selected</p><label ${review('beer-setting','Export beer counter setting')}>beer counter<select id="counter-mode">${[['both','today + trip total'],['today','today'],['total','trip total'],['hidden','hidden']].map(([value,label])=>`<option value="${value}" ${state.counterMode===value?'selected':''}>${label}</option>`).join('')}</select></label><label class="safe-area-toggle"><input id="safe-areas" type="checkbox" ${state.showSafeAreas?'checked':''}> safe area guides</label><div class="actions" ${review('export-actions','Story export actions')}><button data-action="play-stack">${state.playing?'PAUSE':'PLAY PREVIEW'}</button><button data-action="export-mp4" class="primary">EXPORT MP4</button><button data-action="export-png">EXPORT PNG</button></div></div><div class="story ${state.playing?'running':''} ${state.showSafeAreas?'show-guides':''}" ${review('story-composition','Isometric story composition')}><div class="story-safe-area" aria-hidden="true"></div><div class="story-title">${escapeHtml(state.exportDay)} / ${state.exportDay==='tokyo'?'15':'14'} oct</div>${cards}${state.counterMode!=='hidden'?`<div class="story-beer" ${review('story-beer','Story beer counter')}>${icon('beer')}<div><strong>${state.counterMode==='total'?total:today}</strong><small>${state.counterMode==='both'?`today / ${total} total`:state.counterMode==='total'?'total':'today'}</small></div></div>`:''}</div></div></div>`;
 }
 
 const screens={ journal,post,gallery,viewer,map,login,posts,editor,media:mediaManager,export:exporter };
@@ -108,7 +109,7 @@ function render() {
   localStorage.setItem('jp-review-view',JSON.stringify({surface:state.surface,viewport:state.viewport,dark:state.dark}));
 }
 function go(surface) {
-  state.surface=surface==='map'?'journal':surface;state.target=null;form.hidden=true;render();window.scrollTo(0,0);
+  state.surface=Object.keys(screens).find(name=>name===surface && name!=='map')||'journal';state.target=null;form.hidden=true;render();window.scrollTo(0,0);
 }
 async function drawMap() {
   const svg=canvas.querySelector('#japan-map');if(!svg)return;
@@ -125,7 +126,7 @@ async function drawMap() {
     const filtered=media.filter(item=>item.lat!==null);
     const locations=[{name:'tokyo',coords:[139.6917,35.6895]},{name:'kyoto',coords:[135.7681,35.0116]}].map(point=>({...point,count:filtered.filter(item=>item.place===point.name).length})).filter(point=>point.count>0);
     if(!locations.some(point=>point.name===state.mapCity))state.mapCity=locations[0]?.name||'tokyo';
-    const updatePreview=name=>{const items=filtered.filter(item=>item.place===name);canvas.querySelector('#map-image').src=`${assets}${name==='kyoto'?'kyoto.jpg':'tokyo.jpg'}`;canvas.querySelector('#map-place').textContent=name;};
+    const updatePreview=name=>{canvas.querySelector('#map-image').src=`${assets}${name==='kyoto'?'kyoto.jpg':'tokyo.jpg'}`;canvas.querySelector('#map-place').textContent=name;};
     updatePreview(state.mapCity);
     locations.forEach(point=>{
       const [x,y]=projection(point.coords);

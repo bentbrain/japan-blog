@@ -35,9 +35,9 @@ export const GET: APIRoute = async ({ locals }) => {
         const stored = await locals.emdash.handleMediaGet(reference.data.id);
         if (!stored.success) continue;
         const media = z
-          .object({ item: z.object({ storageKey: z.string() }) })
+          .object({ item: z.object({ filename: z.string() }) })
           .parse(stored.data);
-        const url = `/_emdash/api/media/file/${media.item.storageKey}`;
+        const url = `/_emdash/api/media/asset/${encodeURIComponent(reference.data.id)}/${encodeURIComponent(media.item.filename)}`;
         data[field] = { ...reference.data, url, src: url };
       }
       items.push({ ...entry.data.item, data, _rev: entry.data._rev });

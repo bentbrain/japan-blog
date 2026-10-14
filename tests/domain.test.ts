@@ -58,6 +58,8 @@ void test('publishing requires a capture time, pin and stored asset', () => {
     validateMedia({ ...photo, captured_at: undefined }) || '',
     /capture/,
   );
+  for (const captured_at of [null, false, 0, '', '0', '2026-10-14', undefined])
+    assert.match(validateMedia({ ...photo, captured_at }) || '', /capture/);
   assert.match(validateMedia({ ...photo, asset: undefined }) || '', /Upload/);
 });
 void test('short videos are allowed and longer or unmeasured videos are rejected', () => {

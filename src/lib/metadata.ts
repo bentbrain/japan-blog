@@ -39,7 +39,14 @@ export async function extractMetadata(file: Blob, video: boolean) {
   }
   const value: unknown = await exifr
     .parse(await file.arrayBuffer(), {
-      pick: ['latitude', 'longitude', 'DateTimeOriginal', 'OffsetTimeOriginal'],
+      pick: [
+        'GPSLatitude',
+        'GPSLatitudeRef',
+        'GPSLongitude',
+        'GPSLongitudeRef',
+        'DateTimeOriginal',
+        'OffsetTimeOriginal',
+      ],
       reviveValues: false,
     })
     .catch(() => null);
