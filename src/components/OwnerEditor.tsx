@@ -17,6 +17,8 @@ import {
 import { Checkbox } from './ui/checkbox';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
+import { ShopDesignField } from './ShopDesignField';
+import { shopDesignSchema } from '../lib/shop-design';
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group';
 import {
   Tooltip,
@@ -48,6 +50,7 @@ function EditorForm({
 }) {
   const [items, setItems] = useState<Media[]>([]);
   const [gallery, setGallery] = useState(post.data.gallery);
+  const [shopDesign, setShopDesign] = useState(post.data.shop_design ?? null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -119,6 +122,10 @@ function EditorForm({
   async function save(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editor || saving) return;
+    if (shopDesign && !shopDesignSchema.safeParse(shopDesign).success) {
+      setStatus('use a product link from shop.bent.build');
+      return;
+    }
     const values = new FormData(event.currentTarget),
       submitted = event.nativeEvent;
     const publish =
@@ -140,6 +147,7 @@ function EditorForm({
             day: values.get('day'),
             place: values.get('place'),
             gallery,
+            shop_design: shopDesign,
             document: editor.getJSON(),
             publish,
           }),
@@ -431,6 +439,15 @@ function EditorForm({
               defaultValue={post.data.place}
             />
           </Field>
+          <Separator />
+          <ShopDesignField
+            value={shopDesign}
+            onChange={(value) => {
+              setShopDesign(value);
+              markDirty();
+            }}
+          />
+          <Separator />
           <Button type="submit" disabled={saving || !editor}>
             SAVE DRAFT
           </Button>

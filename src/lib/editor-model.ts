@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ProseMirrorNode } from 'emdash';
 import { daySchema } from './model';
+import { shopDesignSchema } from './shop-design';
 const nodeSchema: z.ZodType<ProseMirrorNode> = z.lazy(() =>
   z.object({
     type: z.string(),
@@ -30,6 +31,7 @@ export const editorPostSchema = z.object({
     day: daySchema,
     place: z.string(),
     gallery: z.array(z.string()),
+    shop_design: shopDesignSchema.nullish(),
     document: documentSchema,
   }),
 });
@@ -41,6 +43,7 @@ export const postInputSchema = z.object({
   day: daySchema,
   place: z.string().max(200),
   gallery: z.array(z.string()).max(100),
+  shop_design: shopDesignSchema.nullish(),
   document: documentSchema,
   publish: z.boolean(),
 });

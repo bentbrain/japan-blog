@@ -53,7 +53,7 @@ function validNote(value) {
     && Number.isFinite(value.x) && value.x >= 0 && value.x <= 1
     && Number.isFinite(value.y) && value.y >= 0 && value.y <= 1;
 }
-const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.jpg': 'image/jpeg', '.png': 'image/png', '.mp4': 'video/mp4' };
+const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.jpg': 'image/jpeg', '.png': 'image/png', '.mp4': 'video/mp4', '.webp': 'image/webp', '.woff2': 'font/woff2' };
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://127.0.0.1:${port}`);

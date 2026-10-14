@@ -5,6 +5,188 @@ import { readFile } from 'node:fs/promises';
 import { Input, BufferSource, ALL_FORMATS } from 'mediabunny';
 import { z } from 'zod';
 const run = promisify(execFile);
+test('mouse dragging advances the mobile post carousel', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const gallery = page.locator('.post-media').first();
+  await expect(
+    page
+      .locator('.post-carousel')
+      .first()
+      .getByRole('button', { name: 'Next slide' }),
+  ).toBeEnabled();
+  await gallery.scrollIntoViewIfNeeded();
+  const first = gallery.locator('.media-tile').first();
+  const before = await first.evaluate((el) => el.getBoundingClientRect().left);
+  const box = await gallery.boundingBox();
+  if (!box) throw new Error('Post gallery is missing');
+  await page.mouse.move(box.x + box.width * 0.8, box.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.15, box.y + 60, { steps: 12 });
+  await page.mouse.up();
+  await expect
+    .poll(
+      async () =>
+        before -
+        (await first.evaluate((el) => el.getBoundingClientRect().left)),
+    )
+    .toBeGreaterThan(100);
+});
+test('carousel preserves video playback and keyboard controls', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const carousel = page.locator('.post-carousel').first();
+  const next = carousel.getByRole('button', { name: 'Next slide' });
+  await next.click();
+  await next.click();
+  const video = carousel.locator('video').first();
+  await video.press('Space');
+  await expect
+    .poll(async () =>
+      video.evaluate((el) => el instanceof HTMLVideoElement && !el.paused),
+    )
+    .toBe(true);
+  expect(
+    await video.evaluate((el) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        bubbles: true,
+        cancelable: true,
+      });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  ).toBe(false);
+});
+test('owner attaches, recolours and removes a shop design', async ({
+  page,
+}) => {
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+  await page.waitForURL('**/owner/posts/new');
+  await page.getByLabel('title', { exact: true }).fill('Shop design post');
+  await page
+    .getByRole('textbox', { name: 'Post content' })
+    .fill('A design from today.');
+  await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
+  const mediaPicker = page.getByRole('dialog');
+  for (const index of [0, 1, 2]) {
+    await mediaPicker
+      .getByRole('checkbox', { name: 'gallery', exact: true })
+      .nth(index)
+      .check();
+  }
+  await page.keyboard.press('Escape');
+  await page.getByRole('checkbox', { name: 'add shop design' }).check();
+  await page
+    .getByLabel('product link')
+    .fill(
+      'https://shop.bent.build/featured/3d8ed467-55d4-45ed-ba9d-1eeb687fa5bc',
+    );
+  await page.getByRole('button', { name: 'BLACK', exact: true }).click();
+  await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('published');
+  const editorUrl = page.url();
+  await page.reload();
+  await expect(
+    page.getByRole('button', { name: 'BLACK', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await page.goto('/');
+  const card = page.locator('article').filter({ hasText: 'Shop design post' });
+  await expect(card.locator('[data-slot="carousel-item"]')).toHaveCount(4);
+  await expect(card.locator('.post-media > :last-child')).toHaveClass(
+    /post-design-slide/,
+  );
+  expect(
+    await card.locator('.post-design').evaluate((el) => {
+      const gallery = el.closest('.post-media');
+      const media = gallery?.querySelectorAll('.media-tile');
+      const bottom = Math.max(
+        ...Array.from(media ?? []).map(
+          (item) => item.getBoundingClientRect().bottom,
+        ),
+      );
+      return el.getBoundingClientRect().top - bottom;
+    }),
+  ).toBeGreaterThanOrEqual(16);
+  await expect(card.locator('.post-design img')).toHaveAttribute(
+    'src',
+    /\/black\.webp\?/,
+  );
+  await expect(card.locator('.post-design-link')).toHaveAttribute(
+    'href',
+    /Color=Black/,
+  );
+  await card
+    .getByRole('link', { name: 'Shop design post', exact: true })
+    .click();
+  const postUrl = page.url();
+  await expect(page.locator('.post-design img')).toHaveAttribute(
+    'src',
+    /\/black\.webp\?/,
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  const carousel = page.locator('.post-carousel');
+  for (let slide = 1; slide < 4; slide++) {
+    await carousel.getByRole('button', { name: 'Next slide' }).click();
+    await expect(
+      carousel.getByText(`${String(slide + 1)} / 4`, { exact: true }),
+    ).toBeVisible();
+  }
+  await expect(
+    carousel.getByRole('button', { name: 'Next slide' }),
+  ).toBeDisabled();
+  await expect
+    .poll(async () =>
+      carousel.locator('.post-design').evaluate((el) => {
+        const viewport = el.closest('[data-slot="carousel-content"]');
+        if (!viewport) return false;
+        const box = el.getBoundingClientRect(),
+          bounds = viewport.getBoundingClientRect();
+        return box.left >= bounds.left - 1 && box.right <= bounds.right + 1;
+      }),
+    )
+    .toBe(true);
+  expect(
+    await carousel
+      .locator('.post-design img')
+      .evaluate((el) => el.closest('a')),
+  ).toBeNull();
+  await expect(carousel.locator('.post-design').getByRole('link')).toHaveCount(
+    1,
+  );
+  expect(
+    await carousel.locator('.post-design').evaluate((el) => {
+      const viewport = el.closest('[data-slot="carousel-content"]');
+      if (!viewport) throw new Error('Carousel viewport required');
+      return Math.abs(
+        el.getBoundingClientRect().bottom -
+          viewport.getBoundingClientRect().bottom,
+      );
+    }),
+  ).toBeLessThan(1);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(editorUrl);
+  await page.getByRole('button', { name: 'WHITE', exact: true }).click();
+  await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('published');
+  await page.goto(postUrl);
+  await expect(page.locator('.post-design img')).toHaveAttribute(
+    'src',
+    /\/white\.webp\?/,
+  );
+  await page.goto(editorUrl);
+  await page.getByRole('checkbox', { name: 'add shop design' }).uncheck();
+  await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('published');
+  await page.reload();
+  await expect(
+    page.getByRole('checkbox', { name: 'add shop design' }),
+  ).not.toBeChecked();
+  await page.goto(postUrl);
+  await expect(page.locator('.post-design')).toHaveCount(0);
+});
 test.beforeAll(async ({ request }) => {
   await request.post('/_emdash/api/setup/dev-bypass', {
     headers: { 'X-EmDash-Request': '1', Origin: 'http://127.0.0.1:4391' },

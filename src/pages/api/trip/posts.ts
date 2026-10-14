@@ -10,6 +10,7 @@ import {
   toEditorDocument,
 } from '../../../lib/editor-conversion';
 import { publishItem, savedItemSchema } from '../../../lib/publish';
+import { shopDesignSchema } from '../../../lib/shop-design';
 const portableBlocks = z.array(
   z.looseObject({ _type: z.string(), _key: z.string() }),
 );
@@ -25,6 +26,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
       day: z.string(),
       place: z.string().nullish(),
       gallery: z.array(z.string()).nullish(),
+      shop_design: shopDesignSchema.nullish(),
       content: portableBlocks.nullish(),
     })
     .parse(result.data.item.data);
@@ -59,6 +61,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
       day: data.day,
       place: data.place || '',
       gallery: data.gallery || [],
+      shop_design: data.shop_design ?? null,
       document,
     },
   });

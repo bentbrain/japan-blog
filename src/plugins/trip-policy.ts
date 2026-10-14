@@ -1,6 +1,7 @@
 import { ContentSaveRejectedError, definePlugin } from 'emdash';
 import { daySchema, metadataSchema } from '../lib/model';
 import { z } from 'zod';
+import { shopDesignSchema } from '../lib/shop-design';
 
 export function embeddedMediaReferences(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(embeddedMediaReferences);
@@ -47,6 +48,14 @@ export function createPlugin() {
       'content:beforeSave': (event) => {
         if (
           event.collection === 'posts' &&
+          !shopDesignSchema.nullish().safeParse(event.content.shop_design)
+            .success
+        )
+          throw new ContentSaveRejectedError(
+            'Choose a shop.bent.build product and black or white.',
+          );
+        if (
+          event.collection === 'posts' &&
           !daySchema.safeParse(event.content.day).success
         )
           throw new ContentSaveRejectedError('Choose a valid post day.');
@@ -70,6 +79,13 @@ export function createPlugin() {
           if (reason) return { cancel: true, reason };
         }
         if (event.collection === 'posts') {
+          if (
+            !shopDesignSchema.nullish().safeParse(content.shop_design).success
+          )
+            return {
+              cancel: true,
+              reason: 'Choose a shop.bent.build product and black or white.',
+            };
           const gallery = z.array(z.string()).safeParse(content.gallery ?? []);
           if (!gallery.success)
             return {

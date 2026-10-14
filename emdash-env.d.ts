@@ -56,6 +56,7 @@ export interface Post {
   day: string;
   content?: PortableTextBlock[];
   gallery?: unknown;
+  shop_design?: unknown;
   demo?: boolean;
   createdAt: Date;
   updatedAt: Date;
