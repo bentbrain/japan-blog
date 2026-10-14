@@ -28,15 +28,6 @@ const validFeedback =
       href="/brand/favicon.svg?v=blue-flag"
     />
     {owner && <meta name="robots" content="noindex" />}
-    <script is:inline>
-      try {
-        document.documentElement.dataset.theme = matchMedia(
-          '(prefers-color-scheme: dark)',
-        ).matches
-          ? 'dark'
-          : 'light';
-      } catch {}
-    </script>
   </head>
   <body>
     <header class="site-header flex flex-wrap items-center justify-between gap-2 border-b px-4 py-[13px] min-[601px]:flex-nowrap min-[601px]:gap-[18px] min-[601px]:px-6 min-[601px]:py-[15px] [&_nav]:order-3 [&_nav]:flex [&_nav]:w-full [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-[7px] min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline">

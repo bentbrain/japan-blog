@@ -2,7 +2,7 @@
 @import 'tw-animate-css';
 @import '@fontsource/geist-mono/400.css';
 
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant dark (@media (prefers-color-scheme: dark));
 
 @theme inline {
   --font-sans: 'Geist Mono', monospace;
@@ -40,11 +40,13 @@
     --muted: #f3f6ff;
     color-scheme: light;
   }
-  [data-theme='dark'] {
-    --background: #000;
-    --foreground: #2870ff;
-    --muted: #0b1329;
-    color-scheme: dark;
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: #000;
+      --foreground: #2870ff;
+      --muted: #0b1329;
+      color-scheme: dark;
+    }
   }
   * {
     @apply border-border outline-ring/50;
