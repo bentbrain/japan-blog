@@ -113,3 +113,74 @@ for (const owner of [false, true]) {
     ).toBeGreaterThan(48);
   });
 }
+
+for (const owner of [false, true]) {
+  for (const width of [360, 601]) {
+    test(`${owner ? 'owner' : 'public'} header fits enlarged default text at ${String(width)}px`, async ({
+      page,
+      baseURL,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      if (owner) {
+        const setup = await page.request.post('/_emdash/api/setup/dev-bypass', {
+          headers: { 'X-EmDash-Request': '1', Origin: baseURL ?? '' },
+          data: {},
+        });
+        expect(setup.ok()).toBe(true);
+        await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+        await page.waitForURL('**/owner');
+      } else {
+        await page.goto('/');
+      }
+      await expect(
+        page.getByRole('navigation', { name: 'Main navigation' }),
+      ).toBeVisible();
+      await page.evaluate(async () => {
+        document.documentElement.style.fontSize = '32px';
+        await document.fonts.ready;
+      });
+      await expect(page.locator('.site-header')).toHaveCSS(
+        'font-size',
+        '22.4px',
+      );
+      const dimensions = await page
+        .locator('.site-header')
+        .evaluate((header) => {
+          const box = header.getBoundingClientRect();
+          return {
+            width: document.documentElement.scrollWidth,
+            links: [...header.querySelectorAll('a')].map((link) => {
+              const rect = link.getBoundingClientRect();
+              const range = document.createRange();
+              range.selectNodeContents(link);
+              const content = range.getBoundingClientRect();
+              return {
+                text: link.textContent.trim(),
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+                contentLeft: content.left,
+                contentRight: content.right,
+              };
+            }),
+            top: box.top,
+            bottom: box.bottom,
+          };
+        });
+      expect(dimensions.width, JSON.stringify(dimensions)).toBe(width);
+      for (const link of dimensions.links) {
+        expect(link.left, link.text).toBeGreaterThanOrEqual(0);
+        expect(link.right, link.text).toBeLessThanOrEqual(width);
+        expect(link.top, link.text).toBeGreaterThanOrEqual(dimensions.top);
+        expect(link.bottom, link.text).toBeLessThanOrEqual(dimensions.bottom);
+        expect(link.contentLeft, link.text).toBeGreaterThanOrEqual(
+          link.left - 1,
+        );
+        expect(link.contentRight, link.text).toBeLessThanOrEqual(
+          link.right + 1,
+        );
+      }
+    });
+  }
+}

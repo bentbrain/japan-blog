@@ -34,13 +34,13 @@ const feedback = feedbackConfiguration(
     <header
       data-feedback-id="site-header"
       class:list={[
-        'site-header flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-[clamp(1rem,4vw,4rem)] py-3 text-[0.7rem] leading-[1.5] font-bold tracking-[0.05em] min-[601px]:grid min-[601px]:h-12 min-[601px]:grid-cols-[1fr_auto_1fr] min-[601px]:py-0 [&_nav]:order-3 [&_nav]:flex [&_nav]:w-full [&_nav]:justify-center [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-2 min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline',
+        'site-header flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-[clamp(1rem,4vw,4rem)] py-3 text-[0.7rem] leading-[1.5] font-bold tracking-[0.05em] min-[601px]:py-0 [&_nav]:order-3 [&_nav]:flex [&_nav]:flex-wrap [&_nav]:w-full [&_nav]:justify-center [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-2 min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline',
         !owner &&
-          'min-[360px]:h-12 min-[360px]:flex-nowrap min-[360px]:py-0 min-[360px]:[&_nav]:order-none min-[360px]:[&_nav]:w-auto min-[360px]:[&_nav]:border-0 min-[360px]:[&_nav]:p-0',
+          'min-[360px]:py-0 min-[360px]:[&_nav]:order-none min-[360px]:[&_nav]:w-auto min-[360px]:[&_nav]:border-0 min-[360px]:[&_nav]:p-0',
       ]}
     >
       <a
-        class="brand inline-flex items-center gap-[0.5em] justify-self-start whitespace-nowrap no-underline"
+        class="brand inline-flex items-center max-w-full gap-[0.5em] no-underline min-[601px]:flex-1"
         data-feedback-id="brand"
         href={owner ? '/owner' : '/'}
       >
@@ -80,7 +80,7 @@ const feedback = feedbackConfiguration(
         )}
       </nav>
       <div
-        class="beer flex items-baseline justify-self-end gap-[0.5em] whitespace-nowrap"
+        class="beer flex items-baseline gap-[0.5em] min-[601px]:flex-1 min-[601px]:justify-end"
         data-feedback-id="beer-counter"
       >
         <Pixel compact />
