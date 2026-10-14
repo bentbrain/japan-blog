@@ -1,4 +1,16 @@
+import { createHash } from 'node:crypto';
 import { test, expect } from '@playwright/test';
+
+// Independently verified glyf bounds from the bundled static Latin 700 face.
+// The served-font digest below prevents stale bounds after a font update.
+const geistMono700 = {
+  sha256: 'e26f16d6bda234828e574c948d9a5aca1327f83df2b3529a4ebea406ca026d0c',
+  unitsPerEm: 1000,
+  glyphs: [
+    { glyph: '0', yMin: -16, yMax: 726 },
+    { glyph: 'I', yMin: 0, yMax: 710 },
+  ],
+};
 
 for (const width of [390, 1280, 1778]) {
   test(`header matches shop typography and height at ${String(width)}px`, async ({
@@ -38,11 +50,24 @@ for (const width of [390, 1280]) {
         await page.emulateMedia({
           colorScheme: colorScheme === 'dark' ? 'dark' : 'light',
         });
+        const servedFont = page.waitForResponse(
+          (response) =>
+            response.url().includes('geist-mono-latin-700-normal') &&
+            new URL(response.url()).pathname.endsWith('.woff2'),
+        );
         await page.goto('/');
         await page.evaluate(async (size) => {
           document.documentElement.style.fontSize = `${String(size)}px`;
           await document.fonts.ready;
         }, fontSize);
+        const fontResponse = await servedFont;
+        expect(fontResponse.ok()).toBe(true);
+        expect(
+          createHash('sha256')
+            .update(await fontResponse.body())
+            .digest('hex'),
+          'Remeasure the bundled glyph outlines when the served font changes',
+        ).toBe(geistMono700.sha256);
         const metrics = await page
           .locator('.site-header')
           .evaluate(async (header) => {
@@ -62,7 +87,8 @@ for (const width of [390, 1280]) {
             const style = getComputedStyle(label);
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
-            if (!context) throw new Error('Font measurement context required');
+            if (!context)
+              throw new Error('Flag rasterization context required');
             const font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
             const faces = await document.fonts.load(font, '0I');
             const fontLoaded = faces.some(
@@ -71,22 +97,6 @@ for (const width of [390, 1280]) {
                 face.weight === '700' &&
                 face.status === 'loaded',
             );
-            // Linux rounds small canvas glyph bounds to raster pixels. Measure
-            // outlines at high resolution, then scale back to the rendered size.
-            // This retains the curved 0's overshoot without counting hinting pixels.
-            const measureGlyph = (glyph: string, scale: number) => {
-              context.font = `${style.fontWeight} ${String(parseFloat(style.fontSize) * scale)}px ${style.fontFamily}`;
-              const text = context.measureText(glyph);
-              return (
-                (text.actualBoundingBoxAscent + text.actualBoundingBoxDescent) /
-                scale
-              );
-            };
-            const glyphs = ['0', 'I'].map((glyph) => ({
-              glyph,
-              height: measureGlyph(glyph, 64),
-              doubledResolutionHeight: measureGlyph(glyph, 128),
-            }));
             const baseline = (element: Element) => {
               const probe = document.createElement('span');
               probe.style.cssText = 'display:inline-block;width:0;height:0';
@@ -145,7 +155,9 @@ for (const width of [390, 1280]) {
             return {
               fontLoaded,
               font,
-              glyphs,
+              fontSize: parseFloat(style.fontSize),
+              fontWeight: style.fontWeight,
+              fontStyle: style.fontStyle,
               beer: {
                 height: beerBottom - beerTop,
                 bottom: beerBottom,
@@ -159,21 +171,24 @@ for (const width of [390, 1280]) {
             };
           });
         expect(metrics.fontLoaded, metrics.font).toBe(true);
-        for (const glyph of metrics.glyphs) {
-          expect(
-            Math.abs(glyph.height - glyph.doubledResolutionHeight),
-            `${glyph.glyph} measurement must converge at higher resolution`,
-          ).toBeLessThanOrEqual(0.05);
-        }
+        expect(metrics.fontWeight).toBe('700');
+        expect(metrics.fontStyle).toBe('normal');
+        expect(metrics.fontSize).toBeCloseTo(fontSize * 0.7, 4);
+        const glyphs = geistMono700.glyphs.map((glyph) => ({
+          glyph: glyph.glyph,
+          height:
+            ((glyph.yMax - glyph.yMin) / geistMono700.unitsPerEm) *
+            metrics.fontSize,
+        }));
         for (const [name, icon] of Object.entries({
           beer: metrics.beer,
           flag: metrics.flag,
         })) {
-          for (const glyph of metrics.glyphs) {
+          for (const glyph of glyphs) {
             expect
               .soft(
                 Math.abs(icon.height - glyph.height),
-                `${name} painted height: ${JSON.stringify(metrics)}`,
+                `${name} versus ${glyph.glyph} outline: ${JSON.stringify(metrics)}`,
               )
               .toBeLessThanOrEqual((0.5 * fontSize) / 16);
           }
