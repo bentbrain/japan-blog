@@ -1,0 +1,47 @@
+import { test, expect } from '@playwright/test';
+
+test('owner account link opens native passkey settings', async ({
+  page,
+  baseURL,
+}) => {
+  const setup = await page.request.post('/_emdash/api/setup/dev-bypass', {
+    headers: { 'X-EmDash-Request': '1', Origin: baseURL ?? '' },
+    data: {},
+  });
+  expect(setup.ok()).toBe(true);
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+  await page.waitForURL('**/owner');
+  const account = page
+    .getByRole('navigation', { name: 'Main navigation' })
+    .getByRole('link', { name: 'account', exact: true });
+  await expect(account).toBeVisible();
+  await expect(
+    page.locator('main').getByRole('link', { name: /account/ }),
+  ).toHaveCount(0);
+  await account.click();
+  await expect(page).toHaveURL(/\/_emdash\/admin\/settings\/security$/);
+  const security = page.getByRole('heading', {
+    name: 'Security Settings',
+    exact: true,
+  });
+  const welcome = page.getByRole('button', {
+    name: 'Get Started',
+    exact: true,
+  });
+  // A cold Vite cache compiles the native admin and can reload it once.
+  // Wait for its first usable screen before checking the passkey controls.
+  await expect(welcome.or(security)).toBeVisible({ timeout: 30_000 });
+  if (await welcome.isVisible()) await welcome.click();
+  await expect(security).toBeVisible();
+  await expect(page.getByRole('heading', { name: /passkeys/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add Passkey' })).toBeVisible();
+});
+
+test('public navigation omits the owner account link', async ({ page }) => {
+  await page.goto('/');
+  await expect(
+    page
+      .getByRole('navigation', { name: 'Main navigation' })
+      .getByRole('link', { name: 'account', exact: true }),
+  ).toHaveCount(0);
+});

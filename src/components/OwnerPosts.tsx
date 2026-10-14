@@ -143,9 +143,6 @@ export function OwnerPosts({
       <p className="my-3 whitespace-pre-wrap empty:hidden" role="status">
         {status}
       </p>
-      <a href="/_emdash/admin/account" className="underline">
-        passkeys &amp; account
-      </a>
     </>
   );
 }
