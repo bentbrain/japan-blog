@@ -595,6 +595,72 @@ try {
     (await request(`/media/${nativePhotoId}`, undefined, 'GET', false)).status,
     200,
   );
+  const nativePhotoRevision = item.parse(
+    await (
+      await request(`/_emdash/api/content/media_items/${nativePhotoId}`)
+    ).json(),
+  ).data._rev;
+  const stagedPhoto = await request(
+    `/_emdash/api/content/media_items/${nativePhotoId}`,
+    {
+      data: { title: 'Synthetic unpublished media title' },
+      _rev: nativePhotoRevision,
+    },
+    'PUT',
+  );
+  assert.equal(stagedPhoto.status, 200);
+  const mediaPreviewResponse = await request(
+    `/_emdash/api/content/media_items/${nativePhotoId}/preview-url`,
+    {},
+  );
+  assert.equal(mediaPreviewResponse.status, 200);
+  const mediaPreviewPath = z
+    .object({ data: z.object({ url: z.string() }) })
+    .parse(await mediaPreviewResponse.json()).data.url;
+  const mediaPreviewUrl = new URL(mediaPreviewPath, base);
+  for (const path of [
+    mediaPreviewPath,
+    `/media/${nativePhotoId}${mediaPreviewUrl.search}`,
+    `/gallery${mediaPreviewUrl.search}`,
+    `/${mediaPreviewUrl.search}`,
+  ]) {
+    const anonymousPreview = await request(path, undefined, 'GET', false);
+    assert.equal(
+      anonymousPreview.status,
+      404,
+      'Anonymous media preview exposed staged edits',
+    );
+    assert.equal(
+      anonymousPreview.headers.get('Cache-Control'),
+      'private, no-store',
+    );
+  }
+  const mediaPreviewRedirect = await request(mediaPreviewPath);
+  assert.equal(mediaPreviewRedirect.status, 301);
+  const privateMediaPath = mediaPreviewRedirect.headers.get('Location');
+  assert.ok(privateMediaPath);
+  for (const path of [privateMediaPath, `/gallery${mediaPreviewUrl.search}`]) {
+    const ownerMediaPreview = await request(path);
+    assert.equal(ownerMediaPreview.status, 200);
+    const privateHtml = await ownerMediaPreview.text();
+    assert.ok(privateHtml.includes('Synthetic unpublished media title'));
+    assert.ok(privateHtml.includes('data-feedback-redact="true"'));
+    assert.ok(privateHtml.includes('data-feedback-private="true"'));
+    assert.ok(privateHtml.includes('name="robots" content="noindex"'));
+    assert.equal(
+      ownerMediaPreview.headers.get('Cache-Control'),
+      'private, no-store',
+    );
+    assert.equal(
+      ownerMediaPreview.headers.get('Cloudflare-CDN-Cache-Control'),
+      'no-store',
+    );
+  }
+  const publicPhotoHtml = await (
+    await request(`/media/${nativePhotoId}`, undefined, 'GET', false)
+  ).text();
+  assert.ok(publicPhotoHtml.includes('Native photo'));
+  assert.ok(!publicPhotoHtml.includes('Synthetic unpublished media title'));
   const incompleteMedia = await request('/_emdash/api/content/media_items', {
     slug: `incomplete-${crypto.randomUUID()}`,
     data: {

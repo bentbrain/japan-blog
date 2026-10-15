@@ -1,6 +1,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
 import { z } from 'zod';
+import { getRequestContext } from 'emdash';
 import { ensureLocalIconSchema } from './lib/category-icon-dev';
 
 export const onRequest = defineMiddleware(async (context, next) => {
@@ -38,6 +39,27 @@ export const onRequest = defineMiddleware(async (context, next) => {
     if (context.locals.user && context.locals.user.email !== env.OWNER_EMAIL)
       return new Response('Owner account required', { status: 403 });
   }
+  const owner = Boolean(context.locals.user && context.locals.user.role >= 50);
+  const cmsContext = getRequestContext();
+  const previewRequest =
+    context.url.searchParams.has('_preview') ||
+    Boolean(cmsContext?.preview || cmsContext?.editMode);
+  // Native preview tokens also affect collection queries on galleries and maps.
+  // Require the owner before any route or redirect can render staged content.
+  if (previewRequest && !owner) {
+    if (context.cache.enabled) context.cache.set(false);
+    return new Response('Not found', {
+      status: 404,
+      headers: {
+        'Cache-Control': 'private, no-store',
+        'CDN-Cache-Control': 'no-store',
+        'Cloudflare-CDN-Cache-Control': 'no-store',
+      },
+    });
+  }
+  const privateRender =
+    previewRequest ||
+    (owner && context.cookies.get('emdash-edit-mode')?.value === 'true');
   // Uploaded previews are already resized; refuse the transform endpoint so it
   // cannot read private storage directly or cache unpublished derivatives.
   if (path === '/_image') return new Response('Not found', { status: 404 });
@@ -49,7 +71,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const mediaFile = /^\/_emdash\/api\/media\/(file|asset)\/(.+)$/.exec(path);
   if (mediaFile) {
     context.cache.set(false);
-    const owner = context.locals.user && context.locals.user.role >= 50;
     if (!owner) {
       const key = mediaFile[2] || '';
       const assetId =
@@ -139,10 +160,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   )
     return Response.json({ error: 'Post required' }, { status: 400 });
   const publicPosts = path === '/' || path.startsWith('/posts/');
-  if ((ownerRoute || publicPosts) && context.cache.enabled)
+  if ((ownerRoute || publicPosts || privateRender) && context.cache.enabled)
     context.cache.set(false);
   const response = await next();
-  if (ownerRoute || mediaFile || publicPosts) {
+  if (ownerRoute || mediaFile || publicPosts || privateRender) {
     response.headers.set('Cache-Control', 'private, no-store');
     response.headers.set('CDN-Cache-Control', 'no-store');
     response.headers.set('Cloudflare-CDN-Cache-Control', 'no-store');

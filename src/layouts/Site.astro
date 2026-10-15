@@ -3,16 +3,19 @@ import '../styles/globals.css';
 import Pixel from '../components/Pixel.astro';
 import { beerCounts } from '../lib/content';
 import { feedbackConfiguration } from '../lib/feedback';
+import { getRequestContext } from 'emdash';
 interface Props {
   title?: string;
   owner?: boolean;
   privateContent?: boolean;
 }
-const {
-  title = 'jp.bent.build',
-  owner = false,
-  privateContent = owner,
-} = Astro.props;
+const { title = 'jp.bent.build', owner = false } = Astro.props;
+const cmsContext = getRequestContext();
+const privateContent =
+  owner ||
+  Boolean(
+    Astro.props.privateContent || cmsContext?.preview || cmsContext?.editMode,
+  );
 const counts = await beerCounts();
 const feedback = feedbackConfiguration(
   import.meta.env.PUBLIC_FEEDBACK_SERVER,

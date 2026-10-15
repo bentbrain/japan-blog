@@ -39,7 +39,7 @@ pnpm build
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
 - `/_emdash/admin`: native CMS maintenance, revisions and passkey management.
 
-Native CMS media links under `/media_items/:slug` redirect to `/media/:slug`. Post previews require both a valid native preview link and the signed-in owner session. Preview pages use feedback redaction and disable indexing. Media publication validates the same fields as the public loader, including photo/video kind. The public map fits Japan and all published media locations so pins outside Japan remain reachable.
+Native CMS media links under `/media_items/:slug` redirect to `/media/:slug`. Native previews require both a valid preview link and the signed-in owner session. Preview and native edit-mode pages use feedback redaction, disable indexing and prevent caching. Media publication validates the same fields as the public loader, including photo/video kind. The public map fits Japan and all published media locations so pins outside Japan remain reachable.
 
 Capture times group into days in `Asia/Tokyo`. Photos without an offset are interpreted as Japan time. Originals remain in private R2 storage. Draft previews require owner access; published files check the live media record and disable caching so unpublication takes effect immediately. The image-transform endpoint is disabled because previews are already resized. The owner browser converts HEIC previews and short videos before upload and renders story exports with WebCodecs. MP4 rendering needs a current Safari or Chrome with AVC encoding support. Story exports are silent.
 
