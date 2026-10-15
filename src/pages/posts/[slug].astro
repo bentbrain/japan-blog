@@ -8,12 +8,18 @@ import { tripMedia } from '../../lib/content';
 import { formatDay, galleryIds } from '../../lib/model';
 const { slug } = Astro.params;
 if (!slug) return Astro.redirect('/404');
-const { entry: post } = await getEmDashEntry('posts', slug);
-if (!post || post.data.status !== 'published') return Astro.rewrite('/404');
+const { entry: post, isPreview } = await getEmDashEntry('posts', slug);
+const owner = Astro.locals.user && Astro.locals.user.role >= 50;
+if (
+  !post ||
+  (isPreview && !owner) ||
+  (!isPreview && post.data.status !== 'published')
+)
+  return Astro.rewrite('/404');
 const media = await tripMedia();
 ---
 
-<Site title={`${post.data.title} / jp.bent.build`}>
+<Site title={`${post.data.title} / jp.bent.build`} privateContent={isPreview}>
   <article class="single-post mx-auto max-w-[800px] [&_.post-body]:px-0 [&_.post-body]:py-4">
     <div class="post-heading flex flex-wrap items-center justify-between gap-2.5 p-4 [&_a]:no-underline">
       <h1>{post.data.title}</h1>

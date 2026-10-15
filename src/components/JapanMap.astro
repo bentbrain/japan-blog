@@ -1,29 +1,14 @@
 ---
-import { geoMercator, geoPath } from 'd3-geo';
-import japan from '../lib/japan.json';
-import { z } from 'zod';
+import { tripMap } from '../lib/map';
 import { posterUrl, type TripMedia } from '../lib/model';
 interface Props {
   media: TripMedia[];
 }
 const { media } = Astro.props;
-const geometry = z
-  .object({
-    type: z.literal('MultiPolygon'),
-    coordinates: z.array(z.array(z.array(z.array(z.number())))),
-  })
-  .parse(japan.geometry);
-const projection = geoMercator().fitExtent(
-  [
-    [105, 20],
-    [650, 420],
-  ],
-  geometry,
-);
-const land = geoPath(projection)(geometry);
+const { projectMedia, land } = tripMap(media);
 const groups: { x: number; y: number; items: TripMedia[] }[] = [];
 for (const item of media) {
-  const point = projection([item.longitude, item.latitude]);
+  const point = projectMedia(item);
   if (!point) continue;
   const [x = 0, y = 0] = point;
   const group = groups.find((g) => Math.hypot(g.x - x, g.y - y) < 25);
