@@ -323,6 +323,82 @@ void test('approved built-in categories never enqueue paid generation or retries
     );
 });
 
+void test('pre-upgrade built-in jobs cannot dispatch or starve custom categories', async () => {
+  await saveCategories(['origami']);
+  await drainIconOutbox(environment(), now);
+  const { DB } = environment();
+  const origami = await storedCategory('origami');
+  await DB.prepare(
+    "INSERT INTO jp_icon_jobs(id,category_id,version,model,generation,status,available_at,created_at) VALUES(?,?,?,?,1,'pending',?,?)",
+  )
+    .bind(
+      'pre-upgrade-origami',
+      origami.id,
+      'bent-pixel-v1',
+      iconModel,
+      now - 1,
+      now - 1,
+    )
+    .run();
+  const original = await latestJob('origami');
+  const generated: string[] = [];
+  const generate: typeof generateCategoryIcon = (input) => {
+    generated.push(input.category.normalized);
+    return Promise.resolve({ status: 'failed' });
+  };
+  await runCategoryIconJobs(environment(), { now: () => now, generate });
+  assert.deepEqual(generated, []);
+  assert.equal(await count('jp_icon_attempts'), 0);
+  assert.deepEqual(await latestJob('origami'), original);
+  await saveCategories(['new custom category']);
+  await runCategoryIconJobs(environment(), { now: () => now, generate });
+  assert.deepEqual(generated, ['new custom category']);
+  assert.equal(await count('jp_icon_attempts'), 1);
+  assert.deepEqual(await latestJob('origami'), original);
+});
+
+void test('built-in running and uncertain history stays intact during dispatch', async () => {
+  await saveCategories(['origami', 'custom behind running job']);
+  await drainIconOutbox(environment(), now);
+  const { DB } = environment();
+  const origami = await storedCategory('origami');
+  await DB.batch([
+    DB.prepare(
+      "INSERT INTO jp_icon_jobs(id,category_id,version,model,generation,status,attempts,available_at,created_at) VALUES(?,?,?,?,1,'uncertain',1,?,?)",
+    ).bind(
+      'uncertain-origami',
+      origami.id,
+      'bent-pixel-v1',
+      iconModel,
+      now - 1,
+      now - 1,
+    ),
+    DB.prepare(
+      "INSERT INTO jp_icon_jobs(id,category_id,version,model,generation,status,attempts,available_at,created_at,lease_token,lease_until) VALUES(?,?,?,?,2,'running',1,?,?,'existing-lease',?)",
+    ).bind(
+      'running-origami',
+      origami.id,
+      'bent-pixel-v1',
+      iconModel,
+      now,
+      now,
+      now + 180_000,
+    ),
+  ]);
+  const history = () =>
+    DB.prepare('SELECT * FROM jp_icon_jobs ORDER BY id').all();
+  const original = (await history()).results;
+  const generated: string[] = [];
+  const generate: typeof generateCategoryIcon = (input) => {
+    generated.push(input.category.normalized);
+    return Promise.resolve({ status: 'failed' });
+  };
+  await runCategoryIconJobs(environment(), { now: () => now, generate });
+  assert.deepEqual(generated, []);
+  assert.equal(await count('jp_icon_attempts'), 0);
+  assert.deepEqual((await history()).results, original);
+});
+
 void test('baseline paging completes before queued categories can spend', async () => {
   await resetSchema();
   for (let index = 0; index < 101; index++)

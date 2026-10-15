@@ -9,6 +9,10 @@ const builtInCategories = new Set([
   'origami',
 ]);
 
+export function builtInCategoryNames() {
+  return [...builtInCategories];
+}
+
 export function builtInCategoryIconUrl(normalized: string) {
   return builtInCategories.has(normalized)
     ? `/category-icons/${normalized}-v1.png`
