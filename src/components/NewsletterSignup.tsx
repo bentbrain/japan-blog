@@ -1,4 +1,4 @@
-import { useState, type SubmitEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { newsletterPublicRequest } from '../lib/newsletter-client';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -7,6 +7,10 @@ import { Field, FieldLabel } from './ui/field';
 export function NewsletterSignup() {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    setReady(true);
+  }, []);
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -55,6 +59,7 @@ export function NewsletterSignup() {
               autoComplete="email"
               maxLength={254}
               required
+              disabled={!ready || busy}
               placeholder="you@example.com"
               className="rounded-none"
             />
@@ -69,7 +74,7 @@ export function NewsletterSignup() {
               autoComplete="off"
             />
           </div>
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={!ready || busy}>
             {busy ? 'SENDING…' : 'SUBSCRIBE'}
           </Button>
         </form>

@@ -186,7 +186,11 @@ export function OwnerNewsletter() {
                       id="newsletter-frequency"
                       className="rounded-none"
                     >
-                      <SelectValue />
+                      <SelectValue>
+                        {settings.frequency === 'weekly'
+                          ? 'weekly'
+                          : 'every few days'}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="weekly">weekly</SelectItem>
@@ -207,7 +211,7 @@ export function OwnerNewsletter() {
                         id="newsletter-weekday"
                         className="rounded-none"
                       >
-                        <SelectValue />
+                        <SelectValue>{weekdays[settings.weekday]}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {weekdays.map((day, index) => (

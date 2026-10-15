@@ -84,6 +84,9 @@ test('owner settings use private plugin storage, start paused and reject missing
     page.getByText('automatic sending paused', { exact: true }),
   ).toBeVisible();
   await expect(
+    page.getByRole('combobox', { name: 'day', exact: true }),
+  ).toHaveText(/sunday/);
+  await expect(
     page.getByRole('checkbox', { name: 'automatic sending' }),
   ).toBeDisabled();
   await expect(
