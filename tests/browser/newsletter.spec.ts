@@ -7,6 +7,34 @@ import { newsletterStatusSchema } from '../../src/lib/newsletter-model';
 const plugin = '/_emdash/api/plugins/japan-newsletter';
 const colorSchemes: Array<'light' | 'dark'> = ['light', 'dark'];
 
+for (const width of [320, 390, 1280]) {
+  test(`blog and pics share the whole bottom footer at ${String(width)}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const positions = [];
+    for (const path of ['/', '/gallery']) {
+      await page.goto(path);
+      const signup = page.getByRole('region', { name: 'newsletter' });
+      await expect(signup.getByRole('button')).toBeEnabled();
+      await page
+        .locator('.journal-grid > article, .pagination, .gallery-grid > *')
+        .evaluateAll((entries) => {
+          for (const entry of entries) entry.remove();
+        });
+      positions.push({
+        signup: await signup.boundingBox(),
+        shop: await page.locator('[data-feedback-id="shop-ad"]').boundingBox(),
+        footer: await page.getByRole('contentinfo').boundingBox(),
+      });
+    }
+    expect(positions[1]).toEqual(positions[0]);
+    await expect(
+      page.getByRole('contentinfo').getByRole('region', { name: 'newsletter' }),
+    ).toHaveCount(1);
+  });
+}
+
 test('published uploaded photos reach the native image binding and stop serving when the post is unpublished', async ({
   page,
   browser,
@@ -319,7 +347,9 @@ for (const path of ['/', '/gallery', '/newsletter/privacy']) {
       expect(inputBox.x).toBe(formBox.x);
       expect(buttonBox.x + buttonBox.width).toBe(formBox.x + formBox.width);
       await expect(
-        page.locator('main').getByRole('region', { name: 'newsletter' }),
+        page
+          .getByRole('contentinfo')
+          .getByRole('region', { name: 'newsletter' }),
       ).toHaveCount(1);
       await expect(signup).toHaveCSS('padding', '0px');
       await expect(signup).toHaveCSS('border-top-width', '0px');
@@ -466,7 +496,7 @@ for (const path of ['/', '/gallery', '/newsletter/privacy', '/404']) {
       if (!footerBox || !mainBox || !signupBox) return;
       expect(footerBox.y).toBeGreaterThan(844);
       expect(footerBox.y).toBeGreaterThanOrEqual(mainBox.y + mainBox.height);
-      expect(footerBox.y).toBeGreaterThanOrEqual(
+      expect(footerBox.y + footerBox.height).toBeGreaterThanOrEqual(
         signupBox.y + signupBox.height,
       );
       await page.getByRole('contentinfo').scrollIntoViewIfNeeded();

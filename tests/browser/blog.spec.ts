@@ -354,7 +354,7 @@ for (const width of [320, 1280]) {
           .getByRole('link', { name: 'email privacy' }),
       ).toHaveAttribute('href', '/newsletter/privacy');
       const signup = page
-        .locator('main')
+        .getByRole('contentinfo')
         .getByRole('region', { name: 'newsletter' });
       await expect(signup).toHaveCSS('padding', '0px');
       await expect(signup).toHaveCSS('border-top-width', '0px');

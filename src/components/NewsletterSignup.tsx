@@ -33,7 +33,7 @@ export function NewsletterSignup() {
     <section
       data-feedback-id="newsletter-signup"
       aria-label="newsletter"
-      className="mt-6 w-full"
+      className="w-full"
     >
       <div>
         <form
