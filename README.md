@@ -65,7 +65,7 @@ The `Independent review` commit status links the reviewed head SHA to independen
 
 The review status is a PR merge gate. Squash merging creates a different main SHA; Quality runs again on main, and Deploy requires the latest run of each of the nine CI jobs to succeed for its checked-out SHA through `scripts/require-checks.mjs`. Leave that deployment list unchanged. Requiring the PR-head review status on the new squash SHA would block normal deployment, and copying success would falsely attest to a review of that SHA. Agents must use normal CI deployment and cannot push to main, bypass protection or deploy manually.
 
-Secrets and local data are excluded from Git. Deployment configuration lives in `wrangler.jsonc`; application secrets belong in Cloudflare's encrypted secret storage.
+Secrets and local data are excluded from Git. Deployment configuration lives in `wrangler.jsonc`; application secrets belong in Cloudflare's encrypted secret storage. The verified deployment supplies `OPENAI_API_KEY` and `EMDASH_ENCRYPTION_KEY` from GitHub Actions secrets through a temporary private secrets file. EmDash validates the encryption key before Wrangler starts; missing or malformed keys block deployment without changing the Worker. Generate encryption keys with `emdash secrets generate`; preserve the existing key when encrypted plugin settings already exist. Replacing the key requires separate owner authorization under `AGENTS.md`.
 
 The production account is the sole author. Public account creation and invitations are disabled. First-time passkey setup requires a short-lived private setup cookie. Generate a setup capability and keep it private; clear `SETUP_TOKEN` after registering the owner account.
 
