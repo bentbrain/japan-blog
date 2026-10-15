@@ -1,5 +1,19 @@
 import { z } from 'zod';
-import { categories } from './model';
+
+const builtInCategories = new Set([
+  'food',
+  'shopping',
+  'landscape',
+  'people',
+  'beer',
+  'origami',
+]);
+
+export function builtInCategoryIconUrl(normalized: string) {
+  return builtInCategories.has(normalized)
+    ? `/category-icons/${normalized}-v1.png`
+    : undefined;
+}
 
 export const iconPromptVersion = 'bent-pixel-v1';
 export const iconModel = 'gpt-image-2.5-sunburst-2026-09-08';
@@ -38,7 +52,7 @@ export function categoryNames(value: unknown) {
   return [...unique.values()];
 }
 export function isDefaultCategory(normalized: string) {
-  return categories.includes(normalized);
+  return builtInCategories.has(normalized);
 }
 export async function iconHash(value: string) {
   const digest = await crypto.subtle.digest(

@@ -305,6 +305,24 @@ void test('migration seeds published and native draft categories without paid ba
   assert.equal((await storedCategory('food')).generation, 0);
 });
 
+void test('approved built-in categories never enqueue paid generation or retries', async () => {
+  const names = ['food', 'shopping', 'landscape', 'people', 'beer', 'origami'];
+  await saveCategories(names);
+  await drainIconOutbox(environment(), now);
+  assert.equal(await count('jp_categories'), 6);
+  assert.equal(await count('jp_icon_jobs'), 0);
+  assert.equal(await count('jp_icon_attempts'), 0);
+  const statuses = await ownerIconStatuses(environment(), names);
+  assert.ok(
+    statuses.every(({ state, canRetry }) => state === 'default' && !canRetry),
+  );
+  for (const name of names)
+    assert.equal(
+      await retryCategoryIcon(environment(), name, false, now),
+      false,
+    );
+});
+
 void test('baseline paging completes before queued categories can spend', async () => {
   await resetSchema();
   for (let index = 0; index < 101; index++)

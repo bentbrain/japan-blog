@@ -4,6 +4,7 @@ import { api } from '../lib/api-client';
 import {
   categoryIconStatusSchema,
   categoryNames,
+  isDefaultCategory,
   type CategoryIconStatus as Status,
 } from '../lib/category-icons';
 import { Button } from './ui/button';
@@ -16,7 +17,8 @@ function statusLabel(icon: Status) {
     return 'check the image service key, model and account access, then retry';
   if (icon.state === 'uncertain')
     return 'result unknown; retry may charge again';
-  if (icon.state === 'default') return 'fallback';
+  if (icon.state === 'default')
+    return isDefaultCategory(icon.normalized) ? 'built-in' : 'fallback';
   return icon.state;
 }
 export function CategoryIconStatus({ names }: { names: string[] }) {
