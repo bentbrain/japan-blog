@@ -32,42 +32,24 @@ export function NewsletterSignup({ compact = false }: { compact?: boolean }) {
   return (
     <section
       data-feedback-id="newsletter-signup"
-      aria-label={compact ? 'newsletter' : undefined}
-      aria-labelledby={compact ? undefined : 'newsletter-title'}
+      aria-label="newsletter"
       className={
         compact
           ? 'mt-6 w-full'
           : 'mx-auto max-w-[1400px] border-t px-4 py-8 min-[601px]:px-6'
       }
     >
-      <div className={compact ? undefined : 'max-w-xl'}>
-        {!compact && (
-          <>
-            <h2 id="newsletter-title" className="mb-2">
-              journal updates
-            </h2>
-            <p className="mb-4 text-xs">
-              get new journal entries by email. unsubscribe anytime.
-            </p>
-          </>
-        )}
+      <div>
         <form
           data-feedback-redact
           data-feedback-private
           onSubmit={(event) => {
             void submit(event);
           }}
-          className={
-            compact ? 'flex items-end gap-2' : 'flex flex-wrap items-end gap-2'
-          }
+          className="flex w-full items-end gap-2"
         >
-          <Field
-            className={compact ? 'min-w-0 flex-1' : 'min-w-0 flex-1 basis-52'}
-          >
-            <FieldLabel
-              htmlFor="newsletter-email"
-              className={compact ? 'sr-only' : undefined}
-            >
+          <Field className="min-w-0 flex-1">
+            <FieldLabel htmlFor="newsletter-email" className="sr-only">
               email
             </FieldLabel>
             <Input
@@ -96,10 +78,7 @@ export function NewsletterSignup({ compact = false }: { compact?: boolean }) {
             {busy ? 'SENDING…' : 'SUBSCRIBE'}
           </Button>
         </form>
-        <p
-          role="status"
-          className={compact ? 'text-xs [&:not(:empty)]:mt-3' : 'mt-3 text-xs'}
-        >
+        <p role="status" className="text-xs [&:not(:empty)]:mt-3">
           {status}
         </p>
         {!compact && (

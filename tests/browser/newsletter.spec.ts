@@ -270,49 +270,142 @@ for (const width of [320, 390, 1280]) {
   });
 }
 
-test('signup validates email and preserves pending and confirmation feedback', async ({
-  page,
-}) => {
-  let submissions = 0;
-  let finishResponse: (() => void) | undefined;
-  const responseReady = new Promise<void>((resolve) => {
-    finishResponse = resolve;
-  });
-  await page.route(`${plugin}/subscribe`, async (route) => {
-    submissions++;
-    expect(route.request().method()).toBe('POST');
-    expect(route.request().postDataJSON()).toEqual({
-      email: 'synthetic-reader@example.com',
-      website: '',
+for (const path of ['/', '/gallery', '/newsletter/privacy']) {
+  for (const width of [320, 390, 1280]) {
+    test(`shared signup has only accessible controls across its full width on ${path} at ${String(width)}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(path);
+      const signup = page.locator('[data-feedback-id="newsletter-signup"]');
+      const email = signup.getByRole('textbox', { name: 'email', exact: true });
+      const subscribe = signup.getByRole('button', {
+        name: 'SUBSCRIBE',
+        exact: true,
+      });
+      await expect(subscribe).toBeEnabled();
+      await expect(signup.getByRole('heading')).toHaveCount(0);
+      await expect(
+        signup.getByText(
+          'get new journal entries by email. unsubscribe anytime.',
+          { exact: true },
+        ),
+      ).toHaveCount(0);
+      await expect(signup.getByRole('status')).toBeEmpty();
+      const label = signup.locator('label[for="newsletter-email"]');
+      await expect(label).toHaveText('email');
+      const labelBox = await label.boundingBox();
+      await expect(signup).toHaveAccessibleName('newsletter');
+      expect(
+        await label.evaluate((element) => getComputedStyle(element).clipPath),
+      ).toBe('inset(50%)');
+      expect(labelBox?.height).toBeLessThanOrEqual(1);
+      const inputBox = await email.boundingBox();
+      const buttonBox = await subscribe.boundingBox();
+      const formBox = await signup.locator('form').boundingBox();
+      const signupBox = await signup.boundingBox();
+      expect(inputBox).not.toBeNull();
+      expect(buttonBox).not.toBeNull();
+      expect(formBox).not.toBeNull();
+      expect(signupBox).not.toBeNull();
+      if (!inputBox || !buttonBox || !formBox || !signupBox) return;
+      expect(inputBox.y).toBe(buttonBox.y);
+      expect(inputBox.height).toBe(buttonBox.height);
+      expect(inputBox.width).toBeGreaterThan(0);
+      expect(inputBox.x + inputBox.width).toBeLessThan(buttonBox.x);
+      expect(inputBox.x).toBe(formBox.x);
+      expect(buttonBox.x + buttonBox.width).toBe(formBox.x + formBox.width);
+      const padding = path === '/' ? 0 : width > 600 ? 24 : 16;
+      expect(formBox.x).toBe(signupBox.x + padding);
+      expect(formBox.width).toBe(signupBox.width - padding * 2);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(width);
+      const privacy = page.getByRole('link', {
+        name: 'email privacy',
+        exact: true,
+      });
+      await expect(privacy).toHaveCount(1);
+      await expect(privacy).toHaveAttribute('href', '/newsletter/privacy');
+      if (path === '/') {
+        await expect(signup.getByRole('link')).toHaveCount(0);
+        await expect(
+          page
+            .getByRole('contentinfo')
+            .getByRole('link', { name: 'email privacy' }),
+        ).toBeVisible();
+      } else {
+        await expect(page.getByRole('contentinfo')).toHaveCount(0);
+        await expect(
+          signup.getByRole('link', { name: 'email privacy' }),
+        ).toBeVisible();
+      }
     });
-    await responseReady;
-    await route.fulfill({ json: { success: true, data: { ok: true } } });
+  }
+}
+
+for (const path of ['/', '/gallery', '/newsletter/privacy']) {
+  test(`signup validates email and preserves pending, confirmation and error feedback on ${path}`, async ({
+    page,
+  }) => {
+    let submissions = 0;
+    let finishResponse: (() => void) | undefined;
+    const responseReady = new Promise<void>((resolve) => {
+      finishResponse = resolve;
+    });
+    await page.route(`${plugin}/subscribe`, async (route) => {
+      submissions++;
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().postDataJSON()).toEqual({
+        email: 'synthetic-reader@example.com',
+        website: '',
+      });
+      await responseReady;
+      await route.fulfill({ json: { success: true, data: { ok: true } } });
+    });
+    await page.goto(path);
+    const signup = page.getByRole('region', { name: 'newsletter' });
+    const email = signup.getByRole('textbox', { name: 'email', exact: true });
+    const subscribe = signup.getByRole('button', {
+      name: 'SUBSCRIBE',
+      exact: true,
+    });
+    await expect(subscribe).toBeEnabled();
+    await subscribe.click();
+    expect(submissions).toBe(0);
+    await email.fill('invalid');
+    await subscribe.click();
+    expect(submissions).toBe(0);
+    await email.fill('synthetic-reader@example.com');
+    await subscribe.click();
+    await expect(
+      signup.getByRole('button', { name: 'SENDING…' }),
+    ).toBeDisabled();
+    await expect(email).toBeDisabled();
+    finishResponse?.();
+    await expect(signup.getByRole('status')).toHaveText(
+      'check your inbox for a confirmation link.',
+    );
+    await expect(subscribe).toBeEnabled();
+    await expect(email).toHaveValue('');
+    expect(submissions).toBe(1);
+    await page.route(`${plugin}/subscribe`, (route) =>
+      route.fulfill({
+        status: 503,
+        json: {
+          error: 'signups are temporarily unavailable. please try again later.',
+        },
+      }),
+    );
+    await email.fill('synthetic-reader@example.com');
+    await subscribe.click();
+    await expect(signup.getByRole('status')).toHaveText(
+      'signups are temporarily unavailable. please try again later.',
+    );
+    await expect(subscribe).toBeEnabled();
+    await expect(email).toBeEnabled();
   });
-  await page.goto('/');
-  const signup = page.getByRole('region', { name: 'newsletter' });
-  const email = signup.getByRole('textbox', { name: 'email', exact: true });
-  const subscribe = signup.getByRole('button', {
-    name: 'SUBSCRIBE',
-    exact: true,
-  });
-  await expect(subscribe).toBeEnabled();
-  await subscribe.click();
-  expect(submissions).toBe(0);
-  await email.fill('invalid');
-  await subscribe.click();
-  expect(submissions).toBe(0);
-  await email.fill('synthetic-reader@example.com');
-  await subscribe.click();
-  await expect(signup.getByRole('button', { name: 'SENDING…' })).toBeDisabled();
-  await expect(email).toBeDisabled();
-  finishResponse?.();
-  await expect(signup.getByRole('status')).toHaveText(
-    'check your inbox for a confirmation link.',
-  );
-  await expect(subscribe).toBeEnabled();
-  await expect(email).toHaveValue('');
-  expect(submissions).toBe(1);
-});
+}
 
 test('footer follows content when the page grows beyond the viewport', async ({
   page,
