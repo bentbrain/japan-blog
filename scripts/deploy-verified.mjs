@@ -1,23 +1,108 @@
 import { spawn } from 'node:child_process';
+import {
+  chmodSync,
+  closeSync,
+  fchmodSync,
+  mkdtempSync,
+  openSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Called only by Deploy, after require-checks verifies the checked-out SHA.
-// /dev/stdin is read once by Wrangler's secrets-file parser. The key never
-// enters command arguments, the repository, a temporary file, or stdout.
-const key = process.env.OPENAI_API_KEY?.trim();
-if (!key) throw new Error('OPENAI_API_KEY GitHub Actions secret is required');
-const child = spawn(
-  'pnpm',
-  ['exec', 'wrangler', 'deploy', '--secrets-file', '/dev/stdin'],
-  {
-    stdio: ['pipe', 'inherit', 'inherit'],
-    env: { ...process.env, OPENAI_API_KEY: undefined },
-  },
-);
-child.stdin.on('error', () => {});
-child.stdin.end(JSON.stringify({ OPENAI_API_KEY: key }));
-child.on('error', () => {
-  process.exitCode = 1;
-});
-child.on('exit', (code) => {
-  process.exitCode = code ?? 1;
-});
+let directory;
+let child;
+let interrupted;
+let killTimer;
+const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+const processGroup = process.platform !== 'win32';
+
+function stopChild(signal) {
+  if (!child?.pid) return;
+  try {
+    // pnpm starts Wrangler as a descendant. Cancel the entire deployment.
+    if (processGroup) process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+}
+
+function interrupt(signal) {
+  interrupted ??= signal;
+  stopChild(signal);
+  killTimer ??= setTimeout(() => stopChild('SIGKILL'), 5000);
+}
+
+for (const signal of signals) process.on(signal, interrupt);
+
+function writeSecrets() {
+  const key = process.env.OPENAI_API_KEY?.trim();
+  delete process.env.OPENAI_API_KEY;
+  if (!key) throw new Error('OPENAI_API_KEY GitHub Actions secret is required');
+
+  const temporary = realpathSync(tmpdir());
+  const repository = realpathSync(
+    fileURLToPath(new URL('../', import.meta.url)),
+  );
+  const location = relative(repository, temporary);
+  if (
+    location === '' ||
+    (!isAbsolute(location) &&
+      !location.startsWith(`..${sep}`) &&
+      location !== '..')
+  ) {
+    throw new Error(
+      'Deployment secrets require a temporary directory outside the repository',
+    );
+  }
+
+  // A Node child pipe cannot be reopened as /dev/stdin on Linux. Wrangler
+  // requires a real path; keep it private and alive until the child finishes.
+  directory = mkdtempSync(join(temporary, 'jp-deploy-secrets-'));
+  chmodSync(directory, 0o700);
+  const file = join(directory, 'secrets.json');
+  const descriptor = openSync(file, 'wx', 0o600);
+  try {
+    fchmodSync(descriptor, 0o600);
+    writeFileSync(descriptor, JSON.stringify({ OPENAI_API_KEY: key }));
+  } finally {
+    closeSync(descriptor);
+  }
+  return file;
+}
+
+let outcome;
+try {
+  const file = writeSecrets();
+  child = spawn(
+    'pnpm',
+    ['exec', 'wrangler', 'deploy', '--secrets-file', file],
+    {
+      stdio: ['ignore', 'inherit', 'inherit'],
+      env: process.env,
+      detached: processGroup,
+    },
+  );
+  outcome = await new Promise((resolve) => {
+    child.once('error', () => resolve({ code: 1 }));
+    child.once('close', (code, signal) => resolve({ code: code ?? 1, signal }));
+  });
+} catch (error) {
+  // Setup errors contain no secret values. Child startup errors use code 1.
+  console.error(error.message);
+  outcome = { code: 1 };
+} finally {
+  clearTimeout(killTimer);
+  stopChild('SIGKILL');
+  if (directory) rmSync(directory, { recursive: true, force: true });
+  for (const signal of signals) process.off(signal, interrupt);
+}
+
+const signal = interrupted ?? outcome.signal;
+if (signal) process.kill(process.pid, signal);
+else process.exitCode = outcome.code;
