@@ -24,6 +24,7 @@ async function fixture() {
   const bin = join(directory, 'bin');
   const temporary = join(directory, 'temporary');
   const evidence = join(directory, 'received.json');
+  const started = join(directory, 'started');
   await mkdir(bin);
   await mkdir(temporary);
   await writeFile(
@@ -33,6 +34,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
+fs.writeFileSync(process.env.FIXTURE_STARTED, 'started');
 const args = process.argv.slice(2);
 const file = args[args.indexOf('--secrets-file') + 1];
 // Reopen the path exactly as Wrangler does, including on the Linux CI runner.
@@ -82,6 +84,7 @@ function ready() {
     TMP: temporary,
     TEMP: temporary,
     FIXTURE_EVIDENCE: evidence,
+    FIXTURE_STARTED: started,
     OPENAI_API_KEY: syntheticKey,
     EMDASH_ENCRYPTION_KEY: syntheticEncryptionKey,
     CLOUDFLARE_API_TOKEN: 'synthetic-cloudflare-token',
@@ -89,7 +92,7 @@ function ready() {
     WRANGLER_SEND_METRICS: 'false',
     CI: 'true',
   };
-  return { directory, bin, temporary, evidence, env };
+  return { directory, bin, temporary, evidence, started, env };
 }
 
 function launch(env: NodeJS.ProcessEnv, cwd: string) {
@@ -178,6 +181,8 @@ void test('missing and malformed encryption keys fail before deployment without 
   try {
     for (const value of [
       '',
+      ',',
+      ', ,',
       'legacy-key-fixture',
       'emdash_enc_v1_' + 'x'.repeat(43),
     ]) {
@@ -189,6 +194,7 @@ void test('missing and malformed encryption keys fail before deployment without 
       assert.equal(result.stdout, '');
       assert.equal(result.stderr.startsWith('EMDASH_ENCRYPTION_KEY'), true);
       if (value) assert.equal(result.stderr.includes(value), false);
+      await assert.rejects(readFile(setup.started), { code: 'ENOENT' });
       await assert.rejects(readFile(setup.evidence), { code: 'ENOENT' });
       assert.deepEqual(await readdir(setup.temporary), []);
     }

@@ -49,7 +49,13 @@ async function writeSecrets() {
   if (!key) throw new Error('OPENAI_API_KEY GitHub Actions secret is required');
   if (!encryptionKey)
     throw new Error('EMDASH_ENCRYPTION_KEY GitHub Actions secret is required');
-  await resolvePluginEncryptionKeys({ EMDASH_ENCRYPTION_KEY: encryptionKey });
+  const encryptionKeys = await resolvePluginEncryptionKeys({
+    EMDASH_ENCRYPTION_KEY: encryptionKey,
+  });
+  if (!encryptionKeys?.length)
+    throw new Error(
+      'EMDASH_ENCRYPTION_KEY must contain at least one encryption key',
+    );
 
   const temporary = realpathSync(tmpdir());
   const repository = realpathSync(
