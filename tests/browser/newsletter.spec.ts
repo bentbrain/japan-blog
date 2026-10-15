@@ -8,7 +8,7 @@ test('public signup is accessible, reports unavailable transport honestly and bl
 }) => {
   await page.goto('/');
   const form = page.getByRole('region', {
-    name: 'a little japan in your inbox',
+    name: 'newsletter',
   });
   await expect(form).toBeVisible();
   await form
@@ -110,15 +110,121 @@ test('owner settings use private plugin storage, start paused and reject missing
   expect(response.headers()['cache-control']).toContain('no-store');
 });
 
-for (const width of [320, 390]) {
-  test(`newsletter form fits a ${String(width)}px screen`, async ({ page }) => {
+for (const width of [320, 390, 1280]) {
+  test(`newsletter stays above the shop on one line at ${String(width)}px`, async ({
+    page,
+  }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/');
+    const signup = page.getByRole('region', { name: 'newsletter' });
+    const email = signup.getByRole('textbox', { name: 'email', exact: true });
+    const subscribe = signup.getByRole('button', {
+      name: 'SUBSCRIBE',
+      exact: true,
+    });
+    await expect(subscribe).toBeEnabled();
+    // Other suites seed public posts. Keep this short-page fixture independent.
+    await page
+      .locator('.journal-grid > article, .pagination')
+      .evaluateAll((entries) => {
+        for (const entry of entries) entry.remove();
+      });
+    await expect(signup.getByRole('heading')).toHaveCount(0);
+    await expect(signup.getByRole('link')).toHaveCount(0);
+    await expect(signup.getByRole('status')).toBeEmpty();
+    const labelBox = await signup
+      .locator('label[for="newsletter-email"]')
+      .boundingBox();
+    expect(labelBox?.height).toBeLessThanOrEqual(1);
+    const inputBox = await email.boundingBox();
+    const buttonBox = await subscribe.boundingBox();
+    const shopBox = await page
+      .getByRole('link', { name: 'shop.bent.build ↗' })
+      .boundingBox();
+    const footer = page.getByRole('contentinfo');
+    const footerBox = await footer.boundingBox();
+    expect(inputBox).not.toBeNull();
+    expect(buttonBox).not.toBeNull();
+    expect(shopBox).not.toBeNull();
+    expect(footerBox).not.toBeNull();
+    if (!inputBox || !buttonBox || !shopBox || !footerBox) return;
+    expect(inputBox.y).toBe(buttonBox.y);
+    expect(inputBox.height).toBe(buttonBox.height);
+    expect(inputBox.x + inputBox.width).toBeLessThan(buttonBox.x);
+    expect(inputBox.x).toBe(shopBox.x);
+    expect(buttonBox.x + buttonBox.width).toBe(shopBox.x + shopBox.width);
+    expect(inputBox.y + inputBox.height).toBeLessThan(shopBox.y);
     await expect(
-      page.getByRole('button', { name: 'SUBSCRIBE', exact: true }),
-    ).toBeVisible();
+      footer.getByRole('link', { name: 'email privacy' }),
+    ).toHaveAttribute('href', '/newsletter/privacy');
+    expect(footerBox.y + footerBox.height).toBe(844);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBe(width);
   });
 }
+
+test('signup validates email and preserves pending and confirmation feedback', async ({
+  page,
+}) => {
+  let submissions = 0;
+  let finishResponse: (() => void) | undefined;
+  const responseReady = new Promise<void>((resolve) => {
+    finishResponse = resolve;
+  });
+  await page.route(`${plugin}/subscribe`, async (route) => {
+    submissions++;
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().postDataJSON()).toEqual({
+      email: 'synthetic-reader@example.com',
+      website: '',
+    });
+    await responseReady;
+    await route.fulfill({ json: { success: true, data: { ok: true } } });
+  });
+  await page.goto('/');
+  const signup = page.getByRole('region', { name: 'newsletter' });
+  const email = signup.getByRole('textbox', { name: 'email', exact: true });
+  const subscribe = signup.getByRole('button', {
+    name: 'SUBSCRIBE',
+    exact: true,
+  });
+  await expect(subscribe).toBeEnabled();
+  await subscribe.click();
+  expect(submissions).toBe(0);
+  await email.fill('invalid');
+  await subscribe.click();
+  expect(submissions).toBe(0);
+  await email.fill('synthetic-reader@example.com');
+  await subscribe.click();
+  await expect(signup.getByRole('button', { name: 'SENDING…' })).toBeDisabled();
+  await expect(email).toBeDisabled();
+  finishResponse?.();
+  await expect(signup.getByRole('status')).toHaveText(
+    'check your inbox for a confirmation link.',
+  );
+  await expect(subscribe).toBeEnabled();
+  await expect(email).toHaveValue('');
+  expect(submissions).toBe(1);
+});
+
+test('footer follows content when the page grows beyond the viewport', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('region', { name: 'newsletter' }).evaluate((signup) => {
+    const content = document.createElement('div');
+    content.style.height = '1200px';
+    content.textContent = 'synthetic layout fixture';
+    signup.before(content);
+  });
+  const footerBox = await page.getByRole('contentinfo').boundingBox();
+  const shopBox = await page
+    .getByRole('link', { name: 'shop.bent.build ↗' })
+    .boundingBox();
+  expect(footerBox).not.toBeNull();
+  expect(shopBox).not.toBeNull();
+  if (!footerBox || !shopBox) return;
+  expect(footerBox.y).toBeGreaterThan(800);
+  expect(footerBox.y).toBeGreaterThan(shopBox.y + shopBox.height);
+});
