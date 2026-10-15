@@ -4,12 +4,28 @@ import { buttonVariants } from '../components/ui/button';
 import MediaTile from '../components/MediaTile.astro';
 import ShopAd from '../components/ShopAd.astro';
 import Pixel from '../components/Pixel.astro';
+import CategoryIcon from '../components/CategoryIcon.astro';
 import { tripMedia } from '../lib/content';
+import { env } from 'cloudflare:workers';
+import { readyCategoryIcons } from '../lib/category-icon-jobs';
+import { currentPublishedCategoryNames } from '../lib/category-icon-access';
+import { normalizeCategory } from '../lib/category-icons';
 const category = Astro.url.searchParams.get('category') || 'all';
 const allMedia = await tripMedia();
 const filterCategories = [
   ...new Set(allMedia.flatMap((item) => item.categories)),
 ];
+const currentCategories = new Set(
+  (await currentPublishedCategoryNames(env.DB)).map((name) => name.normalized),
+);
+const icons = await readyCategoryIcons(
+  env,
+  filterCategories.filter((name) =>
+    currentCategories.has(normalizeCategory(name)?.normalized || ''),
+  ),
+);
+Astro.cache.set(false);
+Astro.response.headers.set('Cache-Control', 'private, no-store');
 const media = allMedia.filter(
   (item) => category === 'all' || item.categories.includes(category),
 );
@@ -34,9 +50,16 @@ const media = allMedia.filter(
           }
           aria-current={category === name ? 'page' : undefined}
         >
-          {['food', 'shopping', 'landscape', 'beer'].includes(name) && (
-            <Pixel name={name} centerPaint />
-          )}
+          {name !== 'all' &&
+            (['food', 'shopping', 'landscape', 'beer'].includes(
+              normalizeCategory(name)?.normalized || '',
+            ) ? (
+              <Pixel name={normalizeCategory(name)?.normalized} centerPaint />
+            ) : (
+              <CategoryIcon
+                url={icons.get(normalizeCategory(name)?.normalized || '')}
+              />
+            ))}
           {name}
         </a>
       ))}
