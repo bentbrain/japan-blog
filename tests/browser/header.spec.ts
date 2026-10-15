@@ -28,10 +28,10 @@ for (const width of [390, 1280, 1778]) {
       await header.evaluate((el) => el.getBoundingClientRect().height),
     ).toBe(48);
     await expect(
-      page.getByRole('link', { name: 'journal', exact: true }),
+      page.getByRole('link', { name: 'blog', exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole('link', { name: 'gallery', exact: true }),
+      page.getByRole('link', { name: 'pics', exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
@@ -227,7 +227,7 @@ for (const owner of [false, true]) {
     await expect(navigation).toBeVisible();
     for (const name of owner
       ? ['posts', 'media', 'export', 'account']
-      : ['journal', 'gallery'])
+      : ['blog', 'pics'])
       await expect(
         navigation.getByRole('link', { name, exact: true }),
       ).toBeVisible();
