@@ -37,7 +37,8 @@ const media = await tripMedia();
         return item ? [item] : [];
       })}
     />
-
-    {!post.data.shop_design && <ShopAd />}
   </article>
+  <Fragment slot="after-newsletter">
+    {!post.data.shop_design && <ShopAd />}
+  </Fragment>
 </Site>

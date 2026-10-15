@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Field, FieldLabel } from './ui/field';
 
-export function NewsletterSignup({ compact = false }: { compact?: boolean }) {
+export function NewsletterSignup() {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -33,11 +33,7 @@ export function NewsletterSignup({ compact = false }: { compact?: boolean }) {
     <section
       data-feedback-id="newsletter-signup"
       aria-label="newsletter"
-      className={
-        compact
-          ? 'mt-6 w-full'
-          : 'mx-auto w-full max-w-[1400px] border-t px-4 py-8 min-[601px]:px-6'
-      }
+      className="mt-6 w-full"
     >
       <div>
         <form
