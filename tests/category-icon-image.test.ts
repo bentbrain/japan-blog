@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { crc32, deflateSync } from 'node:zlib';
 import { decode, encode } from 'fast-png';
+import { categoryIconRequestId } from '../src/lib/category-icon-diagnostics';
 import {
   generateCategoryIcon,
   normalizeCategoryIconPng,
@@ -517,4 +518,170 @@ void test('caller mutation during asynchronous inflation cannot change the valid
   const result = normalizeCategoryIconPng(source);
   source.fill(0);
   assert.deepEqual(await result, await normalizeCategoryIconPng(validSource));
+});
+
+void test('provider diagnostics distinguish failure boundaries without copying private data', async () => {
+  const requestId = 'req_0123456789abcdef0123456789abcdef';
+  const cases = [
+    {
+      stage: 'transport',
+      reason: 'request_failed',
+      fetch: () => Promise.reject(new Error('private transport detail')),
+    },
+    {
+      stage: 'status',
+      reason: 'response_received',
+      fetch: () =>
+        Promise.resolve(
+          new Response('private provider error', {
+            status: 503,
+            headers: { 'x-request-id': requestId },
+          }),
+        ),
+    },
+    {
+      stage: 'body',
+      reason: 'missing_body',
+      fetch: () => Promise.resolve(new Response(null, { status: 200 })),
+    },
+    {
+      stage: 'body',
+      reason: 'read_failed',
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new Error('private stream detail'));
+              },
+            }),
+          ),
+        ),
+    },
+    {
+      stage: 'json',
+      reason: 'invalid_json',
+      fetch: () => Promise.resolve(new Response('private malformed body')),
+    },
+    {
+      stage: 'shape',
+      reason: 'invalid_shape',
+      fetch: () =>
+        Promise.resolve(
+          Response.json({ private: 'private payload', data: [] }),
+        ),
+    },
+    {
+      stage: 'base64',
+      reason: 'invalid_base64',
+      fetch: () =>
+        Promise.resolve(
+          Response.json({ data: [{ b64_json: 'private invalid encoding' }] }),
+        ),
+    },
+    {
+      stage: 'png',
+      reason: 'invalid_png',
+      fetch: () =>
+        Promise.resolve(Response.json({ data: [{ b64_json: 'eA==' }] })),
+    },
+  ];
+  for (const scenario of cases) {
+    const diagnostics: unknown[] = [];
+    const outcome = await generateCategoryIcon(input, {
+      fetch: scenario.fetch,
+      diagnose: (detail) => diagnostics.push(detail),
+    });
+    assert.equal(outcome.status, 'uncertain');
+    assert.equal(diagnostics.length, 1);
+    assert.deepEqual(diagnostics[0], {
+      stage: scenario.stage,
+      reason: scenario.reason,
+      ...(scenario.stage === 'transport'
+        ? {}
+        : { httpStatus: scenario.stage === 'status' ? 503 : 200 }),
+      ...(scenario.stage === 'status' ? { providerRequestId: requestId } : {}),
+    });
+    assert.doesNotMatch(JSON.stringify(diagnostics), /private|test-key|beer/);
+  }
+});
+
+void test('provider diagnostics reject untrusted request IDs and cannot fail valid generation', async () => {
+  const invalidIds = [
+    'req_private-category',
+    'req_' + 'a'.repeat(129),
+    'req_0123456789abcdef0123456789abcdef,req_other',
+    'https://private.invalid',
+    'Bearer private-key',
+    'req_é'.repeat(8),
+    '',
+  ];
+  for (const requestId of invalidIds) {
+    const diagnostics: unknown[] = [];
+    const result = await generateCategoryIcon(input, {
+      fetch: () =>
+        Promise.resolve(
+          new Response('private error', {
+            status: 503,
+            headers: {
+              'x-request-id': requestId,
+              'x-private-header': 'private metadata',
+            },
+          }),
+        ),
+      diagnose: (detail) => diagnostics.push(detail),
+    });
+    assert.equal(result.status, 'uncertain');
+    assert.deepEqual(diagnostics, [
+      { stage: 'status', reason: 'response_received', httpStatus: 503 },
+    ]);
+  }
+  const result = await generateCategoryIcon(input, {
+    fetch: () => Promise.resolve(imageResponse()),
+    diagnose: () => {
+      throw new Error('broken diagnostics sink');
+    },
+  });
+  assert.equal(result.status, 'ready');
+  assert.equal(await validateStoredCategoryIcon(result.bytes), true);
+});
+
+void test('timeout diagnostics finish once even if the provider completes after abort', async () => {
+  const diagnostics: unknown[] = [];
+  let finish: ((response: Response) => void) | undefined;
+  const result = await generateCategoryIcon(input, {
+    timeoutMs: 5,
+    fetch: () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve;
+      }),
+    diagnose: (detail) => diagnostics.push(detail),
+  });
+  assert.deepEqual(result, { status: 'uncertain' });
+  assert.deepEqual(diagnostics, [{ stage: 'transport', reason: 'timeout' }]);
+  assert.ok(finish);
+  finish(imageResponse());
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(diagnostics.length, 1);
+});
+
+void test('opaque request IDs reject control suffixes and non-string values without coercion', () => {
+  const valid = 'req_0123456789abcdef0123456789abcdef';
+  assert.equal(categoryIconRequestId(valid), valid);
+  for (const value of [
+    valid + '\n',
+    valid + '\r\n',
+    valid + '\u2028',
+    valid + '\u0000',
+    valid + '\t',
+    ' ' + valid,
+    null,
+    42,
+    {
+      toString() {
+        throw new Error('must not coerce');
+      },
+    },
+  ])
+    assert.equal(categoryIconRequestId(value), undefined);
 });

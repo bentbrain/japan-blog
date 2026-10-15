@@ -19,10 +19,10 @@ import {
 } from '../src/lib/category-icon-jobs';
 import type { IconEnvironment } from '../src/lib/category-icon-jobs';
 import {
+  generateCategoryIcon,
   normalizeCategoryIconPng,
   validateStoredCategoryIcon,
 } from '../src/lib/category-icon-image';
-import type { generateCategoryIcon } from '../src/lib/category-icon-image';
 import { currentPublishedCategoryNames } from '../src/lib/category-icon-access';
 import { serveCategoryIcon } from '../src/lib/category-icon-serving';
 import {
@@ -1246,4 +1246,274 @@ void test('a provider pause cannot hide a fresh unknown result or remove its con
     false,
   );
   assert.equal((await latestJob('fresh unknown')).generation, 1);
+});
+
+function diagnosticEvent(lines: unknown[][]) {
+  assert.equal(lines.length, 1);
+  const line = lines[0];
+  assert.ok(line);
+  assert.equal(line.length, 1);
+  const event = line[0];
+  const text = JSON.stringify(event);
+  assert.ok(typeof event === 'object' && event !== null);
+  assert.ok('operationId' in event && typeof event.operationId === 'string');
+  assert.match(
+    event.operationId,
+    /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/u,
+  );
+  assert.ok('elapsedMs' in event && typeof event.elapsedMs === 'number');
+  assert.ok(
+    Number.isInteger(event.elapsedMs) &&
+      event.elapsedMs >= 0 &&
+      event.elapsedMs <= 3_600_000,
+  );
+  return { text, event };
+}
+
+void test('dispatched provider failure emits one private-safe terminal event without replay or lost consent', async (t) => {
+  const lines: unknown[][] = [];
+  t.mock.method(console, 'info', (...values: unknown[]) => lines.push(values));
+  const label = 'private fixture label';
+  await saveCategories([label]);
+  const requestId = 'req_0123456789abcdef0123456789abcdef';
+  let calls = 0;
+  const generate: typeof generateCategoryIcon = (input, dependencies) =>
+    generateCategoryIcon(input, {
+      ...dependencies,
+      fetch: () => {
+        calls++;
+        return Promise.resolve(
+          new Response('private body', {
+            status: 503,
+            headers: {
+              'x-request-id': requestId,
+              'x-secret': 'synthetic-test-key',
+            },
+          }),
+        );
+      },
+    });
+  await runCategoryIconJobs(environment(), { now: () => now, generate });
+  await runCategoryIconJobs(environment(), { now: () => now + day, generate });
+  assert.equal(calls, 1);
+  assert.equal((await latestJob(label)).status, 'uncertain');
+  assert.equal(
+    await retryCategoryIcon(environment(), label, false, now + day),
+    false,
+  );
+  const { text, event } = diagnosticEvent(lines);
+  assert.deepEqual(
+    Object.keys(event).sort(),
+    [
+      'event',
+      'operationId',
+      'stage',
+      'reason',
+      'httpStatus',
+      'providerRequestId',
+      'elapsedMs',
+    ].sort(),
+  );
+  assert.ok('event' in event && event.event === 'category_icon_generation');
+  assert.ok('stage' in event && event.stage === 'status');
+  assert.ok('reason' in event && event.reason === 'response_received');
+  assert.ok('httpStatus' in event && event.httpStatus === 503);
+  assert.ok(
+    'providerRequestId' in event && event.providerRequestId === requestId,
+  );
+  assert.doesNotMatch(
+    text,
+    /private|fixture|synthetic-test-key|category-icons\/|lease|prompt|body|secret/,
+  );
+  assert.equal(
+    await retryCategoryIcon(environment(), label, true, now + day),
+    true,
+  );
+  assert.equal(lines.length, 1);
+});
+
+for (const failure of ['none', 'mask', 'r2', 'ready_d1', 'terminal_d1']) {
+  void test(`terminal diagnostics cover ${failure} storage outcome with actual D1/R2 state`, async (t) => {
+    const lines: unknown[][] = [];
+    t.mock.method(console, 'info', (...values: unknown[]) =>
+      lines.push(values),
+    );
+    await saveCategories(['storage diagnostic fixture']);
+    const env = environment();
+    if (failure === 'r2')
+      env.MEDIA = new Proxy(env.MEDIA, {
+        get(target, property) {
+          if (property === 'put')
+            return () => Promise.reject(new Error('private storage error'));
+          const value: unknown = Reflect.get(target, property);
+          return value;
+        },
+      });
+    if (failure === 'ready_d1')
+      await sql(
+        `CREATE TRIGGER fail_ready BEFORE UPDATE OF ready_key ON jp_categories BEGIN SELECT RAISE(ABORT,'private ready error'); END;`,
+      );
+    if (failure === 'terminal_d1')
+      await sql(
+        `CREATE TRIGGER fail_terminal BEFORE UPDATE OF status ON jp_icon_jobs WHEN NEW.status='uncertain' BEGIN SELECT RAISE(ABORT,'private terminal error'); END;`,
+      );
+    let calls = 0;
+    const generate: typeof generateCategoryIcon = (_input, dependencies) => {
+      calls++;
+      if (failure === 'none') {
+        const data = new Uint8Array(1024 * 1024 * 4);
+        for (let y = 384; y < 640; y++)
+          for (let x = 384; x < 640; x++) data[(y * 1024 + x) * 4 + 3] = 255;
+        const source = encode({
+          width: 1024,
+          height: 1024,
+          channels: 4,
+          depth: 8,
+          data,
+        });
+        return generateCategoryIcon(
+          {
+            key: 'synthetic-test-key',
+            model: iconModel,
+            category: {
+              normalized: 'storage diagnostic fixture',
+              label: 'storage diagnostic fixture',
+            },
+          },
+          {
+            ...dependencies,
+            fetch: () =>
+              Promise.resolve(
+                Response.json(
+                  {
+                    data: [
+                      { b64_json: Buffer.from(source).toString('base64') },
+                    ],
+                  },
+                  {
+                    headers: {
+                      'x-request-id': 'req_0123456789abcdef0123456789abcdef',
+                    },
+                  },
+                ),
+              ),
+          },
+        );
+      }
+      return Promise.resolve(
+        failure === 'terminal_d1'
+          ? { status: 'uncertain' }
+          : {
+              status: 'ready',
+              bytes: failure === 'mask' ? new Uint8Array([1]) : pngBytes(),
+            },
+      );
+    };
+    const run = runCategoryIconJobs(env, { now: () => now, generate });
+    if (failure === 'terminal_d1') await assert.rejects(run);
+    else await run;
+    const { text, event } = diagnosticEvent(lines);
+    assert.deepEqual(
+      Object.keys(event).sort(),
+      [
+        'event',
+        'operationId',
+        'stage',
+        'reason',
+        'elapsedMs',
+        ...(failure === 'none' ? ['httpStatus', 'providerRequestId'] : []),
+      ].sort(),
+    );
+    assert.ok(
+      'stage' in event &&
+        event.stage ===
+          (failure === 'mask' ? 'mask' : failure === 'r2' ? 'r2' : 'd1'),
+    );
+    assert.ok(
+      'reason' in event &&
+        event.reason ===
+          (failure === 'none'
+            ? 'ready'
+            : failure === 'mask'
+              ? 'invalid_mask'
+              : 'write_failed'),
+    );
+    assert.doesNotMatch(text, /private|fixture|synthetic|category-icons\//);
+    assert.equal(
+      (await latestJob('storage diagnostic fixture')).status,
+      failure === 'none'
+        ? 'ready'
+        : failure === 'terminal_d1'
+          ? 'running'
+          : 'uncertain',
+    );
+    assert.equal(
+      (await env.MEDIA.list()).objects.length,
+      failure === 'mask' || failure === 'r2' || failure === 'terminal_d1'
+        ? 0
+        : 1,
+    );
+    if (failure === 'terminal_d1') await sql('DROP TRIGGER fail_terminal;');
+    await runCategoryIconJobs(env, { now: () => now + day, generate });
+    assert.equal(calls, 1);
+    assert.equal(lines.length, 1);
+  });
+}
+
+void test('a throwing terminal logger cannot change ready D1/R2 state', async (t) => {
+  t.mock.method(console, 'info', () => {
+    throw new Error('synthetic logger failure');
+  });
+  await saveCategories(['logger fixture']);
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: () => Promise.resolve({ status: 'ready', bytes: pngBytes() }),
+  });
+  assert.equal((await latestJob('logger fixture')).status, 'ready');
+  assert.equal((await environment().MEDIA.list()).objects.length, 1);
+});
+
+void test('a lost lease is diagnosed without reporting ready or dispatching again', async (t) => {
+  const lines: unknown[][] = [];
+  t.mock.method(console, 'info', (...values: unknown[]) => lines.push(values));
+  await saveCategories(['expired diagnostic fixture']);
+  let calls = 0;
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: async () => {
+      calls++;
+      assert.equal(await claimIconJob(environment(), now + 180_000), null);
+      return { status: 'ready', bytes: pngBytes() };
+    },
+  });
+  const { event } = diagnosticEvent(lines);
+  assert.ok('stage' in event && event.stage === 'd1');
+  assert.ok('reason' in event && event.reason === 'lease_lost');
+  assert.equal(calls, 1);
+  assert.equal(
+    (await latestJob('expired diagnostic fixture')).status,
+    'uncertain',
+  );
+  assert.equal(
+    (await storedCategory('expired diagnostic fixture')).ready_key,
+    null,
+  );
+});
+
+void test('distinct dispatched generations have independent random operation IDs', async (t) => {
+  const lines: unknown[][] = [];
+  t.mock.method(console, 'info', (...values: unknown[]) => lines.push(values));
+  await saveCategories([
+    'first diagnostic fixture',
+    'second diagnostic fixture',
+  ]);
+  const generate: typeof generateCategoryIcon = () =>
+    Promise.resolve({ status: 'failed' });
+  await runCategoryIconJobs(environment(), { now: () => now, generate });
+  await runCategoryIconJobs(environment(), { now: () => now, generate });
+  assert.equal(lines.length, 2);
+  const first = diagnosticEvent(lines.slice(0, 1)).event;
+  const second = diagnosticEvent(lines.slice(1)).event;
+  assert.ok('operationId' in first && 'operationId' in second);
+  assert.notEqual(first.operationId, second.operationId);
 });
