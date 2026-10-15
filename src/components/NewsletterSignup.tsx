@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Field, FieldLabel } from './ui/field';
 
-export function NewsletterSignup() {
+export function NewsletterSignup({ compact = false }: { compact?: boolean }) {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -32,26 +32,44 @@ export function NewsletterSignup() {
   return (
     <section
       data-feedback-id="newsletter-signup"
-      aria-labelledby="newsletter-title"
-      className="mx-auto max-w-[1400px] border-t px-4 py-8 min-[601px]:px-6"
+      aria-label={compact ? 'newsletter' : undefined}
+      aria-labelledby={compact ? undefined : 'newsletter-title'}
+      className={
+        compact
+          ? 'mt-6 w-full'
+          : 'mx-auto max-w-[1400px] border-t px-4 py-8 min-[601px]:px-6'
+      }
     >
-      <div className="max-w-xl">
-        <h2 id="newsletter-title" className="mb-2">
-          journal updates
-        </h2>
-        <p className="mb-4 text-xs">
-          get new journal entries by email. unsubscribe anytime.
-        </p>
+      <div className={compact ? undefined : 'max-w-xl'}>
+        {!compact && (
+          <>
+            <h2 id="newsletter-title" className="mb-2">
+              journal updates
+            </h2>
+            <p className="mb-4 text-xs">
+              get new journal entries by email. unsubscribe anytime.
+            </p>
+          </>
+        )}
         <form
           data-feedback-redact
           data-feedback-private
           onSubmit={(event) => {
             void submit(event);
           }}
-          className="flex flex-wrap items-end gap-2"
+          className={
+            compact ? 'flex items-end gap-2' : 'flex flex-wrap items-end gap-2'
+          }
         >
-          <Field className="min-w-0 flex-1 basis-52">
-            <FieldLabel htmlFor="newsletter-email">email</FieldLabel>
+          <Field
+            className={compact ? 'min-w-0 flex-1' : 'min-w-0 flex-1 basis-52'}
+          >
+            <FieldLabel
+              htmlFor="newsletter-email"
+              className={compact ? 'sr-only' : undefined}
+            >
+              email
+            </FieldLabel>
             <Input
               id="newsletter-email"
               name="email"
@@ -78,12 +96,17 @@ export function NewsletterSignup() {
             {busy ? 'SENDING…' : 'SUBSCRIBE'}
           </Button>
         </form>
-        <p role="status" className="mt-3 text-xs">
+        <p
+          role="status"
+          className={compact ? 'text-xs [&:not(:empty)]:mt-3' : 'mt-3 text-xs'}
+        >
           {status}
         </p>
-        <a href="/newsletter/privacy" className="text-xs">
-          email privacy
-        </a>
+        {!compact && (
+          <a href="/newsletter/privacy" className="text-xs">
+            email privacy
+          </a>
+        )}
       </div>
     </section>
   );
