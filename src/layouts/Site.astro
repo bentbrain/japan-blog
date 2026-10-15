@@ -6,8 +6,13 @@ import { feedbackConfiguration } from '../lib/feedback';
 interface Props {
   title?: string;
   owner?: boolean;
+  privateContent?: boolean;
 }
-const { title = 'jp.bent.build', owner = false } = Astro.props;
+const {
+  title = 'jp.bent.build',
+  owner = false,
+  privateContent = owner,
+} = Astro.props;
 const counts = await beerCounts();
 const feedback = feedbackConfiguration(
   import.meta.env.PUBLIC_FEEDBACK_SERVER,
@@ -28,9 +33,9 @@ const feedback = feedbackConfiguration(
       type="image/svg+xml"
       href="/brand/favicon.svg?v=blue-flag"
     />
-    {owner && <meta name="robots" content="noindex" />}
+    {privateContent && <meta name="robots" content="noindex" />}
   </head>
-  <body data-feedback-redact={owner ? true : undefined}>
+  <body data-feedback-redact={privateContent ? true : undefined}>
     <header
       data-feedback-id="site-header"
       class:list={[
@@ -89,8 +94,8 @@ const feedback = feedbackConfiguration(
       </div>
     </header>
     <main
-      data-feedback-private={owner ? true : undefined}
-      data-feedback-redact={owner ? true : undefined}
+      data-feedback-private={privateContent ? true : undefined}
+      data-feedback-redact={privateContent ? true : undefined}
       class="mx-auto max-w-[1400px] p-4 min-[601px]:p-6"
     >
       <slot />

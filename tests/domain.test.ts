@@ -101,6 +101,18 @@ void test('short videos are allowed and longer or unmeasured videos are rejected
   );
   assert.match(validateMedia({ ...photo, kind: 'video' }) || '', /10 seconds/);
 });
+void test('native publishing rejects media the public loader cannot render', () => {
+  for (const kind of [undefined, null, '', 'image'])
+    assert.ok(
+      validateMedia({ ...photo, kind }),
+      'Missing media kind published',
+    );
+  for (const asset of [{}, { id: '' }, { id: 12 }])
+    assert.ok(
+      validateMedia({ ...photo, asset }),
+      'Invalid media asset published',
+    );
+});
 void test('QuickTime GPS handles signed coordinates and optional altitude', () => {
   assert.deepEqual(iso6709('+35.6895+139.6917+013.2/'), {
     latitude: 35.6895,

@@ -22,7 +22,7 @@ export const metadataSchema = z.object({
   categories: z.array(z.string().trim().min(1).max(40)).max(20),
 });
 const fileSchema = z.object({
-  id: z.string(),
+  id: z.string().trim().min(1),
   url: z.string().optional(),
   src: z.string().optional(),
 });
