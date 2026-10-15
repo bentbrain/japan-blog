@@ -217,58 +217,60 @@ test('owner settings use private plugin storage, start paused and reject missing
   expect(response.headers()['cache-control']).toContain('no-store');
 });
 
-for (const width of [320, 390, 1280]) {
-  test(`newsletter stays above the shop on one line at ${String(width)}px`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.goto('/');
-    const signup = page.getByRole('region', { name: 'newsletter' });
-    const email = signup.getByRole('textbox', { name: 'email', exact: true });
-    const subscribe = signup.getByRole('button', {
-      name: 'SUBSCRIBE',
-      exact: true,
-    });
-    await expect(subscribe).toBeEnabled();
-    // Other suites seed public posts. Keep this short-page fixture independent.
-    await page
-      .locator('.journal-grid > article, .pagination')
-      .evaluateAll((entries) => {
-        for (const entry of entries) entry.remove();
+for (const path of ['/', '/gallery']) {
+  for (const width of [320, 390, 1280]) {
+    test(`newsletter stays above the shop on one line on ${path} at ${String(width)}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(path);
+      const signup = page.getByRole('region', { name: 'newsletter' });
+      const email = signup.getByRole('textbox', { name: 'email', exact: true });
+      const subscribe = signup.getByRole('button', {
+        name: 'SUBSCRIBE',
+        exact: true,
       });
-    await expect(signup.getByRole('heading')).toHaveCount(0);
-    await expect(signup.getByRole('link')).toHaveCount(0);
-    await expect(signup.getByRole('status')).toBeEmpty();
-    const labelBox = await signup
-      .locator('label[for="newsletter-email"]')
-      .boundingBox();
-    expect(labelBox?.height).toBeLessThanOrEqual(1);
-    const inputBox = await email.boundingBox();
-    const buttonBox = await subscribe.boundingBox();
-    const shopBox = await page
-      .getByRole('link', { name: 'shop.bent.build ↗' })
-      .boundingBox();
-    const footer = page.getByRole('contentinfo');
-    const footerBox = await footer.boundingBox();
-    expect(inputBox).not.toBeNull();
-    expect(buttonBox).not.toBeNull();
-    expect(shopBox).not.toBeNull();
-    expect(footerBox).not.toBeNull();
-    if (!inputBox || !buttonBox || !shopBox || !footerBox) return;
-    expect(inputBox.y).toBe(buttonBox.y);
-    expect(inputBox.height).toBe(buttonBox.height);
-    expect(inputBox.x + inputBox.width).toBeLessThan(buttonBox.x);
-    expect(inputBox.x).toBe(shopBox.x);
-    expect(buttonBox.x + buttonBox.width).toBe(shopBox.x + shopBox.width);
-    expect(inputBox.y + inputBox.height).toBeLessThan(shopBox.y);
-    await expect(
-      footer.getByRole('link', { name: 'email privacy' }),
-    ).toHaveAttribute('href', '/newsletter/privacy');
-    expect(footerBox.y + footerBox.height).toBe(844);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(width);
-  });
+      await expect(subscribe).toBeEnabled();
+      // Other suites seed public posts. Keep this short-page fixture independent.
+      await page
+        .locator('.journal-grid > article, .pagination, .gallery-grid > *')
+        .evaluateAll((entries) => {
+          for (const entry of entries) entry.remove();
+        });
+      await expect(signup.getByRole('heading')).toHaveCount(0);
+      await expect(signup.getByRole('link')).toHaveCount(0);
+      await expect(signup.getByRole('status')).toBeEmpty();
+      const labelBox = await signup
+        .locator('label[for="newsletter-email"]')
+        .boundingBox();
+      expect(labelBox?.height).toBeLessThanOrEqual(1);
+      const inputBox = await email.boundingBox();
+      const buttonBox = await subscribe.boundingBox();
+      const shopBox = await page
+        .getByRole('link', { name: 'shop.bent.build ↗' })
+        .boundingBox();
+      const footer = page.getByRole('contentinfo');
+      const footerBox = await footer.boundingBox();
+      expect(inputBox).not.toBeNull();
+      expect(buttonBox).not.toBeNull();
+      expect(shopBox).not.toBeNull();
+      expect(footerBox).not.toBeNull();
+      if (!inputBox || !buttonBox || !shopBox || !footerBox) return;
+      expect(inputBox.y).toBe(buttonBox.y);
+      expect(inputBox.height).toBe(buttonBox.height);
+      expect(inputBox.x + inputBox.width).toBeLessThan(buttonBox.x);
+      expect(inputBox.x).toBe(shopBox.x);
+      expect(buttonBox.x + buttonBox.width).toBe(shopBox.x + shopBox.width);
+      expect(inputBox.y + inputBox.height).toBeLessThan(shopBox.y);
+      await expect(
+        footer.getByRole('link', { name: 'email privacy' }),
+      ).toHaveAttribute('href', '/newsletter/privacy');
+      expect(footerBox.y + footerBox.height).toBe(844);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(width);
+    });
+  }
 }
 
 for (const path of ['/', '/gallery', '/newsletter/privacy']) {
@@ -316,9 +318,13 @@ for (const path of ['/', '/gallery', '/newsletter/privacy']) {
       expect(inputBox.x + inputBox.width).toBeLessThan(buttonBox.x);
       expect(inputBox.x).toBe(formBox.x);
       expect(buttonBox.x + buttonBox.width).toBe(formBox.x + formBox.width);
-      const padding = path === '/' ? 0 : width > 600 ? 24 : 16;
-      expect(formBox.x).toBe(signupBox.x + padding);
-      expect(formBox.width).toBe(signupBox.width - padding * 2);
+      await expect(
+        page.locator('main').getByRole('region', { name: 'newsletter' }),
+      ).toHaveCount(1);
+      await expect(signup).toHaveCSS('padding', '0px');
+      await expect(signup).toHaveCSS('border-top-width', '0px');
+      expect(formBox.x).toBe(signupBox.x);
+      expect(formBox.width).toBe(signupBox.width);
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBe(width);

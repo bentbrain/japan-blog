@@ -353,6 +353,22 @@ for (const width of [320, 1280]) {
           .getByRole('contentinfo')
           .getByRole('link', { name: 'email privacy' }),
       ).toHaveAttribute('href', '/newsletter/privacy');
+      const signup = page
+        .locator('main')
+        .getByRole('region', { name: 'newsletter' });
+      await expect(signup).toHaveCSS('padding', '0px');
+      await expect(signup).toHaveCSS('border-top-width', '0px');
+      const signupBox = await signup.boundingBox();
+      const shopBox = await page
+        .locator('[data-feedback-id="shop-ad"]')
+        .boundingBox();
+      expect(signupBox).not.toBeNull();
+      expect(shopBox).not.toBeNull();
+      if (!signupBox || !shopBox)
+        throw new Error(`Missing signup or shop banner on ${path}`);
+      expect(shopBox.y - signupBox.y - signupBox.height).toBe(24);
+      expect(shopBox.x).toBe(signupBox.x);
+      expect(shopBox.width).toBe(signupBox.width);
       const footerBox = await page.getByRole('contentinfo').boundingBox();
       expect(footerBox).not.toBeNull();
       if (!footerBox) throw new Error(`Missing footer on ${path}`);
