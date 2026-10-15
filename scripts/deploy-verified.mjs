@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolvePluginEncryptionKeys } from 'emdash';
 import {
   chmodSync,
   closeSync,
@@ -40,10 +41,21 @@ function interrupt(signal) {
 
 for (const signal of signals) process.on(signal, interrupt);
 
-function writeSecrets() {
+async function writeSecrets() {
   const key = process.env.OPENAI_API_KEY?.trim();
+  const encryptionKey = process.env.EMDASH_ENCRYPTION_KEY?.trim();
   delete process.env.OPENAI_API_KEY;
+  delete process.env.EMDASH_ENCRYPTION_KEY;
   if (!key) throw new Error('OPENAI_API_KEY GitHub Actions secret is required');
+  if (!encryptionKey)
+    throw new Error('EMDASH_ENCRYPTION_KEY GitHub Actions secret is required');
+  const encryptionKeys = await resolvePluginEncryptionKeys({
+    EMDASH_ENCRYPTION_KEY: encryptionKey,
+  });
+  if (!encryptionKeys?.length)
+    throw new Error(
+      'EMDASH_ENCRYPTION_KEY must contain at least one encryption key',
+    );
 
   const temporary = realpathSync(tmpdir());
   const repository = realpathSync(
@@ -69,7 +81,13 @@ function writeSecrets() {
   const descriptor = openSync(file, 'wx', 0o600);
   try {
     fchmodSync(descriptor, 0o600);
-    writeFileSync(descriptor, JSON.stringify({ OPENAI_API_KEY: key }));
+    writeFileSync(
+      descriptor,
+      JSON.stringify({
+        OPENAI_API_KEY: key,
+        EMDASH_ENCRYPTION_KEY: encryptionKey,
+      }),
+    );
   } finally {
     closeSync(descriptor);
   }
@@ -78,7 +96,8 @@ function writeSecrets() {
 
 let outcome;
 try {
-  const file = writeSecrets();
+  const file = await writeSecrets();
+  if (interrupted) throw new Error('Deployment cancelled before startup');
   child = spawn(
     'pnpm',
     ['exec', 'wrangler', 'deploy', '--secrets-file', file],

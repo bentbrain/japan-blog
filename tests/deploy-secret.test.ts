@@ -16,12 +16,15 @@ import { setTimeout } from 'node:timers/promises';
 
 const script = resolve('scripts/deploy-verified.mjs');
 const syntheticKey = 'synthetic-secret-fixture';
+const syntheticEncryptionKey =
+  'emdash_enc_v1_' + Buffer.alloc(32, 7).toString('base64url');
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'jp-deploy-fixture-'));
   const bin = join(directory, 'bin');
   const temporary = join(directory, 'temporary');
   const evidence = join(directory, 'received.json');
+  const started = join(directory, 'started');
   await mkdir(bin);
   await mkdir(temporary);
   await writeFile(
@@ -31,13 +34,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
+fs.writeFileSync(process.env.FIXTURE_STARTED, 'started');
 const args = process.argv.slice(2);
 const file = args[args.indexOf('--secrets-file') + 1];
 // Reopen the path exactly as Wrangler does, including on the Linux CI runner.
 const binding = JSON.parse(fs.readFileSync(file, 'utf8'));
 assert.equal(binding.OPENAI_API_KEY === 'synthetic-secret-fixture', true);
-assert.deepEqual(Object.keys(binding), ['OPENAI_API_KEY']);
+assert.equal(binding.EMDASH_ENCRYPTION_KEY === ${JSON.stringify(syntheticEncryptionKey)}, true);
+assert.deepEqual(Object.keys(binding), ['OPENAI_API_KEY', 'EMDASH_ENCRYPTION_KEY']);
 assert.equal(Object.hasOwn(process.env, 'OPENAI_API_KEY'), false);
+assert.equal(Object.hasOwn(process.env, 'EMDASH_ENCRYPTION_KEY'), false);
 assert.equal(process.env.CLOUDFLARE_API_TOKEN === 'synthetic-cloudflare-token', true);
 assert.equal(args.some(arg => arg.includes('synthetic-secret-fixture')), false);
 assert.deepEqual(args.slice(0, -1), ['exec', 'wrangler', 'deploy', '--secrets-file']);
@@ -78,13 +84,15 @@ function ready() {
     TMP: temporary,
     TEMP: temporary,
     FIXTURE_EVIDENCE: evidence,
+    FIXTURE_STARTED: started,
     OPENAI_API_KEY: syntheticKey,
+    EMDASH_ENCRYPTION_KEY: syntheticEncryptionKey,
     CLOUDFLARE_API_TOKEN: 'synthetic-cloudflare-token',
     CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: 'false',
     WRANGLER_SEND_METRICS: 'false',
     CI: 'true',
   };
-  return { directory, bin, temporary, evidence, env };
+  return { directory, bin, temporary, evidence, started, env };
 }
 
 function launch(env: NodeJS.ProcessEnv, cwd: string) {
@@ -163,6 +171,33 @@ void test('missing keys and child startup errors fail without leaving temporary 
     assert.equal(startup.stdout === '' && startup.stderr === '', true);
     assert.deepEqual(await readdir(setup.temporary), []);
     await assert.rejects(readFile(setup.evidence), { code: 'ENOENT' });
+  } finally {
+    await rm(setup.directory, { recursive: true, force: true });
+  }
+});
+
+void test('missing and malformed encryption keys fail before deployment without exposing the input', async () => {
+  const setup = await fixture();
+  try {
+    for (const value of [
+      '',
+      ',',
+      ', ,',
+      'legacy-key-fixture',
+      'emdash_enc_v1_' + 'x'.repeat(43),
+    ]) {
+      const result = await launch(
+        { ...setup.env, EMDASH_ENCRYPTION_KEY: value },
+        setup.directory,
+      ).completed;
+      assert.equal(result.code, 1);
+      assert.equal(result.stdout, '');
+      assert.equal(result.stderr.startsWith('EMDASH_ENCRYPTION_KEY'), true);
+      if (value) assert.equal(result.stderr.includes(value), false);
+      await assert.rejects(readFile(setup.started), { code: 'ENOENT' });
+      await assert.rejects(readFile(setup.evidence), { code: 'ENOENT' });
+      assert.deepEqual(await readdir(setup.temporary), []);
+    }
   } finally {
     await rm(setup.directory, { recursive: true, force: true });
   }
@@ -322,8 +357,10 @@ void test('Wrangler consumes the same file in an offline dry run with a syntheti
     assert.ok((await readdir(output)).includes('worker.js'));
     const outputText = await readFile(join(output, 'worker.js'), 'utf8');
     assert.equal(outputText.includes(syntheticKey), false);
+    assert.equal(outputText.includes(syntheticEncryptionKey), false);
     const logs = await readFile(join(setup.directory, 'wrangler.log'), 'utf8');
     assert.equal(logs.includes(syntheticKey), false);
+    assert.equal(logs.includes(syntheticEncryptionKey), false);
     assert.deepEqual(
       (await readdir(setup.temporary)).filter((name) =>
         name.startsWith('jp-deploy-secrets-'),
