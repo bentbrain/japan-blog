@@ -257,9 +257,10 @@ void test('signup only sends a confirmation; token is hashed, expires, and canno
     ['/emails'],
   );
   const body = z
-    .object({ html: z.string(), reply_to: z.email() })
+    .object({ html: z.string(), reply_to: z.email(), subject: z.string() })
     .parse(f.calls[0]?.body);
   assert.equal(body.reply_to, 'owner@example.com');
+  assert.equal(body.subject, 'confirm your email');
   const token = body.html.match(/token=([a-f0-9]{64})/)?.[1];
   assert.ok(token);
   assert.equal(
@@ -399,13 +400,15 @@ void test('concurrent schedules create and send one broadcast to the dedicated s
   ]);
   assert.equal(f.calls.filter((call) => call.path === '/broadcasts').length, 1);
   assert.equal(f.calls.filter((call) => call.path.endsWith('/send')).length, 1);
-  assert.equal(
-    z
-      .object({ segment_id: z.string(), reply_to: z.string() })
-      .parse(f.calls.find((call) => call.path === '/broadcasts')?.body)
-      .segment_id,
-    'japan-only',
-  );
+  const broadcast = z
+    .object({
+      segment_id: z.string(),
+      reply_to: z.string(),
+      subject: z.string(),
+    })
+    .parse(f.calls.find((call) => call.path === '/broadcasts')?.body);
+  assert.equal(broadcast.segment_id, 'japan-only');
+  assert.equal(broadcast.subject, 'blog updates');
   assert.equal(await f.storage.sent.exists('one'), true);
   await runNewsletter(f.ctx, 'owner@example.com', now + 8 * 86_400_000);
   assert.equal(f.calls.filter((call) => call.path === '/broadcasts').length, 1);
@@ -453,6 +456,10 @@ void test('owner test emails target only the owner, do not consume posts and esc
   assert.deepEqual(
     z.object({ to: z.array(z.string()) }).parse(f.calls[0]?.body).to,
     ['owner@example.com'],
+  );
+  assert.equal(
+    z.object({ subject: z.string() }).parse(f.calls[0]?.body).subject,
+    '[test] blog updates',
   );
   assert.equal(await f.storage.sent.count(), 0);
   const email = await digestEmail([

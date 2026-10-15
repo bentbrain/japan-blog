@@ -132,7 +132,7 @@ try {
     await request('/gallery', undefined, 'GET', false)
   ).text();
   assert.ok(!emptyGallery.includes('aria-label="Media categories"'));
-  assert.ok(!emptyGallery.includes('<footer'));
+  assert.ok(emptyGallery.includes('<footer'));
   assert.ok(!emptyGallery.includes('theme-toggle'));
   for (const path of ['/', '/gallery', '/newsletter/privacy']) {
     const html = await (await request(path, undefined, 'GET', false)).text();
@@ -152,8 +152,11 @@ try {
     assert.ok(signup.includes('aria-label="newsletter"'));
     assert.ok(signup.includes('data-feedback-redact="true"'));
     assert.ok(signup.includes('data-feedback-private="true"'));
-    assert.equal(html.includes('<footer'), path === '/');
-    assert.equal(signup.includes('href="/newsletter/privacy"'), path !== '/');
+    assert.match(
+      html,
+      /<footer\b[^>]*>[\s\S]*?href="\/newsletter\/privacy"[\s\S]*?<\/footer>/,
+    );
+    assert.ok(!signup.includes('href="/newsletter/privacy"'));
     assert.equal((html.match(/href="\/newsletter\/privacy"/g) ?? []).length, 1);
   }
   // Import endpoint modules through safe reads before stateful requests, so

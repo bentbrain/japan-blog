@@ -204,8 +204,7 @@ export function createNewsletterAssets(
   }
   return {
     async prepare(post) {
-      if (!publicPost(post))
-        throw new Error('Published journal entry required');
+      if (!publicPost(post)) throw new Error('Published blog post required');
       const images = [];
       for (const source of await photoSources(ctx, post)) {
         const assetId =
@@ -245,7 +244,7 @@ export function createNewsletterAssets(
         'shirt',
         'shirt',
         shirt.version,
-        `Flat ${shirt.design.color} t-shirt with this journal design`,
+        `Flat ${shirt.design.color} t-shirt with this post's design`,
         () => Promise.resolve(shirt.bytes),
       );
       return { images, shopDesign: { ...shirt.design, image } };
