@@ -52,6 +52,14 @@ export function createPlugin() {
     hooks: {
       'content:beforeSave': (event) => {
         if (
+          event.collection === 'categories' &&
+          (typeof event.content.title !== 'string' ||
+            !normalizeCategory(event.content.title))
+        )
+          throw new ContentSaveRejectedError(
+            'Choose a category of 1 to 40 characters.',
+          );
+        if (
           event.collection === 'media_items' &&
           event.content.categories !== undefined
         ) {
@@ -91,6 +99,11 @@ export function createPlugin() {
         return Promise.resolve();
       },
       'content:beforePublish': async (event, ctx) => {
+        if (['categories', 'category_icons'].includes(event.collection))
+          return {
+            cancel: true,
+            reason: 'Categories and the icon library stay in owner tools.',
+          };
         const content = z
           .record(z.string(), z.unknown())
           .parse(event.content.data);

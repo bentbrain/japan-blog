@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-export const categories = ['food', 'shopping', 'landscape', 'people', 'beer'];
 export const daySchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)

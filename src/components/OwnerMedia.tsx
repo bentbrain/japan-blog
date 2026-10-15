@@ -4,10 +4,15 @@ import { geoMercator, geoPath } from 'd3-geo';
 import japan from '../lib/japan.json';
 import { CategoryIconProviderStatus } from './CategoryIconProviderStatus';
 import { CategoryIconStatus } from './CategoryIconStatus';
+import { CreateCategory } from './CreateCategory';
+import { categoryNames } from '../lib/category-icons';
+import {
+  categoryCollectionSchema,
+  type CategoryCollection,
+} from '../lib/category-collection-model';
 import { api } from '../lib/api-client';
 import { prepareMedia } from '../lib/prepare-media';
 import {
-  categories,
   captureInputValue,
   captureTimeFromInput,
   metadataSchema,
@@ -65,9 +70,13 @@ const land = geoPath(projection)(geometry) || '';
 function Metadata({
   item,
   reload,
+  categories,
+  onCategories,
 }: {
   item: Media;
   reload: () => Promise<void>;
+  categories: string[];
+  onCategories: (collection: CategoryCollection) => void;
 }) {
   const captured = captureInputValue(item.data.captured_at);
   const storedLatitude = metadataSchema.shape.latitude.safeParse(
@@ -118,13 +127,7 @@ function Metadata({
               ? storedLongitude.data
               : Number(longitude),
             place: data.get('place'),
-            categories: [
-              ...data.getAll('category').map(String),
-              ...formString(data, 'other')
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean),
-            ],
+            categories: selectedCategories,
           },
         },
         'PATCH',
@@ -251,45 +254,60 @@ function Metadata({
           />
         </Field>
         <div className="flex flex-wrap gap-3">
-          {categories.map((category) => (
-            <Field
-              key={category}
-              orientation="horizontal"
-              className="w-auto gap-1.5"
-            >
-              <Checkbox
-                id={`category-${category}`}
-                name="category"
-                value={category}
-                checked={selectedCategories.includes(category)}
-                onCheckedChange={(checked) => {
-                  setSelectedCategories((values) =>
-                    checked
-                      ? [...values, category]
-                      : values.filter((value) => value !== category),
-                  );
-                }}
-              />
-              <FieldLabel htmlFor={`category-${category}`}>
-                {category}
-              </FieldLabel>
-            </Field>
-          ))}
+          {categoryNames([...selectedCategories, ...categories]).map(
+            ({ label: category, normalized }) => (
+              <Field
+                key={category}
+                orientation="horizontal"
+                className="w-auto gap-1.5"
+              >
+                <Checkbox
+                  id={`category-${encodeURIComponent(normalized)}`}
+                  name="category"
+                  value={category}
+                  checked={categoryNames(selectedCategories).some(
+                    (name) => name.normalized === normalized,
+                  )}
+                  disabled={
+                    selectedCategories.length >= 20 &&
+                    !categoryNames(selectedCategories).some(
+                      (name) => name.normalized === normalized,
+                    )
+                  }
+                  onCheckedChange={(checked) => {
+                    setSelectedCategories((values) =>
+                      checked
+                        ? [...values, category]
+                        : values.filter(
+                            (value) =>
+                              categoryNames([value])[0]?.normalized !==
+                              normalized,
+                          ),
+                    );
+                  }}
+                />
+                <FieldLabel
+                  htmlFor={`category-${encodeURIComponent(normalized)}`}
+                >
+                  {category}
+                </FieldLabel>
+              </Field>
+            ),
+          )}
         </div>
-        <Field>
-          <FieldLabel htmlFor="other-categories">other categories</FieldLabel>
-          <Input
-            id="other-categories"
-            name="other"
-            placeholder="comma separated"
-            defaultValue={(item.data.categories || [])
-              .filter(
-                (category) => !categories.some((known) => known === category),
-              )
-              .join(', ')}
-          />
-        </Field>
-        <CategoryIconStatus names={item.data.categories || []} />
+        <CreateCategory
+          onCreated={(collection, name) => {
+            onCategories(collection);
+            setSelectedCategories((values) =>
+              values.length < 20
+                ? categoryNames([...values, name]).map(
+                    (category) => category.label,
+                  )
+                : values,
+            );
+          }}
+        />
+        <CategoryIconStatus names={selectedCategories} />
         <Field orientation="horizontal">
           <Checkbox
             id="media-public"
@@ -316,6 +334,10 @@ function Metadata({
 
 export function OwnerMedia() {
   const [items, setItems] = useState<Media[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  function onCategories(collection: CategoryCollection) {
+    setCategories(collection.categories.map((category) => category.label));
+  }
   const [selectedId, setSelectedId] = useState<string>();
   const [status, setStatus] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -328,6 +350,19 @@ export function OwnerMedia() {
         .items,
     );
   }
+  useEffect(() => {
+    let active = true;
+    api('/api/trip/categories')
+      .then((result) => {
+        if (active) onCategories(categoryCollectionSchema.parse(result));
+      })
+      .catch(() => {
+        if (active) setStatus('could not load categories');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
   useEffect(() => {
     setReady(true);
     let cancelled = false;
@@ -384,13 +419,16 @@ export function OwnerMedia() {
     <>
       <div className="mb-5 flex items-center justify-between gap-3">
         <h1>media</h1>
-        <Button
-          variant="default"
-          disabled={!ready || uploading}
-          onClick={() => fileInput.current?.click()}
-        >
-          UPLOAD
-        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          <CreateCategory onCreated={onCategories} />
+          <Button
+            variant="default"
+            disabled={!ready || uploading}
+            onClick={() => fileInput.current?.click()}
+          >
+            UPLOAD
+          </Button>
+        </div>
         <Input
           ref={fileInput}
           id="upload"
@@ -445,7 +483,13 @@ export function OwnerMedia() {
         >
           <CardContent className="px-0 min-[601px]:pl-6">
             {selected && (
-              <Metadata key={selected.id} item={selected} reload={reload} />
+              <Metadata
+                key={selected.id}
+                item={selected}
+                reload={reload}
+                categories={categories}
+                onCategories={onCategories}
+              />
             )}
           </CardContent>
         </Card>
