@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
+import { assertStatus, serverSignals } from './integration-diagnostics';
 
 const base = 'http://127.0.0.1:4390';
 const server = spawn(
@@ -14,12 +15,17 @@ const server = spawn(
   },
 );
 let logs = '';
-server.stdout.on('data', (value: Buffer) => {
-  logs = (logs + value.toString()).slice(-8000);
-});
-server.stderr.on('data', (value: Buffer) => {
-  logs = (logs + value.toString()).slice(-8000);
-});
+const started = Date.now();
+const diagnosticSignals: { atMs: number; signals: string[] }[] = [];
+function captureOutput(value: Buffer) {
+  const output = value.toString();
+  logs = (logs + output).slice(-8000);
+  const signals = serverSignals(output);
+  if (signals.length)
+    diagnosticSignals.push({ atMs: Date.now() - started, signals });
+}
+server.stdout.on('data', captureOutput);
+server.stderr.on('data', captureOutput);
 let cookie = '';
 const item = z.object({
   success: z.literal(true),
@@ -53,8 +59,8 @@ async function request(
     });
     const bytes = await response.arrayBuffer();
     const text = new TextDecoder().decode(bytes);
-    // Dependency optimization can restart workerd while the Vite proxy is
-    // forwarding a request. Retry only its identifiable dispatch error, only
+    // The Vite proxy can lose its internal workerd connection. Preserve the
+    // existing retries for its identifiable dispatch error, only
     // for reads and idempotent setup or denied invitation probes. Application
     // errors and content mutations are never retried.
     if (
@@ -68,6 +74,16 @@ async function request(
       await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
       continue;
     }
+    if (response.status >= 500)
+      await assertStatus(
+        new Response(bytes, {
+          status: response.status,
+          headers: response.headers,
+        }),
+        'below 500',
+        `${method} integration request`,
+        diagnosticSignals,
+      );
     return new Response([204, 304].includes(response.status) ? null : bytes, {
       status: response.status,
       headers: response.headers,
@@ -185,30 +201,34 @@ try {
     );
     assert.equal(anonymous.status, 401);
   }
-  for (const headers of [
-    new Headers({ Cookie: cookie, 'Content-Type': 'application/json' }),
-    new Headers({
-      Cookie: cookie,
-      'Content-Type': 'application/json',
-      Origin: 'https://attacker.invalid',
-      'X-EmDash-Request': '1',
-    }),
-    new Headers({
-      Cookie: cookie,
-      'Content-Type': 'application/json',
-      Origin: base,
-    }),
-  ])
-    assert.equal(
-      (
+  // Exercise consecutive early denials with bodies on the same dev transport.
+  // Each probe is sent once; every status must be 403, including proxy failures.
+  for (let probe = 0; probe < 100; probe++) {
+    for (const headers of [
+      new Headers({ Cookie: cookie, 'Content-Type': 'application/json' }),
+      new Headers({
+        Cookie: cookie,
+        'Content-Type': 'application/json',
+        Origin: 'https://attacker.invalid',
+        'X-EmDash-Request': '1',
+      }),
+      new Headers({
+        Cookie: cookie,
+        'Content-Type': 'application/json',
+        Origin: base,
+      }),
+    ])
+      await assertStatus(
         await fetch(base + '/api/trip/category-icons', {
           method: 'POST',
           headers,
           body: JSON.stringify({ category: 'private fixture' }),
-        })
-      ).status,
-      403,
-    );
+        }),
+        403,
+        `category-icon CSRF rejection probe ${String(probe)}`,
+        diagnosticSignals,
+      );
+  }
   assert.equal(
     (
       await request('/api/trip/category-icons', {
@@ -244,15 +264,15 @@ try {
       Origin: base,
     }),
   ])
-    assert.equal(
-      (
-        await fetch(base + providerPath, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ action: 'resume' }),
-        })
-      ).status,
+    await assertStatus(
+      await fetch(base + providerPath, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'resume' }),
+      }),
       403,
+      'category provider CSRF rejection',
+      diagnosticSignals,
     );
   const providerStatus = await request(providerPath);
   assert.equal(providerStatus.status, 200);

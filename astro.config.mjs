@@ -16,6 +16,20 @@ export default defineConfig({
   }),
   integrations: [
     react(),
+    {
+      name: 'synthetic-integration-transport',
+      hooks: {
+        'astro:config:setup': ({ command, addMiddleware }) => {
+          if (command === 'dev' && process.env.TEST_EPHEMERAL === '1')
+            addMiddleware({
+              order: 'pre',
+              entrypoint: fileURLToPath(
+                new URL('./scripts/integration-middleware.ts', import.meta.url),
+              ),
+            });
+        },
+      },
+    },
     emdash({
       database: d1({ binding: 'DB', session: 'auto' }),
       storage: r2({ binding: 'MEDIA' }),
