@@ -25,6 +25,7 @@ const privateContent =
   Boolean(
     Astro.props.privateContent || cmsContext?.preview || cmsContext?.editMode,
   );
+const compactNewsletter = Astro.url.pathname === '/';
 const counts = await beerCounts();
 const feedback = feedbackConfiguration(
   import.meta.env.PUBLIC_FEEDBACK_SERVER,
@@ -48,7 +49,9 @@ const feedback = feedbackConfiguration(
     {privateContent && <meta name="robots" content="noindex" />}
   </head>
   <body
-    class="grid min-h-dvh grid-rows-[auto_1fr_auto]"
+    class:list={[
+      compactNewsletter && 'grid min-h-dvh grid-rows-[auto_1fr_auto]',
+    ]}
     data-feedback-redact={privateContent ? true : undefined}
   >
     <header
@@ -101,13 +104,19 @@ const feedback = feedbackConfiguration(
     <main
       data-feedback-private={privateContent ? true : undefined}
       data-feedback-redact={privateContent ? true : undefined}
-      class="mx-auto w-full min-w-0 max-w-[1400px] p-4 min-[601px]:p-6"
+      class:list={[
+        'mx-auto max-w-[1400px] p-4 min-[601px]:p-6',
+        compactNewsletter && 'w-full min-w-0',
+      ]}
     >
       <slot />
-      {!privateContent && <NewsletterSignup client:load />}
+      {compactNewsletter && !privateContent && (
+        <NewsletterSignup compact client:load />
+      )}
       <slot name="after-newsletter" />
     </main>
-    {!privateContent && (
+    {!compactNewsletter && !privateContent && <NewsletterSignup client:load />}
+    {compactNewsletter && !privateContent && (
       <footer class="border-t text-xs">
         <div class="mx-auto max-w-[1400px] px-4 py-4 min-[601px]:px-6">
           <a href="/newsletter/privacy">email privacy</a>
