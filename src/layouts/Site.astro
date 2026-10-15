@@ -39,7 +39,7 @@ const feedback = feedbackConfiguration(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0647ff" />
-    <meta name="description" content="Japan travel journal" />
+    <meta name="description" content="blog" />
     <title>{title}</title>
     <link
       rel="icon"
@@ -49,9 +49,7 @@ const feedback = feedbackConfiguration(
     {privateContent && <meta name="robots" content="noindex" />}
   </head>
   <body
-    class:list={[
-      compactNewsletter && 'grid min-h-dvh grid-rows-[auto_1fr_auto]',
-    ]}
+    class="flex min-h-dvh flex-col"
     data-feedback-redact={privateContent ? true : undefined}
   >
     <header
@@ -104,10 +102,7 @@ const feedback = feedbackConfiguration(
     <main
       data-feedback-private={privateContent ? true : undefined}
       data-feedback-redact={privateContent ? true : undefined}
-      class:list={[
-        'mx-auto max-w-[1400px] p-4 min-[601px]:p-6',
-        compactNewsletter && 'w-full min-w-0',
-      ]}
+      class="mx-auto w-full min-w-0 max-w-[1400px] flex-1 p-4 min-[601px]:p-6"
     >
       <slot />
       {compactNewsletter && !privateContent && (
@@ -116,7 +111,7 @@ const feedback = feedbackConfiguration(
       <slot name="after-newsletter" />
     </main>
     {!compactNewsletter && !privateContent && <NewsletterSignup client:load />}
-    {compactNewsletter && !privateContent && (
+    {!privateContent && (
       <footer class="border-t text-xs">
         <div class="mx-auto max-w-[1400px] px-4 py-4 min-[601px]:px-6">
           <a href="/newsletter/privacy">email privacy</a>

@@ -567,7 +567,7 @@ function EditorForm({
                   <AlertDialogHeader>
                     <AlertDialogTitle>delete post?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      moves this post to trash and removes it from the journal.
+                      moves this post to trash and removes it from the blog.
                       media stays in the library.
                       {dirty && ' unsaved edits will be discarded.'}
                     </AlertDialogDescription>

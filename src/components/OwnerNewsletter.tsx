@@ -124,8 +124,8 @@ export function OwnerNewsletter() {
                   {status.configured ? 'resend connection' : 'connect resend'}
                 </h2>
                 <p className="text-xs">
-                  use a full access key from your Japan blog Resend account.
-                  saved encrypted in emdash.
+                  use a full access key from your blog Resend account. saved
+                  encrypted in emdash.
                 </p>
                 <Field>
                   <FieldLabel htmlFor="newsletter-api-key">

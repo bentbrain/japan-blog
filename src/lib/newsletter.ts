@@ -217,7 +217,7 @@ export async function requestSubscription(
         from: newsletterFrom,
         to: [email],
         reply_to: ownerEmail,
-        subject: 'confirm your japan journal subscription',
+        subject: 'confirm your email',
         ...emailBody,
       },
       `japan-confirm-${tokenHash}`,
@@ -701,7 +701,7 @@ export async function runNewsletter(
           from: newsletterFrom,
           reply_to: ownerEmail,
           segment_id: segmentId,
-          subject: 'japan journal updates',
+          subject: 'blog updates',
           name: `japan-${id}`,
           ...body,
         }),
@@ -828,7 +828,7 @@ export async function configureNewsletter(
           '/segments',
           'POST',
           {
-            name: 'Japan journal confirmed subscribers',
+            name: 'blog confirmed subscribers',
           },
           undefined,
           parsed.apiKey,
@@ -866,13 +866,13 @@ export async function configureNewsletter(
     if (!ownerEmail) throw new Error('Owner inbox is not configured');
     const posts = await pendingDigestPosts(ctx);
     if (!posts.length)
-      throw new Error('Publish a journal entry before sending a test');
+      throw new Error('Publish a blog post before sending a test');
     const email = await digestEmail(posts, newsletterUrl, true);
     await provider(ctx, '/emails', 'POST', {
       from: newsletterFrom,
       to: [ownerEmail],
       reply_to: ownerEmail,
-      subject: '[test] japan journal updates',
+      subject: '[test] blog updates',
       ...email,
     });
   } else if (parsed.action === 'discard') await discardNewsletterRun(ctx);

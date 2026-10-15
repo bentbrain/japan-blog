@@ -57,7 +57,7 @@ function promptFor(category: CategoryIconImageInput['category']): string {
     normalized: boundedName(category.normalized),
   });
   return [
-    'Create one original monochrome pixel icon for a Japan travel journal in the bent identity.',
+    'Create one original monochrome pixel icon for a blog in the bent identity.',
     'Use a playful, simple silhouette with crisp square pixel steps, solid black paint and a fully transparent background.',
     'Center one recognizable object, preserve generous empty margins, and make it legible on a 32 by 32 pixel grid.',
     'No text, letters, logos, borders, gradients, shadows, scenery or additional objects.',

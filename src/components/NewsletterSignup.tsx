@@ -36,7 +36,7 @@ export function NewsletterSignup({ compact = false }: { compact?: boolean }) {
       className={
         compact
           ? 'mt-6 w-full'
-          : 'mx-auto max-w-[1400px] border-t px-4 py-8 min-[601px]:px-6'
+          : 'mx-auto w-full max-w-[1400px] border-t px-4 py-8 min-[601px]:px-6'
       }
     >
       <div>
@@ -81,11 +81,6 @@ export function NewsletterSignup({ compact = false }: { compact?: boolean }) {
         <p role="status" className="text-xs [&:not(:empty)]:mt-3">
           {status}
         </p>
-        {!compact && (
-          <a href="/newsletter/privacy" className="text-xs">
-            email privacy
-          </a>
-        )}
       </div>
     </section>
   );

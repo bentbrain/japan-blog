@@ -1,8 +1,8 @@
 # jp.bent.build
 
-Japan travel journal. Astro and emDash on Cloudflare Workers, with D1 records and R2 media.
+Blog. Astro and emDash on Cloudflare Workers, with D1 records and R2 media.
 
-Public journal, categorised gallery, geolocated media map and beer counter. The owner uses a TipTap rich text editor with shadcn/Base UI controls and emDash passkey login. Owner tools preserve original media, edit capture metadata and export Instagram stories as PNG or animated MP4.
+Public blog, categorised gallery, geolocated media map and beer counter. The owner uses a TipTap rich text editor with shadcn/Base UI controls and emDash passkey login. Owner tools preserve original media, edit capture metadata and export Instagram stories as PNG or animated MP4.
 
 The application uses Tailwind utilities and shadcn components on Base UI. Theme tokens and the official shadcn state utilities live in `src/styles/globals.css`.
 
@@ -34,7 +34,7 @@ pnpm build
 ## Owner tools
 
 - `/owner`: posts and daily beer entries.
-- `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, optional shop design, drafts and publishing. Existing posts can be unpublished to an editable draft or moved to CMS trash after confirmation. Media and revision history stay in the CMS. Paste a public shop.bent.build product or featured link and choose black or white. The journal and post page show its flat t-shirt image and link to that product with the chosen colour.
+- `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, optional shop design, drafts and publishing. Existing posts can be unpublished to an editable draft or moved to CMS trash after confirmation. Media and revision history stay in the CMS. Paste a public shop.bent.build product or featured link and choose black or white. The blog and post page show its flat t-shirt image and link to that product with the chosen colour.
 - `/owner/media`: uploads, capture times, coordinates and multiple categories. Missing metadata keeps an upload unpublished.
 - `/categories`: create categories and browse the generated icon library. Categories can also be created from the media page and selected on any media item. The native CMS has separate Categories and Category icons collections; generated icons are registered as image media. New categories reuse a valid icon with a matching name or supported synonym before queuing generation. Missing or corrupt icons generate through the existing bounded job queue. Regeneration retains earlier icons in the library.
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
@@ -77,7 +77,7 @@ The native `japan-newsletter` EmDash plugin sends through Resend with React Emai
 
 Connect a full-access Resend key at `/owner/newsletter`. EmDash encrypts it using the existing `EMDASH_ENCRYPTION_KEY`; it is never returned to the client. Connection creates a dedicated Resend segment. Resend Broadcasts handles unsubscribes and delivery suppression. Sending uses `hi@jp.bent.build`, with `Reply-To` set to `OWNER_EMAIL`. The owner inbox is visible to recipients when replying; this does not provision an incoming mailbox for direct messages to `hi@jp.bent.build`.
 
-Automatic sending starts paused. The default is Sunday at 18:00 in `Asia/Tokyo`; the owner can select another weekday/hour or a 1–30 day interval. The existing Cloudflare cron drives the EmDash task every five minutes. Digests contain up to 24 published journal entries not included in a previous digest, including entries added later for an earlier day. Drafts, trashed entries and sample content are excluded. Quiet periods are skipped. Owner test emails do not consume entries or go to subscribers.
+Automatic sending starts paused. The default is Sunday at 18:00 in `Asia/Tokyo`; the owner can select another weekday/hour or a 1–30 day interval. The existing Cloudflare cron drives the EmDash task every five minutes. Digests contain up to 24 published blog posts not included in a previous digest, including entries added later for an earlier day. Drafts, trashed entries and sample content are excluded. Quiet periods are skipped. Owner test emails do not consume entries or go to subscribers.
 
 Digest headings link to each entry as `day X: title`, preserving trip day numbers. Each entry includes its public photos in order and, when selected, its shirt design linked to the public shop product and colour. The digest ends with the shop banner and unsubscribe footer. Confirmation emails contain only the confirmation heading, action and expiry footer.
 

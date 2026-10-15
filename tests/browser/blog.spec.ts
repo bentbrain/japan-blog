@@ -336,6 +336,35 @@ test.beforeAll(async ({ request }) => {
     env: { ...process.env, TEST_BASE_URL: 'http://127.0.0.1:4391' },
   });
 });
+for (const width of [320, 1280]) {
+  test(`published post and media routes share the privacy footer at ${String(width)}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    for (const path of ['/posts/tokyo-after-dark', '/media/demo-0']) {
+      expect((await page.goto(path))?.status()).toBe(200);
+      const privacy = page.getByRole('link', {
+        name: 'email privacy',
+        exact: true,
+      });
+      await expect(privacy).toHaveCount(1);
+      await expect(
+        page
+          .getByRole('contentinfo')
+          .getByRole('link', { name: 'email privacy' }),
+      ).toHaveAttribute('href', '/newsletter/privacy');
+      const footerBox = await page.getByRole('contentinfo').boundingBox();
+      expect(footerBox).not.toBeNull();
+      if (!footerBox) throw new Error(`Missing footer on ${path}`);
+      expect(Math.round(footerBox.y + footerBox.height)).toBe(
+        await page.evaluate(() => document.documentElement.scrollHeight),
+      );
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(width);
+    }
+  });
+}
 test('journal has map first, full text and playable video', async ({
   page,
 }) => {

@@ -16,7 +16,7 @@ export function ConfirmNewsletter() {
     try {
       await newsletterPublicRequest('confirm', { token });
       setConfirmed(true);
-      setStatus('you’re subscribed. see you in your inbox.');
+      setStatus('you’re subscribed.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'please try again.');
     } finally {
@@ -26,7 +26,6 @@ export function ConfirmNewsletter() {
   return (
     <div className="max-w-xl space-y-5 py-10" data-feedback-redact>
       <h1>confirm your email</h1>
-      <p>get the japan journal in your inbox.</p>
       {!confirmed && (
         <Button
           disabled={busy || !token}
@@ -41,7 +40,7 @@ export function ConfirmNewsletter() {
         {status ||
           (!token ? 'open the confirmation link from your email.' : '')}
       </p>
-      <a href="/">BACK TO THE JOURNAL →</a>
+      <a href="/">BACK TO THE BLOG →</a>
     </div>
   );
 }

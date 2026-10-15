@@ -5,6 +5,7 @@ import { newsletterJpeg } from '../../src/lib/newsletter-image';
 import { newsletterStatusSchema } from '../../src/lib/newsletter-model';
 
 const plugin = '/_emdash/api/plugins/japan-newsletter';
+const colorSchemes: Array<'light' | 'dark'> = ['light', 'dark'];
 
 test('published uploaded photos reach the native image binding and stop serving when the post is unpublished', async ({
   page,
@@ -327,19 +328,12 @@ for (const path of ['/', '/gallery', '/newsletter/privacy']) {
       });
       await expect(privacy).toHaveCount(1);
       await expect(privacy).toHaveAttribute('href', '/newsletter/privacy');
-      if (path === '/') {
-        await expect(signup.getByRole('link')).toHaveCount(0);
-        await expect(
-          page
-            .getByRole('contentinfo')
-            .getByRole('link', { name: 'email privacy' }),
-        ).toBeVisible();
-      } else {
-        await expect(page.getByRole('contentinfo')).toHaveCount(0);
-        await expect(
-          signup.getByRole('link', { name: 'email privacy' }),
-        ).toBeVisible();
-      }
+      await expect(signup.getByRole('link')).toHaveCount(0);
+      await expect(
+        page
+          .getByRole('contentinfo')
+          .getByRole('link', { name: 'email privacy' }),
+      ).toBeVisible();
     });
   }
 }
@@ -407,23 +401,74 @@ for (const path of ['/', '/gallery', '/newsletter/privacy']) {
   });
 }
 
-test('footer follows content when the page grows beyond the viewport', async ({
-  page,
-}) => {
-  await page.goto('/');
-  await page.getByRole('region', { name: 'newsletter' }).evaluate((signup) => {
-    const content = document.createElement('div');
-    content.style.height = '1200px';
-    content.textContent = 'synthetic layout fixture';
-    signup.before(content);
-  });
-  const footerBox = await page.getByRole('contentinfo').boundingBox();
-  const shopBox = await page
-    .getByRole('link', { name: 'shop.bent.build ↗' })
-    .boundingBox();
-  expect(footerBox).not.toBeNull();
-  expect(shopBox).not.toBeNull();
-  if (!footerBox || !shopBox) return;
-  expect(footerBox.y).toBeGreaterThan(800);
-  expect(footerBox.y).toBeGreaterThan(shopBox.y + shopBox.height);
-});
+for (const path of ['/', '/gallery', '/newsletter/privacy', '/404']) {
+  for (const width of [320, 1280]) {
+    for (const colorScheme of colorSchemes) {
+      test(`shared footer reaches the page bottom on ${path} at ${String(width)}px in ${colorScheme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 844 });
+        await page.emulateMedia({ colorScheme });
+        await page.goto(path);
+        await expect(
+          page.getByRole('region', { name: 'newsletter' }).getByRole('button'),
+        ).toBeEnabled();
+        // Keep short pages independent of public content seeded by other suites.
+        await page
+          .locator('.journal-grid > article, .pagination, .gallery-grid > *')
+          .evaluateAll((entries) => {
+            for (const entry of entries) entry.remove();
+          });
+        const footer = page.getByRole('contentinfo');
+        await expect(footer).toHaveCount(1);
+        await expect(
+          footer.getByRole('link', { name: 'email privacy', exact: true }),
+        ).toHaveAttribute('href', '/newsletter/privacy');
+        const box = await footer.boundingBox();
+        expect(box).not.toBeNull();
+        if (!box) return;
+        const pageHeight = await page.evaluate(
+          () => document.documentElement.scrollHeight,
+        );
+        expect(Math.round(box.y + box.height)).toBe(pageHeight);
+        if (path !== '/newsletter/privacy') expect(pageHeight).toBe(844);
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth),
+        ).toBe(width);
+      });
+    }
+
+    test(`shared footer follows long content on ${path} at ${String(width)}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(path);
+      await page.locator('main').evaluate((main) => {
+        const content = document.createElement('div');
+        content.style.height = '1200px';
+        content.textContent = 'synthetic layout fixture';
+        main.append(content);
+      });
+      const footerBox = await page.getByRole('contentinfo').boundingBox();
+      const mainBox = await page.locator('main').boundingBox();
+      const signupBox = await page
+        .getByRole('region', { name: 'newsletter' })
+        .boundingBox();
+      expect(footerBox).not.toBeNull();
+      expect(mainBox).not.toBeNull();
+      expect(signupBox).not.toBeNull();
+      if (!footerBox || !mainBox || !signupBox) return;
+      expect(footerBox.y).toBeGreaterThan(844);
+      expect(footerBox.y).toBeGreaterThanOrEqual(mainBox.y + mainBox.height);
+      expect(footerBox.y).toBeGreaterThanOrEqual(
+        signupBox.y + signupBox.height,
+      );
+      await page.getByRole('contentinfo').scrollIntoViewIfNeeded();
+      await expect(
+        page
+          .getByRole('contentinfo')
+          .getByRole('link', { name: 'email privacy' }),
+      ).toBeVisible();
+    });
+  }
+}
