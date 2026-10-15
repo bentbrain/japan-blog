@@ -63,7 +63,19 @@ const sprites: Record<string, string[]> = {
     '0111111111111110',
   ],
 };
-const sprite = sprites[name] || sprites.beer || [];
+// Eight rows keep the foam, solid mug and open handle distinct at cap height.
+// Keep the detailed 16px sprite for gallery filters and other larger uses.
+const compactBeer = [
+  '01101000',
+  '11111000',
+  '11111111',
+  '11111001',
+  '11111001',
+  '11111111',
+  '11111000',
+  '01111000',
+];
+const sprite = counterIcon ? compactBeer : sprites[name] || sprites.beer || [];
 const firstPaintedRow = sprite.findIndex((row) => row.includes('1'));
 const lastPaintedRow = sprite.findLastIndex((row) => row.includes('1'));
 // Move the 16px canvas around the paint without resizing the sprite.
@@ -84,7 +96,8 @@ const path = sprite
     counterIcon ? 'h-[1cap] w-[calc(12cap/13)]' : 'size-[1.7em] align-middle',
   ]}
   data-feedback-id={counterIcon ? 'beer-icon' : undefined}
-  viewBox={counterIcon ? '2 2 12 13' : `0 ${centerPaint ? centeredY : 0} 16 16`}
+  viewBox={counterIcon ? '0 0 8 8' : `0 ${centerPaint ? centeredY : 0} 16 16`}
+  preserveAspectRatio={counterIcon ? 'none' : undefined}
   aria-hidden="true"
   shape-rendering="crispEdges"
 >
