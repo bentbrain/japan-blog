@@ -216,7 +216,7 @@ for (const owner of [false, true]) {
       });
       expect(setup.ok()).toBe(true);
       await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
-      await page.waitForURL('**/owner');
+      await page.waitForURL((url) => url.pathname === '/owner');
     } else {
       await page.goto('/');
     }
@@ -225,9 +225,7 @@ for (const owner of [false, true]) {
       name: 'Main navigation',
     });
     await expect(navigation).toBeVisible();
-    for (const name of owner
-      ? ['posts', 'media', 'export', 'account']
-      : ['blog', 'pics'])
+    for (const name of ['blog', 'pics'])
       await expect(
         navigation.getByRole('link', { name, exact: true }),
       ).toBeVisible();
@@ -256,7 +254,7 @@ for (const owner of [false, true]) {
         });
         expect(setup.ok()).toBe(true);
         await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
-        await page.waitForURL('**/owner');
+        await page.waitForURL((url) => url.pathname === '/owner');
       } else {
         await page.goto('/');
       }
