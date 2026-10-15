@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { z } from 'zod';
 import { geoMercator, geoPath } from 'd3-geo';
 import japan from '../lib/japan.json';
+import { CategoryIconProviderStatus } from './CategoryIconProviderStatus';
+import { CategoryIconStatus } from './CategoryIconStatus';
 import { api } from '../lib/api-client';
 import { prepareMedia } from '../lib/prepare-media';
 import {
@@ -260,6 +262,7 @@ function Metadata({
               .join(', ')}
           />
         </Field>
+        <CategoryIconStatus names={item.data.categories || []} />
         <Field orientation="horizontal">
           <Checkbox
             id="media-public"
@@ -381,6 +384,7 @@ export function OwnerMedia() {
       >
         {status}
       </p>
+      <CategoryIconProviderStatus />
       <div className="grid grid-cols-1 gap-6 min-[601px]:grid-cols-[minmax(0,1fr)_280px]">
         <div
           className="gallery-grid grid grid-cols-2 gap-[7px] min-[901px]:grid-cols-3"

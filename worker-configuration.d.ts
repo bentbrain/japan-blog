@@ -7,6 +7,8 @@ interface __BaseEnv_Env {
 	EMDASH_ENCRYPTION_KEY: string;
 	OWNER_EMAIL: string;
 	SETUP_TOKEN: string;
+	OPENAI_API_KEY?: string;
+	CATEGORY_ICON_MODEL: string;
 }
 declare namespace Cloudflare {
 	interface GlobalProps {

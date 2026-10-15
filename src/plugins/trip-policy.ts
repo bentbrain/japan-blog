@@ -1,6 +1,7 @@
 import { ContentSaveRejectedError, definePlugin } from 'emdash';
 import { daySchema, metadataSchema } from '../lib/model';
 import { z } from 'zod';
+import { normalizeCategory } from '../lib/category-icons';
 import { shopDesignSchema } from '../lib/shop-design';
 
 export function embeddedMediaReferences(value: unknown): string[] {
@@ -46,6 +47,21 @@ export function createPlugin() {
     ],
     hooks: {
       'content:beforeSave': (event) => {
+        if (
+          event.collection === 'media_items' &&
+          event.content.categories !== undefined
+        ) {
+          const names = z
+            .array(
+              z.string().refine((name) => Boolean(normalizeCategory(name))),
+            )
+            .max(20)
+            .safeParse(event.content.categories);
+          if (!names.success)
+            throw new ContentSaveRejectedError(
+              'Choose up to 20 categories, each 1 to 40 characters.',
+            );
+        }
         if (
           event.collection === 'posts' &&
           !shopDesignSchema.nullish().safeParse(event.content.shop_design)

@@ -1,8 +1,10 @@
 import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
 import { z } from 'zod';
+import { ensureLocalIconSchema } from './lib/category-icon-dev';
 
 export const onRequest = defineMiddleware(async (context, next) => {
+  if (import.meta.env.DEV) await ensureLocalIconSchema(env.DB);
   let path = context.url.pathname;
   for (let depth = 0; depth < 4 && path.includes('%'); depth++) {
     try {
@@ -39,7 +41,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Uploaded previews are already resized; refuse the transform endpoint so it
   // cannot read private storage directly or cache unpublished derivatives.
   if (path === '/_image') return new Response('Not found', { status: 404 });
-  if (path.startsWith('/_emdash/api/media/file/trip-private/'))
+  if (
+    path.startsWith('/_emdash/api/media/file/trip-private/') ||
+    path.startsWith('/_emdash/api/media/file/category-icons/')
+  )
     return new Response('Not found', { status: 404 });
   const mediaFile = /^\/_emdash\/api\/media\/(file|asset)\/(.+)$/.exec(path);
   if (mediaFile) {
