@@ -134,6 +134,28 @@ try {
   assert.ok(!emptyGallery.includes('aria-label="Media categories"'));
   assert.ok(!emptyGallery.includes('<footer'));
   assert.ok(!emptyGallery.includes('theme-toggle'));
+  for (const path of ['/', '/gallery', '/newsletter/privacy']) {
+    const html = await (await request(path, undefined, 'GET', false)).text();
+    const signup = html.match(
+      /<section data-feedback-id="newsletter-signup"[\s\S]*?<\/section>/,
+    )?.[0];
+    assert.ok(signup, `Missing public signup on ${path}`);
+    assert.ok(!signup.includes('<h2'), `Visible newsletter heading on ${path}`);
+    assert.ok(
+      !signup.includes('get new journal entries by email.'),
+      `Visible newsletter description on ${path}`,
+    );
+    assert.match(
+      signup,
+      /<label(?=[^>]*for="newsletter-email")(?=[^>]*class="[^"]*sr-only)[^>]*>/,
+    );
+    assert.ok(signup.includes('aria-label="newsletter"'));
+    assert.ok(signup.includes('data-feedback-redact="true"'));
+    assert.ok(signup.includes('data-feedback-private="true"'));
+    assert.equal(html.includes('<footer'), path === '/');
+    assert.equal(signup.includes('href="/newsletter/privacy"'), path !== '/');
+    assert.equal((html.match(/href="\/newsletter\/privacy"/g) ?? []).length, 1);
+  }
   // Import endpoint modules through safe reads before stateful requests, so
   // dependency optimization does not interrupt an upload or content save.
   for (const path of [
@@ -644,6 +666,7 @@ try {
     assert.equal(ownerMediaPreview.status, 200);
     const privateHtml = await ownerMediaPreview.text();
     assert.ok(privateHtml.includes('Synthetic unpublished media title'));
+    assert.ok(!privateHtml.includes('data-feedback-id="newsletter-signup"'));
     assert.ok(privateHtml.includes('data-feedback-redact="true"'));
     assert.ok(privateHtml.includes('data-feedback-private="true"'));
     assert.ok(privateHtml.includes('name="robots" content="noindex"'));
