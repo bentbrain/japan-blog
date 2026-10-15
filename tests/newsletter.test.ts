@@ -246,6 +246,7 @@ void test('signup only sends a confirmation; token is hashed, expires, and canno
       { email: 'reader@example.com' },
       'synthetic-ip',
       'https://jp.bent.build',
+      'owner@example.com',
       now,
     ),
     { ok: true },
@@ -254,7 +255,10 @@ void test('signup only sends a confirmation; token is hashed, expires, and canno
     f.calls.map((call) => call.path),
     ['/emails'],
   );
-  const body = z.object({ html: z.string() }).parse(f.calls[0]?.body);
+  const body = z
+    .object({ html: z.string(), reply_to: z.email() })
+    .parse(f.calls[0]?.body);
+  assert.equal(body.reply_to, 'owner@example.com');
   const token = body.html.match(/token=([a-f0-9]{64})/)?.[1];
   assert.ok(token);
   assert.equal(
@@ -284,6 +288,7 @@ void test('expired confirmations, malformed addresses and honeypot submissions n
         { email: 'not-an-address' },
         'ip',
         'https://jp.bent.build',
+        'owner@example.com',
         now,
       )
     ).ok,
@@ -296,6 +301,7 @@ void test('expired confirmations, malformed addresses and honeypot submissions n
         { email: 'reader@example.com', website: 'bot' },
         'ip',
         'https://jp.bent.build',
+        'owner@example.com',
         now,
       )
     ).ok,
@@ -322,6 +328,7 @@ void test('rate limits and concurrent requests permit only one confirmation emai
         { email: 'reader@example.com' },
         'ip',
         'https://jp.bent.build',
+        'owner@example.com',
         now,
       ),
     ),
@@ -341,6 +348,7 @@ void test('failed confirmation delivery is reported honestly and remains retryab
         { email: 'reader@example.com' },
         'ip',
         'https://jp.bent.build',
+        'owner@example.com',
         now,
       )
     ).ok,
@@ -353,6 +361,7 @@ void test('failed confirmation delivery is reported honestly and remains retryab
         { email: 'reader@example.com' },
         'ip',
         'https://jp.bent.build',
+        'owner@example.com',
         now + 1,
       )
     ).ok,
@@ -466,6 +475,7 @@ void test('cleanup removes expired confirmations and unconfirmed addresses witho
     { email: 'reader@example.com' },
     'ip',
     'https://jp.bent.build',
+    'owner@example.com',
     now,
   );
   await cleanupNewsletter(f.ctx, now + 8 * 86_400_000);

@@ -66,6 +66,7 @@ export function createPlugin() {
             ctx.input,
             ctx.requestMeta.ip ?? 'unknown',
             import.meta.env.DEV ? origin : newsletterUrl,
+            env.OWNER_EMAIL,
           );
         },
       },

@@ -142,6 +142,7 @@ export async function requestSubscription(
   input: unknown,
   ip: string,
   publicUrl: string,
+  ownerEmail: string,
   now = Date.now(),
 ) {
   const parsed = z
@@ -155,7 +156,8 @@ export async function requestSubscription(
   if (parsed.data.website) return { ok: true };
   if (
     !(await ctx.settings.get('apiKey')) ||
-    !(await ctx.settings.get('segmentId'))
+    !(await ctx.settings.get('segmentId')) ||
+    !z.email().safeParse(ownerEmail).success
   )
     return {
       ok: false,
@@ -205,6 +207,7 @@ export async function requestSubscription(
       {
         from: newsletterFrom,
         to: [email],
+        reply_to: ownerEmail,
         subject: 'confirm your japan journal subscription',
         ...emailBody,
       },
