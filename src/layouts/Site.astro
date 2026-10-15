@@ -104,13 +104,18 @@ const feedback = feedbackConfiguration(
       class="mx-auto w-full min-w-0 max-w-[1400px] flex-1 p-4 min-[601px]:p-6"
     >
       <slot />
-      {!privateContent && <NewsletterSignup client:load />}
-      <slot name="after-newsletter" />
+      {privateContent && <slot name="after-newsletter" />}
     </main>
     {!privateContent && (
-      <footer class="border-t text-xs">
-        <div class="mx-auto max-w-[1400px] px-4 py-4 min-[601px]:px-6">
-          <a href="/newsletter/privacy">email privacy</a>
+      <footer>
+        <div class="mx-auto w-full max-w-[1400px] px-4 pb-4 min-[601px]:px-6 min-[601px]:pb-6">
+          <NewsletterSignup client:load />
+          <slot name="after-newsletter" />
+        </div>
+        <div class="border-t text-xs">
+          <div class="mx-auto max-w-[1400px] px-4 py-4 min-[601px]:px-6">
+            <a href="/newsletter/privacy">email privacy</a>
+          </div>
         </div>
       </footer>
     )}
