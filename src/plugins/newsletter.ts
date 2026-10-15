@@ -1,12 +1,11 @@
 import { definePlugin } from 'emdash';
 import { env } from 'cloudflare:workers';
 import {
-  cleanupNewsletter,
   configureNewsletter,
   confirmSubscription,
   newsletterStatus,
   requestSubscription,
-  runNewsletter,
+  newsletterCron,
   pendingDigestPosts,
 } from '../lib/newsletter';
 import { digestEmail } from '../emails/newsletter';
@@ -35,15 +34,7 @@ export function createPlugin() {
       'plugin:activate': async (_event, ctx) => {
         await ctx.cron?.schedule('digest', { schedule: '*/5 * * * *' });
       },
-      cron: async (event, ctx) => {
-        if (event.name !== 'digest') return;
-        try {
-          await runNewsletter(ctx, env.OWNER_EMAIL);
-          await cleanupNewsletter(ctx);
-        } catch {
-          ctx.log.warn('newsletter_schedule_failed');
-        }
-      },
+      cron: newsletterCron(() => env.OWNER_EMAIL),
     },
     routes: {
       preview: {

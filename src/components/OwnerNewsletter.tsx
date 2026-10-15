@@ -270,9 +270,13 @@ export function OwnerNewsletter() {
                   <p>
                     {status.lastRun.status} · {status.lastRun.postCount} entries
                   </p>
-                  {['uncertain', 'preparing', 'sending', 'draft'].includes(
-                    status.lastRun.status,
-                  ) && (
+                  {[
+                    'uncertain',
+                    'preparing',
+                    'sending',
+                    'draft',
+                    'discarding',
+                  ].includes(status.lastRun.status) && (
                     <>
                       <p className="text-xs">
                         automatic sends wait while this delivery needs checking.
@@ -291,17 +295,34 @@ export function OwnerNewsletter() {
                     </>
                   )}
                   {status.lastRun.status === 'draft' && (
-                    <Button
-                      disabled={busy}
-                      onClick={() => {
-                        void action(
-                          { action: 'resume' },
-                          'saved email sent to subscribers.',
-                        );
-                      }}
-                    >
-                      SEND SAVED DRAFT
-                    </Button>
+                    <div className="space-y-3">
+                      <Button
+                        disabled={busy}
+                        onClick={() => {
+                          void action(
+                            { action: 'resume' },
+                            'saved email sent to subscribers.',
+                          );
+                        }}
+                      >
+                        SEND SAVED DRAFT
+                      </Button>
+                      <p className="text-xs">
+                        if entries changed, discard this unsent draft. entries
+                        return to the next scheduled digest.
+                      </p>
+                      <Button
+                        disabled={busy}
+                        onClick={() => {
+                          void action(
+                            { action: 'discard' },
+                            'draft checked. entries from an unsent draft return to the next scheduled digest.',
+                          );
+                        }}
+                      >
+                        DISCARD SAVED DRAFT
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}

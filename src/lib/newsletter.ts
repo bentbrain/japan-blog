@@ -35,12 +35,15 @@ const runSchema = z.object({
     'uncertain',
     'failed',
     'draft',
+    'discarding',
+    'discarded',
   ]),
   createdAt: z.number(),
   postIds: z.array(z.string()),
   broadcastId: z.string().optional(),
   postHashes: z.record(z.string(), z.string()).optional(),
   leaseUntil: z.number().optional(),
+  discardRequested: z.boolean().optional(),
 });
 const stateSchema = z.object({
   nextSend: z.number(),
@@ -369,32 +372,51 @@ async function completeRun(
 export async function checkNewsletterRun(ctx: NewsletterContext) {
   const state = stateSchema.parse(await ctx.kv.get('state'));
   if (!state.lastRun) return;
-  const run = runSchema.parse(await store(ctx, 'runs').get(state.lastRun));
-  if (run.status === 'sent') return;
+  const runs = store(ctx, 'runs');
+  const stored = await runs.getVersioned(state.lastRun);
+  if (!stored) return;
+  const run = runSchema.parse(stored.value);
+  if (run.status === 'sent' || run.status === 'discarded') return;
   if (
-    ['preparing', 'sending'].includes(run.status) &&
+    ['preparing', 'sending', 'discarding'].includes(run.status) &&
     (run.leaseUntil ?? run.createdAt + 120_000) > Date.now()
   )
     return;
   if (run.broadcastId) {
     const broadcast = z
       .object({ status: z.string() })
+      .nullable()
       .parse(
         await provider(
           ctx,
           `/broadcasts/${encodeURIComponent(run.broadcastId)}`,
         ),
       );
+    if (!broadcast) {
+      if (run.discardRequested)
+        await runs.compareAndSet(state.lastRun, stored.revision, {
+          ...run,
+          status: 'discarded',
+        });
+      return;
+    }
     if (broadcast.status === 'sent') await completeRun(ctx, state.lastRun, run);
     else if (broadcast.status === 'draft')
-      await store(ctx, 'runs').put(state.lastRun, { ...run, status: 'draft' });
+      await runs.compareAndSet(state.lastRun, stored.revision, {
+        ...run,
+        status: 'draft',
+      });
   } else if (run.createdAt + 120_000 < Date.now()) {
     // Only draft broadcasts are created before the ID is durably saved.
-    await store(ctx, 'runs').put(state.lastRun, { ...run, status: 'failed' });
+    await runs.compareAndSet(state.lastRun, stored.revision, {
+      ...run,
+      status: 'failed',
+    });
   }
 }
 
 async function resumeNewsletterRun(ctx: NewsletterContext) {
+  const startedAt = Date.now();
   const state = stateSchema.parse(await ctx.kv.get('state'));
   if (!state.lastRun) throw new Error('No saved newsletter');
   const runs = store(ctx, 'runs');
@@ -443,6 +465,12 @@ async function resumeNewsletterRun(ctx: NewsletterContext) {
         )
           throw new Error('Publication changed');
       }
+      const current = await runs.getVersioned(state.lastRun);
+      if (
+        current?.revision !== claim.revision ||
+        Date.now() - startedAt >= 120_000
+      )
+        throw new Error('Send lease expired');
       await provider(
         ctx,
         `/broadcasts/${encodeURIComponent(run.broadcastId)}/send`,
@@ -463,6 +491,81 @@ async function resumeNewsletterRun(ctx: NewsletterContext) {
       'Delivery still needs checking. No replacement email was created.',
     );
   }
+}
+
+async function discardNewsletterRun(ctx: NewsletterContext) {
+  const state = stateSchema.parse(await ctx.kv.get('state'));
+  if (!state.lastRun) throw new Error('No saved newsletter');
+  const runs = store(ctx, 'runs');
+  const stored = await runs.getVersioned(state.lastRun);
+  if (!stored) throw new Error('No saved newsletter');
+  const run = runSchema.parse(stored.value);
+  if (run.status !== 'draft' || !run.broadcastId)
+    throw new Error('Check delivery before discarding a draft');
+  const claim = await runs.compareAndSet(state.lastRun, stored.revision, {
+    ...run,
+    status: 'discarding',
+    leaseUntil: Date.now() + 120_000,
+  });
+  if (!claim.applied)
+    throw new Error('This newsletter is already being checked');
+  let discardRequested = false;
+  let revision = claim.revision;
+  try {
+    const path = `/broadcasts/${encodeURIComponent(run.broadcastId)}`;
+    const broadcast = z
+      .object({ status: z.string() })
+      .parse(await provider(ctx, path));
+    if (broadcast.status === 'sent') {
+      await completeRun(ctx, state.lastRun, run);
+      return;
+    }
+    if (broadcast.status !== 'draft')
+      throw new Error('Delivery is still uncertain');
+    // Persist intent before deletion. A later confirmed 404 can reconcile a
+    // lost deletion response without creating a replacement during uncertainty.
+    const intent = await runs.compareAndSet(state.lastRun, claim.revision, {
+      ...run,
+      status: 'discarding',
+      discardRequested: true,
+      leaseUntil: Date.now() + 120_000,
+    });
+    if (!intent.applied) throw new Error('Draft changed');
+    discardRequested = true;
+    revision = intent.revision;
+    z.object({ deleted: z.literal(true) }).parse(
+      await provider(ctx, path, 'DELETE'),
+    );
+    await runs.compareAndSet(state.lastRun, intent.revision, {
+      ...run,
+      status: 'discarded',
+      discardRequested: true,
+    });
+  } catch {
+    await runs.compareAndSet(state.lastRun, revision, {
+      ...run,
+      status: 'uncertain',
+      discardRequested,
+    });
+    throw new Error(
+      'Delivery still needs checking. No replacement email was created.',
+    );
+  }
+}
+
+export function newsletterCron(ownerEmail: () => string) {
+  return {
+    timeout: 90_000,
+    async handler(event: { name: string }, ctx: NewsletterContext) {
+      if (event.name !== 'digest') return;
+      try {
+        await runNewsletter(ctx, ownerEmail());
+        await cleanupNewsletter(ctx);
+      } catch {
+        ctx.log.warn('newsletter_schedule_failed');
+      }
+    },
+  };
 }
 
 export async function runNewsletter(
@@ -491,7 +594,11 @@ export async function runNewsletter(
     );
     if (state.lastRun) {
       const last = runSchema.parse(await store(ctx, 'runs').get(state.lastRun));
-      if (['preparing', 'sending', 'uncertain', 'draft'].includes(last.status))
+      if (
+        ['preparing', 'sending', 'uncertain', 'draft', 'discarding'].includes(
+          last.status,
+        )
+      )
         return;
     }
     if (now < state.nextSend) return;
@@ -630,6 +737,7 @@ export async function configureNewsletter(
       z.object({ action: z.literal('test') }),
       z.object({ action: z.literal('check') }),
       z.object({ action: z.literal('resume') }),
+      z.object({ action: z.literal('discard') }),
     ])
     .parse(input);
   if (parsed.action === 'connect') {
@@ -677,12 +785,20 @@ export async function configureNewsletter(
     )
       throw new Error('Connect Resend before enabling automatic emails');
     await ctx.kv.set(settingsKey, parsed.settings);
-    await ctx.kv.set('state', {
-      ...z
-        .record(z.string(), z.unknown())
-        .parse((await ctx.kv.get('state')) ?? {}),
-      nextSend: nextNewsletterSend(parsed.settings, Date.now()),
-    });
+    for (let attempt = 0; ; attempt++) {
+      const state = await ctx.kv.getVersioned('state');
+      const updated = await ctx.kv.compareAndSet(
+        'state',
+        state?.revision ?? null,
+        {
+          ...z.record(z.string(), z.unknown()).parse(state?.value ?? {}),
+          nextSend: nextNewsletterSend(parsed.settings, Date.now()),
+        },
+      );
+      if (updated.applied) break;
+      if (attempt === 4)
+        throw new Error('Schedule changed during save. Please try again.');
+    }
     await ctx.cron?.schedule('digest', { schedule: '*/5 * * * *' });
   } else if (parsed.action === 'test') {
     if (!ownerEmail) throw new Error('Owner inbox is not configured');
@@ -697,7 +813,8 @@ export async function configureNewsletter(
       subject: '[test] recent days in japan',
       ...email,
     });
-  } else if (parsed.action === 'resume') await resumeNewsletterRun(ctx);
+  } else if (parsed.action === 'discard') await discardNewsletterRun(ctx);
+  else if (parsed.action === 'resume') await resumeNewsletterRun(ctx);
   else await checkNewsletterRun(ctx);
   return newsletterStatus(ctx);
 }

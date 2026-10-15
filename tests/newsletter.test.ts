@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { registerHooks } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { setTimeout } from 'node:timers/promises';
+import { definePlugin, createHookPipeline } from 'emdash';
+import { sqlite } from 'emdash/db';
+import { createDialect } from 'emdash/db/sqlite';
 import { z } from 'zod';
 import type { StorageCollection, ConditionalWriteResult } from 'emdash';
 import {
   checkNewsletterRun,
+  newsletterCron,
   cleanupNewsletter,
   configureNewsletter,
   confirmSubscription,
@@ -526,4 +533,183 @@ void test('recovery reuses the saved broadcast and rejects changed live content'
       changed ? 1 : 2,
     );
   }
+});
+
+void test('owner can discard a verified unsent changed draft and rebuild at the next due time', async () => {
+  const f = fixture();
+  await due(f);
+  f.posts.push(post('one'));
+  let failSend = true;
+  f.setRespond((call) => {
+    if (call.path.endsWith('/send') && failSend)
+      return Promise.reject(new Error('unknown send'));
+    if (call.method === 'DELETE')
+      return Promise.resolve(Response.json({ deleted: true }));
+    return Promise.resolve(Response.json({ id: 'saved-id', status: 'draft' }));
+  });
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  await checkNewsletterRun(f.ctx);
+  const live = f.posts[0];
+  if (live) live.data.title = 'corrected public title';
+  await assert.rejects(
+    configureNewsletter(f.ctx, { action: 'resume' }, 'owner@example.com'),
+  );
+  await checkNewsletterRun(f.ctx);
+  await configureNewsletter(f.ctx, { action: 'discard' }, 'owner@example.com');
+  assert.equal(await f.storage.sent.exists('one'), false);
+  assert.equal(f.calls.filter((call) => call.method === 'DELETE').length, 1);
+  failSend = false;
+  await runNewsletter(f.ctx, 'owner@example.com', now + 8 * 86_400_000);
+  assert.equal(f.calls.filter((call) => call.path === '/broadcasts').length, 2);
+  assert.equal(await f.storage.sent.exists('one'), true);
+});
+
+void test('unknown draft deletion stays blocked until its missing saved ID is reconciled', async () => {
+  const f = fixture();
+  await due(f);
+  f.posts.push(post('one'));
+  let deleted = false;
+  f.setRespond((call) => {
+    if (call.path.endsWith('/send'))
+      return Promise.reject(new Error('unknown send'));
+    if (call.method === 'DELETE') {
+      deleted = true;
+      return Promise.reject(new Error('lost deletion response'));
+    }
+    if (deleted) return Promise.resolve(new Response(null, { status: 404 }));
+    return Promise.resolve(Response.json({ id: 'saved-id', status: 'draft' }));
+  });
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  await checkNewsletterRun(f.ctx);
+  await assert.rejects(
+    configureNewsletter(f.ctx, { action: 'discard' }, 'owner@example.com'),
+  );
+  const before = f.calls.length;
+  await runNewsletter(f.ctx, 'owner@example.com', now + 8 * 86_400_000);
+  assert.equal(f.calls.length, before);
+  await checkNewsletterRun(f.ctx);
+  assert.equal(
+    (await configureNewsletter(f.ctx, { action: 'check' }, 'owner@example.com'))
+      .lastRun?.status,
+    'discarded',
+  );
+  assert.equal(await f.storage.sent.exists('one'), false);
+});
+
+void test('discard reconciles an already sent broadcast without deleting or releasing its posts', async () => {
+  const f = fixture();
+  await due(f);
+  f.posts.push(post('one'));
+  let delivered = false;
+  f.setRespond((call) => {
+    if (call.path.endsWith('/send'))
+      return Promise.reject(new Error('unknown send'));
+    return Promise.resolve(
+      Response.json({ id: 'saved-id', status: delivered ? 'sent' : 'draft' }),
+    );
+  });
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  await checkNewsletterRun(f.ctx);
+  delivered = true;
+  await configureNewsletter(f.ctx, { action: 'discard' }, 'owner@example.com');
+  assert.equal(
+    f.calls.some((call) => call.method === 'DELETE'),
+    false,
+  );
+  assert.equal(await f.storage.sent.exists('one'), true);
+});
+
+void test(
+  'the native cron pipeline awaits a provider response beyond its five-second default',
+  { timeout: 20_000 },
+  async () => {
+    const moduleHooks = registerHooks({
+      resolve(specifier, context, next) {
+        return specifier === 'virtual:emdash/config'
+          ? {
+              url: 'data:text/javascript,export default {}',
+              shortCircuit: true,
+            }
+          : next(specifier, context);
+      },
+      load(url, context, next) {
+        return url.includes('/dist/emdash-runtime-')
+          ? {
+              format: 'module',
+              source: `import.meta.env = { DEV: false };\n${readFileSync(new URL(url), 'utf8')}`,
+              shortCircuit: true,
+            }
+          : next(url, context);
+      },
+    });
+    let destroy: (() => Promise<void>) | undefined;
+    try {
+      const { EmDashRuntime } =
+        await import('emdash/internal/plugin-test-runtime');
+      const cms = await EmDashRuntime.create({
+        config: { database: sqlite({ url: ':memory:' }) },
+        createDialect: () => createDialect({ url: ':memory:' }),
+        createStorage: null,
+        plugins: [],
+        sandboxEnabled: false,
+        sandboxedPluginEntries: [],
+        createSandboxRunner: null,
+        siteInfo: { url: 'http://localhost', name: 'synthetic', locale: 'en' },
+      });
+      destroy = () => cms.db.destroy();
+      const f = fixture();
+      await due(f);
+      await f.ctx.kv.set('state', { nextSend: Date.now() - 1 });
+      f.posts.push(post('one'));
+      f.setRespond(async (call) => {
+        if (call.path === '/broadcasts') await setTimeout(5_500);
+        return Response.json({ id: 'slow-id', status: 'sent' });
+      });
+      const hook = newsletterCron(() => 'owner@example.com');
+      const plugin = definePlugin({
+        id: 'japan-newsletter',
+        version: '1.0.0',
+        hooks: {
+          cron: { ...hook, handler: (event) => hook.handler(event, f.ctx) },
+        },
+      });
+      const pipeline = createHookPipeline([plugin], { db: cms.db });
+      const result = await pipeline.invokeCronHook('japan-newsletter', {
+        name: 'digest',
+        scheduledAt: new Date().toISOString(),
+      });
+      assert.equal(result.success, true, result.error?.message);
+      assert.equal(await f.storage.sent.exists('one'), true);
+    } finally {
+      await destroy?.();
+      moduleHooks.deregister();
+    }
+  },
+);
+
+void test('saving a schedule preserves a delivery record created concurrently', async () => {
+  const f = fixture();
+  await configured(f);
+  await f.ctx.kv.set('state', { nextSend: now });
+  await f.storage.runs.put('new-run', {
+    status: 'sent',
+    createdAt: now,
+    postIds: [],
+  });
+  const original = f.ctx.kv.getVersioned;
+  let interleave = true;
+  f.ctx.kv.getVersioned = async (key) => {
+    const previous = await original(key);
+    if (key === 'state' && interleave) {
+      interleave = false;
+      await f.ctx.kv.set('state', { nextSend: now, lastRun: 'new-run' });
+    }
+    return previous;
+  };
+  const result = await configureNewsletter(
+    f.ctx,
+    { action: 'settings', settings: {} },
+    'owner@example.com',
+  );
+  assert.equal(result.lastRun?.id, 'new-run');
 });
