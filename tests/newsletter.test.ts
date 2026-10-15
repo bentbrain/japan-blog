@@ -696,7 +696,7 @@ void test('saving a schedule preserves a delivery record created concurrently', 
     createdAt: now,
     postIds: [],
   });
-  const original = f.ctx.kv.getVersioned;
+  const original = f.ctx.kv.getVersioned.bind(f.ctx.kv);
   let interleave = true;
   f.ctx.kv.getVersioned = async (key) => {
     const previous = await original(key);
