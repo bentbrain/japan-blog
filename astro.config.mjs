@@ -37,6 +37,17 @@ export default defineConfig({
       images: false,
       maxUploadSize: 64 * 1024 * 1024,
       plugins: [
+        {
+          id: 'japan-newsletter',
+          version: '1.0.0',
+          entrypoint: fileURLToPath(
+            new URL('./src/plugins/newsletter.ts', import.meta.url),
+          ),
+          settingsSchema: {
+            apiKey: { type: 'secret', label: 'Resend API key' },
+            segmentId: { type: 'string', label: 'Newsletter segment' },
+          },
+        },
         cloudflareEmail({
           from: { email: 'login@auth.jp.bent.build', name: 'jp.bent.build' },
         }),

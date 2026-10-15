@@ -5,6 +5,7 @@ const destinations = [
   { href: '/owner', label: 'posts' },
   { href: '/owner/media', label: 'media' },
   { href: '/categories', label: 'categories' },
+  { href: '/owner/newsletter', label: 'newsletter' },
   { href: '/owner/export', label: 'export' },
   { href: '/_emdash/admin/settings/security', label: 'account' },
 ];
