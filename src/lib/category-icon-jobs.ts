@@ -12,6 +12,8 @@ import {
   validateStoredCategoryIcon,
 } from './category-icon-image';
 import type { CategoryIconStatus } from './category-icons';
+import { emitCategoryIconDiagnostic } from './category-icon-diagnostics';
+import type { CategoryIconDiagnostic } from './category-icon-diagnostics';
 
 export interface IconEnvironment {
   DB: D1Database;
@@ -152,69 +154,108 @@ export async function runCategoryIconJobs(
     .bind(job.category_id)
     .first<CategoryRow>();
   if (!category || !env.OPENAI_API_KEY) return;
-  let outcome;
+  const started = performance.now();
+  let diagnostic: CategoryIconDiagnostic = {
+    stage: 'generation',
+    reason: 'outcome',
+  };
   try {
-    outcome = await (deps.generate || generateCategoryIcon)({
-      key: env.OPENAI_API_KEY,
-      model: job.model,
-      category: { normalized: category.normalized, label: category.label },
-    });
-  } catch {
-    // Includes local storage/processing failures after a dispatched request.
-    outcome = { status: 'uncertain' };
-  }
-  const token = job.lease_token;
-  if (
-    outcome.status === 'ready' &&
-    'bytes' in outcome &&
-    outcome.bytes instanceof Uint8Array &&
-    (await validateStoredCategoryIcon(outcome.bytes))
-  ) {
-    const version = await iconHash(
-      `${job.version}\n${job.model}\n${String(job.generation)}\n${await iconHash(String(outcome.bytes))}`,
-    );
-    const key = `category-icons/${category.id}/${version}.png`;
+    let outcome;
     try {
-      await env.MEDIA.put(key, outcome.bytes, {
-        httpMetadata: {
-          contentType: 'image/png',
-          cacheControl: 'private, no-store',
+      outcome = await (deps.generate || generateCategoryIcon)(
+        {
+          key: env.OPENAI_API_KEY,
+          model: job.model,
+          category: { normalized: category.normalized, label: category.label },
         },
-      });
-      await env.DB.batch([
-        env.DB.prepare(
-          `UPDATE jp_categories SET ready_key=?,ready_version=? WHERE id=? AND EXISTS(SELECT 1 FROM jp_icon_jobs WHERE id=? AND status='running' AND lease_token=?)`,
-        ).bind(key, version, category.id, job.id, token),
-        env.DB.prepare(
-          `UPDATE jp_icon_jobs SET status='ready',lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=?`,
-        ).bind(job.id, token),
-      ]);
-      return;
+        {
+          diagnose: (detail) => {
+            diagnostic = detail;
+          },
+        },
+      );
     } catch {
-      /* Do not re-generate after a storage failure. */
+      // Includes local storage/processing failures after a dispatched request.
+      outcome = { status: 'uncertain' };
+      diagnostic.stage = 'generation';
+      diagnostic.reason = 'exception';
     }
+    const token = job.lease_token;
+    if (outcome.status === 'ready') {
+      diagnostic.stage = 'mask';
+      diagnostic.reason = 'invalid_mask';
+    }
+    if (
+      outcome.status === 'ready' &&
+      'bytes' in outcome &&
+      outcome.bytes instanceof Uint8Array &&
+      (await validateStoredCategoryIcon(outcome.bytes))
+    ) {
+      diagnostic.stage = 'identity';
+      diagnostic.reason = 'processing_failed';
+      const version = await iconHash(
+        `${job.version}\n${job.model}\n${String(job.generation)}\n${await iconHash(String(outcome.bytes))}`,
+      );
+      const key = `category-icons/${category.id}/${version}.png`;
+      try {
+        diagnostic.stage = 'r2';
+        diagnostic.reason = 'write_failed';
+        await env.MEDIA.put(key, outcome.bytes, {
+          httpMetadata: {
+            contentType: 'image/png',
+            cacheControl: 'private, no-store',
+          },
+        });
+        diagnostic.stage = 'd1';
+        const persisted = await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE jp_categories SET ready_key=?,ready_version=? WHERE id=? AND EXISTS(SELECT 1 FROM jp_icon_jobs WHERE id=? AND status='running' AND lease_token=?)`,
+          ).bind(key, version, category.id, job.id, token),
+          env.DB.prepare(
+            `UPDATE jp_icon_jobs SET status='ready',lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=?`,
+          ).bind(job.id, token),
+        ]);
+        diagnostic.reason = persisted.every(
+          (result) => result.meta.changes === 1,
+        )
+          ? 'ready'
+          : 'lease_lost';
+        return;
+      } catch {
+        /* Do not re-generate after a storage failure. */
+      }
+    }
+    const status =
+      outcome.status === 'rate_limited' && job.attempts < 3
+        ? 'pending'
+        : outcome.status === 'blocked_configuration'
+          ? 'configuration'
+          : outcome.status === 'failed' || outcome.status === 'rate_limited'
+            ? 'failed'
+            : 'uncertain';
+    const previous = { ...diagnostic };
+    diagnostic.stage = 'd1';
+    diagnostic.reason = 'write_failed';
+    const persisted = await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE jp_icon_jobs SET status=?,available_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=?`,
+      ).bind(
+        status,
+        now() + Math.min(3600_000, 60_000 * 2 ** job.attempts),
+        job.id,
+        token,
+      ),
+      env.DB.prepare(
+        'UPDATE jp_icon_settings SET provider_blocked=CASE WHEN ?=1 THEN 1 ELSE provider_blocked END WHERE id=1',
+      ).bind(status === 'configuration' ? 1 : 0),
+    ]);
+    diagnostic =
+      persisted[0]?.meta.changes === 1
+        ? previous
+        : { ...previous, stage: 'd1', reason: 'lease_lost' };
+  } finally {
+    emitCategoryIconDiagnostic(started, diagnostic);
   }
-  const status =
-    outcome.status === 'rate_limited' && job.attempts < 3
-      ? 'pending'
-      : outcome.status === 'blocked_configuration'
-        ? 'configuration'
-        : outcome.status === 'failed' || outcome.status === 'rate_limited'
-          ? 'failed'
-          : 'uncertain';
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE jp_icon_jobs SET status=?,available_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=?`,
-    ).bind(
-      status,
-      now() + Math.min(3600_000, 60_000 * 2 ** job.attempts),
-      job.id,
-      token,
-    ),
-    env.DB.prepare(
-      'UPDATE jp_icon_settings SET provider_blocked=CASE WHEN ?=1 THEN 1 ELSE provider_blocked END WHERE id=1',
-    ).bind(status === 'configuration' ? 1 : 0),
-  ]);
 }
 
 // Recovery only opens the provider circuit. It never changes a job, creates a

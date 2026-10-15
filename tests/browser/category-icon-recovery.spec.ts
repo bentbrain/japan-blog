@@ -132,11 +132,18 @@ test.beforeEach(async () => {
       .map((statement) => env().DB.prepare(statement)),
   );
 });
-test.afterEach(async () => {
-  await platform?.dispose();
-  platform = undefined;
-  if (temporaryDirectory)
-    await rm(temporaryDirectory, { recursive: true, force: true });
+async function disposeIconFixture(page: Page) {
+  try {
+    await page.unrouteAll({ behavior: 'wait' });
+  } finally {
+    await platform?.dispose();
+    platform = undefined;
+    if (temporaryDirectory)
+      await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+test.afterEach(async ({ page }) => {
+  await disposeIconFixture(page);
 });
 
 for (const scenario of ['removed', 'capped']) {
@@ -325,3 +332,100 @@ for (const outcome of ['failed', 'ready', 'uncertain']) {
     expect(rows.map((row) => row.attempts)).toEqual([1, 1, 0]);
   });
 }
+
+test('recovery fixture completes an active D1 status route before disposing its worker', async ({
+  page,
+}) => {
+  const reading = Promise.withResolvers<undefined>();
+  const resume = Promise.withResolvers<undefined>();
+  const fixture = env();
+  // Delay delivery of one actual D1 result, with no mocked query or data.
+  // This keeps the production status API suspended across fixture cleanup.
+  fixture.DB = new Proxy(fixture.DB, {
+    get(database, property) {
+      if (property === 'prepare')
+        return (query: string) => {
+          const statement = database.prepare(query);
+          if (!query.startsWith('SELECT provider_blocked')) return statement;
+          return new Proxy(statement, {
+            get(target, method) {
+              if (method === 'first')
+                return async () => {
+                  const result = target.first();
+                  reading.resolve(undefined);
+                  await resume.promise;
+                  return result;
+                };
+              const value: unknown = Reflect.get(target, method);
+              return value;
+            },
+          });
+        };
+      const value: unknown = Reflect.get(database, property);
+      return value;
+    },
+  });
+  let handlerFinished = false;
+  let disposalStarted = false;
+  let disposedBeforeHandler = false;
+  assert.ok(platform);
+  const dispose = platform.dispose.bind(platform);
+  platform.dispose = async () => {
+    disposalStarted = true;
+    disposedBeforeHandler = !handlerFinished;
+    await dispose();
+  };
+  await page.route(
+    'https://fixture.invalid/api/trip/category-icons',
+    async (route) => {
+      try {
+        const response = await categoryIconStatusResponse(fixture, [
+          'cleanup fixture',
+        ]);
+        await route.fulfill({
+          status: response.status,
+          contentType: 'application/json',
+          headers: { 'Access-Control-Allow-Origin': '*' },
+          body: await response.text(),
+        });
+        handlerFinished = true;
+      } catch (error) {
+        await route.abort();
+        throw error;
+      }
+    },
+  );
+  const response = page.evaluate(async () => {
+    const result = await fetch(
+      'https://fixture.invalid/api/trip/category-icons',
+    );
+    const body: unknown = await result.json();
+    return { status: result.status, body };
+  });
+  await reading.promise;
+  const cleanup = disposeIconFixture(page);
+  const settled = Promise.allSettled([response, cleanup]);
+  try {
+    expect(disposalStarted).toBe(false);
+  } finally {
+    resume.resolve(undefined);
+    await settled;
+  }
+  expect(await response).toEqual({
+    status: 200,
+    body: {
+      icons: [
+        {
+          normalized: 'cleanup fixture',
+          label: 'cleanup fixture',
+          state: 'pending',
+          canRetry: false,
+        },
+      ],
+    },
+  });
+  await cleanup;
+  expect(handlerFinished).toBe(true);
+  expect(disposalStarted).toBe(true);
+  expect(disposedBeforeHandler).toBe(false);
+});
