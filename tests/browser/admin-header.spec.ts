@@ -17,7 +17,7 @@ for (const colorScheme of ['light', 'dark']) {
       expect(setup.ok()).toBe(true);
       await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/media');
       await page.waitForURL((url) => url.pathname === '/owner/media');
-      for (const path of ['/owner/media', '/', '/gallery']) {
+      for (const path of ['/owner/media', '/categories', '/', '/gallery']) {
         const response = await page.goto(path);
         expect(response?.headers()['cache-control']).toBe('private, no-store');
         expect(response?.headers()['cdn-cache-control']).toBe('no-store');
@@ -39,7 +39,7 @@ for (const colorScheme of ['light', 'dark']) {
         await expect(
           navigation.getByRole('link', { name: 'pics', exact: true }),
         ).toHaveAttribute('href', '/gallery');
-        if (path.startsWith('/owner')) {
+        if (path.startsWith('/owner') || path === '/categories') {
           await expect(page.locator('body')).toHaveAttribute(
             'data-feedback-redact',
             'true',
@@ -74,6 +74,7 @@ for (const colorScheme of ['light', 'dark']) {
         for (const { name, href } of [
           { name: 'posts', href: '/owner' },
           { name: 'media', href: '/owner/media' },
+          { name: 'categories', href: '/categories' },
           { name: 'export', href: '/owner/export' },
           { name: 'account', href: '/_emdash/admin/settings/security' },
         ]) {
@@ -81,6 +82,10 @@ for (const colorScheme of ['light', 'dark']) {
             menu.getByRole('menuitem', { name, exact: true }),
           ).toHaveAttribute('href', href);
         }
+        if (path === '/categories')
+          await expect(
+            menu.getByRole('menuitem', { name: 'categories', exact: true }),
+          ).toHaveAttribute('aria-current', 'page');
         if (path === '/owner/media')
           await expect(
             menu.getByRole('menuitem', { name: 'media', exact: true }),
@@ -155,6 +160,9 @@ test('anonymous visitors get public navigation and protected endpoints stay prot
       'data-feedback-private',
     );
   }
+  const categories = await page.request.get('/categories', { maxRedirects: 0 });
+  expect(categories.status()).toBe(302);
+  expect(categories.headers()['location']).toContain('/_emdash/admin/login');
   const owner = await page.request.get('/owner/media', { maxRedirects: 0 });
   expect(owner.status()).toBe(302);
   expect(owner.headers()['location']).toContain('/_emdash/admin/login');

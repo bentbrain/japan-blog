@@ -56,6 +56,7 @@ async function sql(source: string) {
 
 async function resetSchema() {
   await sql(`
+    DROP TABLE IF EXISTS jp_icon_assets;
     DROP TABLE IF EXISTS jp_icon_attempts;
     DROP TABLE IF EXISTS jp_icon_jobs;
     DROP TABLE IF EXISTS jp_categories;
@@ -64,6 +65,8 @@ async function resetSchema() {
     DROP TABLE IF EXISTS jp_icon_settings;
     DROP TABLE IF EXISTS ec_media_items;
     DROP TABLE IF EXISTS revisions;
+    DROP TABLE IF EXISTS media;
+    CREATE TABLE media(id TEXT PRIMARY KEY,storage_key TEXT);
     CREATE TABLE ec_media_items (
       id TEXT PRIMARY KEY, categories TEXT, draft_revision_id TEXT,
       status TEXT NOT NULL DEFAULT 'draft', deleted_at TEXT,
@@ -225,10 +228,13 @@ before(async () => {
     remoteBindings: false,
     envFiles: [],
   });
-  migration = await readFile(
-    new URL('../migrations/0001_category_icons.sql', import.meta.url),
-    'utf8',
-  );
+  migration = (
+    await Promise.all(
+      ['0001_category_icons.sql', '0002_icon_library.sql'].map((file) =>
+        readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8'),
+      ),
+    )
+  ).join('\n--> statement-breakpoint\n');
 });
 
 beforeEach(async () => {
@@ -1610,4 +1616,130 @@ void test('distinct dispatched generations have independent random operation IDs
   const second = diagnosticEvent(lines.slice(1)).event;
   assert.ok('operationId' in first && 'operationId' in second);
   assert.notEqual(first.operationId, second.operationId);
+});
+
+void test('new categories reuse a suitable stored icon without another generation or spend', async () => {
+  await saveCategories(['ramen']);
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: () => Promise.resolve({ status: 'ready', bytes: pngBytes() }),
+  });
+  const original = await storedCategory('ramen');
+  await saveCategories(['noodles']);
+  await drainIconOutbox(environment(), now + 1);
+  const reused = await storedCategory('noodles');
+  assert.ok(reused.ready_version);
+  assert.equal(reused.ready_key, original.ready_key);
+  assert.equal(reused.generation, 0);
+  assert.equal(await count('jp_icon_jobs'), 1);
+  assert.equal(await count('jp_icon_attempts'), 1);
+  const privateResponse = await serveCategoryIcon(
+    environment(),
+    reused.id,
+    `${reused.ready_version}.png`,
+    () => Promise.resolve([]),
+  );
+  assert.equal(privateResponse.status, 404);
+  const published = await serveCategoryIcon(
+    environment(),
+    reused.id,
+    `${reused.ready_version}.png`,
+    () => Promise.resolve(['noodles']),
+  );
+  assert.equal(published.status, 200);
+  assertPrivateHeaders(published);
+  assert.deepEqual(new Uint8Array(await published.arrayBuffer()), pngBytes());
+  assert.equal(
+    (await environment().DB.prepare('SELECT * FROM jp_icon_assets').all())
+      .results.length,
+    1,
+  );
+});
+
+void test('a queued synonym reuses an icon completed while waiting, preserving explicit regeneration', async () => {
+  await saveCategories(['ramen']);
+  await drainIconOutbox(environment(), now);
+  await saveCategories(['noodles']);
+  await drainIconOutbox(environment(), now + 1);
+  let calls = 0;
+  const generate: typeof generateCategoryIcon = () => {
+    calls++;
+    return Promise.resolve({
+      status: 'ready',
+      bytes: pngBytes(calls === 1 ? 8 : 10),
+    });
+  };
+  await runCategoryIconJobs(environment(), { now: () => now + 2, generate });
+  await runCategoryIconJobs(environment(), { now: () => now + 3, generate });
+  assert.equal(calls, 1);
+  assert.equal((await latestJob('noodles')).attempts, 0);
+  assert.equal((await latestJob('noodles')).status, 'ready');
+  assert.equal(
+    await retryCategoryIcon(environment(), 'noodles', false, now + 4),
+    true,
+  );
+  await runCategoryIconJobs(environment(), { now: () => now + 5, generate });
+  assert.equal(calls, 2);
+  assert.notEqual(
+    (await storedCategory('noodles')).ready_key,
+    (await storedCategory('ramen')).ready_key,
+  );
+  assert.equal(
+    (await environment().DB.prepare('SELECT * FROM jp_icon_assets').all())
+      .results.length,
+    2,
+  );
+});
+
+void test('missing or corrupt library assets and mismatched modifiers queue a new icon', async () => {
+  await saveCategories(['ramen']);
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: () => Promise.resolve({ status: 'ready', bytes: pngBytes() }),
+  });
+  const original = await storedCategory('ramen');
+  await saveCategories(['cold noodles']);
+  await drainIconOutbox(environment(), now + 1);
+  assert.equal((await storedCategory('cold noodles')).ready_key, null);
+  assert.equal((await latestJob('cold noodles')).status, 'pending');
+  assert.ok(original.ready_key);
+  await environment().MEDIA.delete(original.ready_key);
+  await saveCategories(['noodles']);
+  await drainIconOutbox(environment(), now + 2);
+  assert.equal((await storedCategory('noodles')).ready_key, null);
+  assert.equal((await latestJob('noodles')).status, 'pending');
+});
+
+void test('dispatch candidate beyond the first fifty pending rows reuses its icon before spending', async () => {
+  await saveCategories(['ramen']);
+  await drainIconOutbox(environment(), now);
+  const targetId = createHash('sha256').update('noodles').digest('hex');
+  const waiting: string[] = [];
+  for (let index = 0; waiting.length < 50; index++) {
+    const label = `waiting fixture ${String(index)}`;
+    if (createHash('sha256').update(label).digest('hex') > targetId)
+      waiting.push(label);
+  }
+  for (const label of [...waiting, 'noodles']) {
+    await saveCategories([label]);
+    await drainIconOutbox(environment(), now + 1);
+  }
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: () => Promise.resolve({ status: 'ready', bytes: pngBytes() }),
+  });
+  const calls: string[] = [];
+  await runCategoryIconJobs(environment(), {
+    now: () => now + 2,
+    generate: (input) => {
+      calls.push(input.category.normalized);
+      return Promise.resolve({ status: 'failed' });
+    },
+  });
+  assert.equal(calls.includes('noodles'), false);
+  assert.equal(
+    (await storedCategory('noodles')).ready_key,
+    (await storedCategory('ramen')).ready_key,
+  );
+  assert.equal((await latestJob('noodles')).attempts, 0);
 });

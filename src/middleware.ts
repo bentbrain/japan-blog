@@ -65,7 +65,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (path === '/_image') return new Response('Not found', { status: 404 });
   if (
     path.startsWith('/_emdash/api/media/file/trip-private/') ||
-    path.startsWith('/_emdash/api/media/file/category-icons/')
+    (path.startsWith('/_emdash/api/media/file/category-icons/') && !owner)
   )
     return new Response('Not found', { status: 404 });
   const mediaFile = /^\/_emdash\/api\/media\/(file|asset)\/(.+)$/.exec(path);
@@ -134,7 +134,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
       (!postLifecycle[2] && context.request.method === 'DELETE')),
   );
   const ownerRoute =
-    path.startsWith('/owner') || path.startsWith('/api/trip') || postAction;
+    path === '/categories' ||
+    path.startsWith('/categories/') ||
+    path.startsWith('/owner') ||
+    path.startsWith('/api/trip') ||
+    postAction;
   const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(context.request.method);
   const management =
     /^\/_emdash\/api\/(admin\/users|users|invites|auth\/(invite|signup)|settings\/signup)(?:\/|$)/.test(

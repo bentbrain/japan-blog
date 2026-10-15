@@ -2,6 +2,7 @@ import type { IconEnvironment } from './category-icon-jobs';
 import { categoryAssetRecord } from './category-icon-access';
 import { categoryNames, iconHash } from './category-icons';
 import { validateStoredCategoryIcon } from './category-icon-image';
+import { validIconAsset } from './icon-library';
 
 export async function serveCategoryIcon(
   env: IconEnvironment,
@@ -30,13 +31,25 @@ export async function serveCategoryIcon(
   if (!category) return missing();
   const version = file.slice(0, -4);
   const record = await categoryAssetRecord(env.DB, id, version);
-  const key = `category-icons/${id}/${version}.png`;
-  if (
-    !record ||
-    record.normalized !== category.normalized ||
-    record.ready_key !== key
-  )
-    return missing();
+  if (!record || record.normalized !== category.normalized) return missing();
+  const key = record.ready_key;
+  if (key !== `category-icons/${id}/${version}.png`) {
+    const asset = await env.DB.prepare(
+      'SELECT * FROM jp_icon_assets WHERE storage_key=? AND version=?',
+    )
+      .bind(key, version)
+      .first<import('./icon-library').IconAsset>();
+    const bytes = asset ? await validIconAsset(env, asset) : undefined;
+    return bytes
+      ? new Response(bytes, {
+          headers: {
+            ...headers,
+            'Content-Type': 'image/png',
+            'Content-Length': String(bytes.length),
+          },
+        })
+      : missing();
+  }
   const object = await env.MEDIA.get(key);
   if (
     !object ||

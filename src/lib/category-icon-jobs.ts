@@ -15,6 +15,7 @@ import {
 import type { CategoryIconStatus } from './category-icons';
 import { emitCategoryIconDiagnostic } from './category-icon-diagnostics';
 import type { CategoryIconDiagnostic } from './category-icon-diagnostics';
+import { matchingIcon } from './icon-library';
 
 export interface IconEnvironment {
   DB: D1Database;
@@ -43,6 +44,47 @@ interface JobRow {
 const configured = (env: IconEnvironment) =>
   Boolean(env.OPENAI_API_KEY?.trim()) &&
   supportedIconModels.includes(env.CATEGORY_ICON_MODEL || '');
+
+export async function categoryInsertStatements(
+  env: IconEnvironment,
+  name: { label: string; normalized: string },
+  now = Date.now(),
+) {
+  const id = await iconHash(name.normalized);
+  const existing = await env.DB.prepare(
+    'SELECT id FROM jp_categories WHERE id=?',
+  )
+    .bind(id)
+    .first();
+  const reusable =
+    !existing && !isDefaultCategory(name.normalized)
+      ? await matchingIcon(env, name.normalized)
+      : undefined;
+  const needsIcon = !isDefaultCategory(name.normalized) && !reusable;
+  return [
+    env.DB.prepare(
+      'INSERT OR IGNORE INTO jp_categories(id,normalized,label,generation,ready_key,ready_version) VALUES(?,?,?,?,?,?)',
+    ).bind(
+      id,
+      name.normalized,
+      name.label,
+      needsIcon ? 1 : 0,
+      reusable?.storage_key || null,
+      reusable?.version || null,
+    ),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO jp_icon_jobs(id,category_id,version,model,generation,status,available_at,created_at) SELECT ?,?,?,?,1,'pending',?,? WHERE changes() = 1 AND ? = 1`,
+    ).bind(
+      `${id}:1`,
+      id,
+      iconPromptVersion,
+      env.CATEGORY_ICON_MODEL || iconModel,
+      now,
+      now,
+      needsIcon ? 1 : 0,
+    ),
+  ];
+}
 
 // Each insert pair and its outbox acknowledgement commit together. Concurrent
 // drains share the same hashes and conflict keys, so none can create duplicates.
@@ -82,34 +124,8 @@ export async function drainIconOutbox(env: IconEnvironment, now = Date.now()) {
       value = [];
     }
     const statements = [];
-    for (const name of categoryNames(value)) {
-      const id = await iconHash(name.normalized);
-      // Defaults never spend. The initial generation update below only applies
-      // to a newly inserted row, using changes() in this transactional batch.
-      statements.push(
-        env.DB.prepare(
-          'INSERT OR IGNORE INTO jp_categories(id,normalized,label,generation) VALUES(?,?,?,?)',
-        ).bind(
-          id,
-          name.normalized,
-          name.label,
-          isDefaultCategory(name.normalized) ? 0 : 1,
-        ),
-      );
-      statements.push(
-        env.DB.prepare(
-          `INSERT OR IGNORE INTO jp_icon_jobs(id,category_id,version,model,generation,status,available_at,created_at) SELECT ?,?,?,?,1,'pending',?,? WHERE changes() = 1 AND ? = 0`,
-        ).bind(
-          `${id}:1`,
-          id,
-          iconPromptVersion,
-          env.CATEGORY_ICON_MODEL || iconModel,
-          now,
-          now,
-          isDefaultCategory(name.normalized) ? 1 : 0,
-        ),
-      );
-    }
+    for (const name of categoryNames(value))
+      statements.push(...(await categoryInsertStatements(env, name, now)));
     statements.push(
       env.DB.prepare('DELETE FROM jp_icon_outbox WHERE id = ?').bind(event.id),
     );
@@ -130,17 +146,51 @@ export async function claimIconJob(env: IconEnvironment, now = Date.now()) {
   ).first<{ provider_blocked: number }>();
   if (blocked?.provider_blocked) return null;
   const builtIns = builtInCategoryNames();
-  const token = crypto.randomUUID();
-  const result = await env.DB.batch<JobRow>([
-    env.DB.prepare(
-      // Keep pre-upgrade built-in jobs/history intact, but never dispatch them.
-      `UPDATE jp_icon_jobs SET status='running', attempts=attempts+1, lease_token=?, lease_until=? WHERE id=(SELECT j.id FROM jp_icon_jobs j JOIN jp_categories c ON c.id=j.category_id WHERE j.status='pending' AND j.available_at<=? AND j.attempts<3 AND c.normalized NOT IN (${builtIns.map(() => '?').join(',')}) ORDER BY j.available_at,j.created_at,j.id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE status='running') AND (SELECT COUNT(*) FROM jp_icon_attempts WHERE started_at>?)<5 RETURNING *`,
-    ).bind(token, now + 180_000, now, ...builtIns, now - 86_400_000),
-    env.DB.prepare(
-      `INSERT INTO jp_icon_attempts(token,job_id,started_at) SELECT ?,id,? FROM jp_icon_jobs WHERE lease_token=? AND status='running'`,
-    ).bind(token, now, token),
-  ]);
-  return result[0]?.results[0] || null;
+  // Check the actual ordered candidate, and claim that exact ID. A competing
+  // worker cannot substitute an unchecked job while storage validation awaits.
+  for (let inspected = 0; inspected < 50; inspected++) {
+    const candidate = await env.DB.prepare(
+      `SELECT j.*,c.normalized,c.ready_key FROM jp_icon_jobs j JOIN jp_categories c ON c.id=j.category_id WHERE j.status='pending' AND j.available_at<=? AND j.attempts<3 AND c.normalized NOT IN (${builtIns.map(() => '?').join(',')}) ORDER BY j.available_at,j.created_at,j.id LIMIT 1`,
+    )
+      .bind(now, ...builtIns)
+      .first<JobRow & { normalized: string; ready_key: string | null }>();
+    if (!candidate) return null;
+    if (
+      candidate.generation === 1 &&
+      candidate.attempts === 0 &&
+      !candidate.ready_key
+    ) {
+      const asset = await matchingIcon(env, candidate.normalized);
+      if (asset) {
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE jp_categories SET ready_key=?,ready_version=? WHERE id=? AND generation=1 AND ready_key IS NULL AND EXISTS(SELECT 1 FROM jp_icon_jobs WHERE id=? AND status='pending' AND attempts=0 AND generation=1)`,
+          ).bind(
+            asset.storage_key,
+            asset.version,
+            candidate.category_id,
+            candidate.id,
+          ),
+          env.DB.prepare(
+            `UPDATE jp_icon_jobs SET status='ready' WHERE id=? AND status='pending' AND attempts=0 AND changes()=1`,
+          ).bind(candidate.id),
+        ]);
+        continue;
+      }
+    }
+    const token = crypto.randomUUID();
+    const result = await env.DB.batch<JobRow>([
+      env.DB.prepare(
+        `UPDATE jp_icon_jobs SET status='running', attempts=attempts+1, lease_token=?, lease_until=? WHERE id=? AND status='pending' AND available_at<=? AND attempts<3 AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE status='running') AND (SELECT COUNT(*) FROM jp_icon_attempts WHERE started_at>?)<5 RETURNING *`,
+      ).bind(token, now + 180_000, candidate.id, now, now - 86_400_000),
+      env.DB.prepare(
+        `INSERT INTO jp_icon_attempts(token,job_id,started_at) SELECT ?,id,? FROM jp_icon_jobs WHERE lease_token=? AND status='running'`,
+      ).bind(token, now, token),
+    ]);
+    return result[0]?.results[0] || null;
+  }
+  // A run that reused fifty icons yields to the next tick without spending.
+  return null;
 }
 
 export async function runCategoryIconJobs(
@@ -212,14 +262,14 @@ export async function runCategoryIconJobs(
         diagnostic.stage = 'd1';
         const persisted = await env.DB.batch([
           env.DB.prepare(
-            `UPDATE jp_categories SET ready_key=?,ready_version=? WHERE id=? AND EXISTS(SELECT 1 FROM jp_icon_jobs WHERE id=? AND status='running' AND lease_token=?)`,
+            `UPDATE jp_categories SET ready_key=?,ready_version=? WHERE id=? AND EXISTS(SELECT 1 FROM jp_icon_jobs WHERE id=? AND status='running' AND lease_token=?) RETURNING id`,
           ).bind(key, version, category.id, job.id, token),
           env.DB.prepare(
-            `UPDATE jp_icon_jobs SET status='ready',lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=?`,
+            `UPDATE jp_icon_jobs SET status='ready',lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=? RETURNING id`,
           ).bind(job.id, token),
         ]);
         diagnostic.reason = persisted.every(
-          (result) => result.meta.changes === 1,
+          (result) => result.results.length === 1,
         )
           ? 'ready'
           : 'lease_lost';
@@ -308,28 +358,37 @@ export async function ownerIconStatuses(
   return requested.map((name): CategoryIconStatus => {
     const category = rows.get(name.normalized);
     const job = category?.status ? { status: category.status } : null;
+    const assetPath =
+      /^category-icons\/([a-f0-9]{64})\/([a-f0-9]{64})\.png$/.exec(
+        category?.ready_key || '',
+      );
     const state = isDefaultCategory(name.normalized)
       ? 'default'
-      : !configured(env)
-        ? 'setup'
-        : job?.status === 'uncertain'
-          ? 'uncertain'
-          : blocked?.provider_blocked
-            ? 'configuration'
-            : job?.status === 'failed'
-              ? 'failed'
-              : job?.status === 'configuration'
-                ? 'configuration'
-                : job?.status === 'pending' || job?.status === 'running'
-                  ? 'pending'
-                  : category?.ready_key
-                    ? 'ready'
-                    : category
-                      ? 'default'
-                      : 'pending';
+      : category?.ready_key && (!job || job.status === 'ready')
+        ? 'ready'
+        : !configured(env)
+          ? 'setup'
+          : job?.status === 'uncertain'
+            ? 'uncertain'
+            : blocked?.provider_blocked
+              ? 'configuration'
+              : job?.status === 'failed'
+                ? 'failed'
+                : job?.status === 'configuration'
+                  ? 'configuration'
+                  : job?.status === 'pending' || job?.status === 'running'
+                    ? 'pending'
+                    : category?.ready_key
+                      ? 'ready'
+                      : category
+                        ? 'default'
+                        : 'pending';
     return {
       ...name,
       state,
+      ...(assetPath?.[1] && assetPath[2]
+        ? { url: `/api/trip/icon-library/${assetPath[1]}/${assetPath[2]}.png` }
+        : {}),
       canRetry:
         Boolean(category) &&
         configured(env) &&
