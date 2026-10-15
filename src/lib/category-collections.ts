@@ -1,6 +1,9 @@
 import { SchemaRegistry, type CreateFieldInput } from 'emdash';
-import { categories } from './model';
-import { categoryNames, iconHash } from './category-icons';
+import {
+  builtInCategoryNames,
+  categoryNames,
+  iconHash,
+} from './category-icons';
 import {
   categoryInsertStatements,
   drainIconOutbox,
@@ -115,7 +118,7 @@ export async function categoryCollection(
   await ensureCollections(cms);
   await drainIconOutbox(env);
   // Default icons and old media labels are retained without paid backfill.
-  for (const name of categoryNames(categories))
+  for (const name of categoryNames(builtInCategoryNames()))
     await env.DB.prepare(
       'INSERT OR IGNORE INTO jp_categories(id,normalized,label) VALUES(?,?,?)',
     )
