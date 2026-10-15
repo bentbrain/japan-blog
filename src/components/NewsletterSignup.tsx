@@ -37,10 +37,10 @@ export function NewsletterSignup() {
     >
       <div className="max-w-xl">
         <h2 id="newsletter-title" className="mb-2">
-          a little japan in your inbox
+          journal updates
         </h2>
         <p className="mb-4 text-xs">
-          journal updates, sent together. confirm by email. unsubscribe anytime.
+          get new journal entries by email. unsubscribe anytime.
         </p>
         <form
           data-feedback-redact

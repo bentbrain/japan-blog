@@ -1,7 +1,33 @@
 import { render, toPlainText } from '@react-email/render';
 import React, { type ReactNode } from 'react';
 import type { DigestPost } from '../lib/newsletter-model';
-import { formatDay } from '../lib/model';
+import { shopDesignLink } from '../lib/shop-design';
+
+function EmailImage({
+  image,
+  marginTop = 16,
+}: {
+  image: NonNullable<DigestPost['images']>[number];
+  marginTop?: number;
+}) {
+  const width = Math.min(image.width, 560);
+  return (
+    <img
+      src={image.src}
+      alt={image.alt}
+      width={width}
+      height={Math.round((image.height * width) / image.width)}
+      style={{
+        display: 'block',
+        width: '100%',
+        maxWidth: width,
+        height: 'auto',
+        border: 0,
+        marginTop,
+      }}
+    />
+  );
+}
 
 function Email({ children }: { children: ReactNode }) {
   return (
@@ -58,17 +84,18 @@ export async function confirmationEmail(url: string) {
   const html = await render(
     <Email>
       <h1 style={{ fontSize: 22, fontWeight: 'normal', marginTop: 32 }}>
-        a little japan in your inbox
+        confirm your email
       </h1>
-      <p>confirm your email for roundups of the japan journal.</p>
       <p>
         <a
           href={url}
           style={{
             display: 'inline-block',
-            color: '#0647ff',
+            backgroundColor: '#0647ff',
+            color: '#ffffff',
             border: '1px solid #0647ff',
             padding: '10px 16px',
+            textDecoration: 'none',
           }}
         >
           CONFIRM EMAIL
@@ -91,9 +118,6 @@ export async function digestEmail(
   const html = await render(
     <Email>
       {test && <p>owner test email. this has not been sent to subscribers.</p>}
-      <h1 style={{ fontSize: 22, fontWeight: 'normal', marginTop: 32 }}>
-        recent days in japan
-      </h1>
       {posts.map((post) => (
         <section
           key={post.id}
@@ -103,18 +127,71 @@ export async function digestEmail(
             paddingTop: 16,
           }}
         >
-          <p style={{ fontSize: 12 }}>{formatDay(post.day)}</p>
           <h2 style={{ fontSize: 18, fontWeight: 'normal' }}>
             <a href={post.url} style={{ color: '#0647ff' }}>
               {post.title}
             </a>
           </h2>
           <p style={{ whiteSpace: 'pre-line' }}>{post.excerpt}</p>
-          <a href={post.url} style={{ color: '#0647ff' }}>
-            READ THE DAY →
-          </a>
+          {post.images?.map((image) => (
+            <EmailImage key={image.src} image={image} />
+          ))}
+          {post.shopDesign && (
+            <a
+              href={shopDesignLink(post.shopDesign)}
+              style={{
+                display: 'block',
+                border: '1px solid #0647ff',
+                marginTop: 24,
+                textDecoration: 'none',
+              }}
+            >
+              <EmailImage image={post.shopDesign.image} marginTop={0} />
+              <span
+                style={{
+                  display: 'block',
+                  backgroundColor: '#0647ff',
+                  color: '#ffffff',
+                  padding: '12px 16px',
+                }}
+              >
+                SHOP DESIGN ↗
+              </span>
+            </a>
+          )}
         </section>
       ))}
+      <table
+        role="presentation"
+        width="100%"
+        cellPadding="0"
+        cellSpacing="0"
+        style={{ backgroundColor: '#0647ff', marginTop: 32 }}
+      >
+        <tbody>
+          <tr>
+            <td style={{ padding: 18 }}>
+              <a
+                href="https://shop.bent.build/?utm_source=jp.bent.build&utm_medium=newsletter"
+                style={{
+                  display: 'block',
+                  color: '#ffffff',
+                  textDecoration: 'none',
+                }}
+              >
+                <img
+                  src="https://jp.bent.build/brand/shop-logo-email.png"
+                  alt=""
+                  width="24"
+                  height="24"
+                  style={{ verticalAlign: 'middle', marginRight: 12 }}
+                />
+                shop.bent.build ↗
+              </a>
+            </td>
+          </tr>
+        </tbody>
+      </table>
       <p
         style={{
           borderTop: '1px solid #0647ff',

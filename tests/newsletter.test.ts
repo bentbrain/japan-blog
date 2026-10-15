@@ -23,6 +23,7 @@ import {
   newsletterExcerpt,
   newsletterHash,
   newsletterSettingsSchema,
+  newsletterStatusSchema,
   nextNewsletterSend,
 } from '../src/lib/newsletter-model';
 import { digestEmail } from '../src/emails/newsletter';
@@ -466,6 +467,64 @@ void test('owner test emails target only the owner, do not consume posts and esc
   assert.ok(!email.html.includes('<script>'));
   assert.ok(email.html.includes('&lt;script&gt;'));
   assert.ok(email.html.includes('{{{RESEND_UNSUBSCRIBE_URL}}}'));
+});
+void test('digests preserve every photo, place the linked shirt after photos and finish with the shop banner', async () => {
+  const source = {
+    id: 'photos-and-shirt',
+    title: 'day 7: tokyo',
+    day: '2026-10-15',
+    url: 'https://jp.bent.build/posts/tokyo',
+    excerpt: 'A journal entry with four photos.',
+    images: Array.from({ length: 4 }, (_, index) => ({
+      src: `cid:photo-${String(index)}`,
+      alt: `Photo ${String(index + 1)}`,
+      width: 1120,
+      height: 747,
+    })),
+    shopDesign: {
+      productUrl:
+        'https://shop.bent.build/featured/3d8ed467-55d4-45ed-ba9d-1eeb687fa5bc',
+      color: 'black',
+      image: {
+        src: 'cid:shirt',
+        alt: 'Black shirt design',
+        width: 768,
+        height: 768,
+      },
+    },
+  };
+  const schema = newsletterStatusSchema.shape.posts.element;
+  const post = schema.parse(source);
+  const email = await digestEmail([post]);
+  let previous = -1;
+  for (const image of source.images) {
+    const position = email.html.indexOf(`src="${image.src}"`);
+    assert.ok(position > previous);
+    previous = position;
+  }
+  const shirt = email.html.indexOf('src="cid:shirt"');
+  const banner = email.html.indexOf(
+    'src="https://jp.bent.build/brand/shop-logo-email.png"',
+  );
+  assert.ok(shirt > previous);
+  assert.ok(banner > shirt);
+  assert.ok(email.html.indexOf('unsubscribe') > banner);
+  assert.ok(email.html.includes('Color=Black'));
+  assert.equal(
+    schema.safeParse({
+      ...source,
+      shopDesign: {
+        ...source.shopDesign,
+        productUrl: 'https://unrelated.example/product',
+      },
+    }).success,
+    false,
+  );
+  const withoutDesign = await digestEmail([
+    { ...post, images: [], shopDesign: undefined },
+  ]);
+  assert.ok(!withoutDesign.html.includes('SHOP DESIGN'));
+  assert.ok(withoutDesign.html.includes('shop.bent.build ↗'));
 });
 void test('cleanup removes expired confirmations and unconfirmed addresses without removing confirmed subscriptions', async () => {
   const f = fixture();

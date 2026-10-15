@@ -640,7 +640,7 @@ export async function runNewsletter(
           from: newsletterFrom,
           reply_to: ownerEmail,
           segment_id: segmentId,
-          subject: 'recent days in japan',
+          subject: 'japan journal updates',
           name: `japan-${id}`,
           ...body,
         }),
@@ -813,7 +813,7 @@ export async function configureNewsletter(
       from: newsletterFrom,
       to: [ownerEmail],
       reply_to: ownerEmail,
-      subject: '[test] recent days in japan',
+      subject: '[test] japan journal updates',
       ...email,
     });
   } else if (parsed.action === 'discard') await discardNewsletterRun(ctx);

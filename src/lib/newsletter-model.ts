@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { daySchema } from './model';
+import { shopDesignSchema } from './shop-design';
 
 export const newsletterFrom = 'jp.bent.build <hi@jp.bent.build>';
 export const newsletterUrl = 'https://jp.bent.build';
@@ -12,12 +13,25 @@ export const newsletterSettingsSchema = z.object({
   days: z.number().int().min(1).max(30).default(3),
 });
 export type NewsletterSettings = z.infer<typeof newsletterSettingsSchema>;
+const newsletterImageSchema = z.object({
+  src: z.union([
+    z.url({ protocol: /^https$/ }),
+    z.string().regex(/^cid:[a-zA-Z0-9._-]+$/),
+  ]),
+  alt: z.string().max(300),
+  width: z.number().int().min(1).max(1120),
+  height: z.number().int().min(1).max(3360),
+});
 const digestPostSchema = z.object({
   id: z.string(),
   title: z.string(),
   day: daySchema,
   url: z.url(),
   excerpt: z.string(),
+  images: z.array(newsletterImageSchema).optional(),
+  shopDesign: shopDesignSchema
+    .extend({ image: newsletterImageSchema })
+    .optional(),
 });
 export type DigestPost = z.infer<typeof digestPostSchema>;
 export const newsletterStatusSchema = z.object({

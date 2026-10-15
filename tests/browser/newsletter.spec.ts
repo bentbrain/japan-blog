@@ -8,7 +8,7 @@ test('public signup is accessible, reports unavailable transport honestly and bl
 }) => {
   await page.goto('/');
   const form = page.getByRole('region', {
-    name: 'a little japan in your inbox',
+    name: 'journal updates',
   });
   await expect(form).toBeVisible();
   await form
