@@ -1,7 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { z } from 'zod';
 
-const spriteCategories = ['landscape', 'food', 'shopping', 'beer'];
+const iconCategories = [
+  'landscape',
+  'food',
+  'shopping',
+  'beer',
+  'people',
+  'origami',
+];
 
 test.beforeAll(async ({ request, baseURL }) => {
   const setup = await request.post('/_emdash/api/setup/dev-bypass', {
@@ -37,7 +44,7 @@ test.beforeAll(async ({ request, baseURL }) => {
           latitude: 35.6895,
           longitude: 139.6917,
           place: 'synthetic fixture',
-          categories: spriteCategories,
+          categories: iconCategories,
           source_url: '/demo/japan.jpg',
           demo: true,
         },
@@ -62,7 +69,7 @@ test.beforeAll(async ({ request, baseURL }) => {
 for (const width of [390, 1778]) {
   for (const textScale of [1, 2]) {
     for (const colorScheme of ['light', 'dark']) {
-      test(`gallery sprite paint centers on text at ${String(width)}px, ${String(textScale * 100)}% text, ${colorScheme}`, async ({
+      test(`gallery raster paint centers on text at ${String(width)}px, ${String(textScale * 100)}% text, ${colorScheme}`, async ({
         page,
       }) => {
         await page.setViewportSize({ width, height: 1024 });
@@ -96,33 +103,59 @@ for (const width of [390, 1778]) {
               clip: { x: 0, y: 0, width, height: width === 390 ? 340 : 180 },
             });
           }
-          for (const name of spriteCategories) {
+          for (const name of iconCategories) {
             const link = filters.getByRole('link', { name, exact: true });
-            const metrics = await link.evaluate((anchor) => {
-              const path = anchor.querySelector('path');
-              const svg = anchor.querySelector('svg');
+            await expect(link.locator('[data-builtin-icon]')).toHaveAttribute(
+              'data-builtin-icon',
+              name,
+            );
+            await expect(link.locator('svg')).toHaveCount(0);
+            const metrics = await link.evaluate(async (anchor) => {
+              const mask = anchor.querySelector('[data-generated-icon]');
               const text = [...anchor.childNodes].find(
                 (node) =>
                   node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
               );
-              if (!(path instanceof SVGGraphicsElement) || !svg || !text)
-                throw new Error('Rendered sprite and category text required');
-              const bounds = path.getBBox();
-              const transform = path.getScreenCTM();
-              if (!transform)
-                throw new Error('Rendered sprite transform required');
-              const top = new DOMPoint(bounds.x, bounds.y).matrixTransform(
-                transform,
-              ).y;
-              const bottom = new DOMPoint(
-                bounds.x,
-                bounds.y + bounds.height,
-              ).matrixTransform(transform).y;
+              if (!(mask instanceof HTMLElement) || !text)
+                throw new Error('Rendered raster and category text required');
+              const style = getComputedStyle(mask);
+              const url = style.maskImage.match(/^url\("(.+)"\)$/)?.[1];
+              if (!url) throw new Error('PNG mask URL required');
+              const image = new Image();
+              image.src = url;
+              await image.decode();
+              const canvas = document.createElement('canvas');
+              canvas.width = image.naturalWidth;
+              canvas.height = image.naturalHeight;
+              const context = canvas.getContext('2d');
+              if (!context) throw new Error('Raster context required');
+              context.drawImage(image, 0, 0);
+              const pixels = context.getImageData(
+                0,
+                0,
+                canvas.width,
+                canvas.height,
+              ).data;
+              let first = canvas.height;
+              let last = -1;
+              for (let y = 0; y < canvas.height; y++)
+                for (let x = 0; x < canvas.width; x++)
+                  if ((pixels[(y * canvas.width + x) * 4 + 3] ?? 0) > 0) {
+                    first = Math.min(first, y);
+                    last = Math.max(last, y);
+                  }
+              if (last < first)
+                throw new Error('Visible raster paint required');
+              const box = mask.getBoundingClientRect();
+              const top = box.y + (first / canvas.height) * box.height;
+              const bottom = box.y + ((last + 1) / canvas.height) * box.height;
               const range = document.createRange();
               range.selectNodeContents(text);
               const line = range.getBoundingClientRect();
-              const box = svg.getBoundingClientRect();
               return {
+                maskUrl: url,
+                color: style.backgroundColor,
+                sourceWidth: canvas.width,
                 paintCenter: (top + bottom) / 2,
                 textCenter: (line.top + line.bottom) / 2,
                 top,
@@ -133,6 +166,17 @@ for (const width of [390, 1778]) {
                 fontSize: parseFloat(getComputedStyle(anchor).fontSize),
               };
             });
+            expect(metrics.maskUrl).toContain(`/category-icons/${name}-v1.png`);
+            expect(metrics.sourceWidth).toBe(32);
+            expect(metrics.color).toBe(
+              selected === name
+                ? colorScheme === 'dark'
+                  ? 'rgb(0, 0, 0)'
+                  : 'rgb(255, 255, 255)'
+                : colorScheme === 'dark'
+                  ? 'rgb(40, 112, 255)'
+                  : 'rgb(6, 71, 255)',
+            );
             expect
               .soft(
                 Math.abs(metrics.paintCenter - metrics.textCenter),
