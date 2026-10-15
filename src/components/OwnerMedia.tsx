@@ -10,6 +10,7 @@ import {
   categories,
   captureInputValue,
   captureTimeFromInput,
+  metadataSchema,
 } from '../lib/model';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -68,6 +69,15 @@ function Metadata({
   item: Media;
   reload: () => Promise<void>;
 }) {
+  const captured = captureInputValue(item.data.captured_at);
+  const storedLatitude = metadataSchema.shape.latitude.safeParse(
+    item.data.latitude,
+  );
+  const hasLatitude = storedLatitude.success;
+  const storedLongitude = metadataSchema.shape.longitude.safeParse(
+    item.data.longitude,
+  );
+  const hasLongitude = storedLongitude.success;
   const [latitude, setLatitude] = useState(
     item.data.latitude?.toString() || '',
   );
@@ -97,12 +107,16 @@ function Metadata({
           publish: data.get('publish') === 'on',
           metadata: {
             title: data.get('title'),
-            captured_at: captureTimeFromInput(
-              formString(data, 'captured'),
-              item.data.captured_at,
-            ),
-            latitude: Number(latitude),
-            longitude: Number(longitude),
+            captured_at:
+              captured && item.data.captured_at
+                ? item.data.captured_at
+                : captureTimeFromInput(formString(data, 'captured')),
+            latitude: storedLatitude.success
+              ? storedLatitude.data
+              : Number(latitude),
+            longitude: storedLongitude.success
+              ? storedLongitude.data
+              : Number(longitude),
             place: data.get('place'),
             categories: [
               ...data.getAll('category').map(String),
@@ -132,12 +146,6 @@ function Metadata({
       className="space-y-4"
       data-feedback-id="media-metadata"
     >
-      <img
-        id="selected-poster"
-        src={poster(item)}
-        alt={item.data.title}
-        className="w-full object-contain"
-      />
       <FieldGroup className="gap-4">
         <Field>
           <FieldLabel htmlFor="media-title">title</FieldLabel>
@@ -148,73 +156,92 @@ function Metadata({
             required
           />
         </Field>
-        <Field>
-          <FieldLabel htmlFor="media-captured">captured in japan</FieldLabel>
-          <Input
-            id="media-captured"
-            name="captured"
-            type="datetime-local"
-            step="0.001"
-            defaultValue={captureInputValue(item.data.captured_at)}
-            required
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-2">
+        {captured && item.data.captured_at ? (
           <Field>
-            <FieldLabel htmlFor="latitude">latitude</FieldLabel>
+            <span className="text-sm">captured in japan</span>
+            <time dateTime={item.data.captured_at} className="text-sm">
+              {captured.replace('T', ' ')}
+            </time>
+          </Field>
+        ) : (
+          <Field>
+            <FieldLabel htmlFor="media-captured">captured in japan</FieldLabel>
             <Input
-              id="latitude"
-              name="latitude"
-              type="number"
-              step="any"
-              min="-90"
-              max="90"
-              value={latitude}
-              onChange={(event) => {
-                setLatitude(event.target.value);
-              }}
+              id="media-captured"
+              name="captured"
+              type="datetime-local"
+              step="0.001"
+              defaultValue={captureInputValue(item.data.captured_at)}
               required
             />
           </Field>
-          <Field>
-            <FieldLabel htmlFor="longitude">longitude</FieldLabel>
-            <Input
-              id="longitude"
-              name="longitude"
-              type="number"
-              step="any"
-              min="-180"
-              max="180"
-              value={longitude}
-              onChange={(event) => {
-                setLongitude(event.target.value);
+        )}
+        {(!hasLatitude || !hasLongitude) && (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              {!hasLatitude && (
+                <Field>
+                  <FieldLabel htmlFor="latitude">latitude</FieldLabel>
+                  <Input
+                    id="latitude"
+                    name="latitude"
+                    type="number"
+                    step="any"
+                    min="-90"
+                    max="90"
+                    value={latitude}
+                    onChange={(event) => {
+                      setLatitude(event.target.value);
+                    }}
+                    required
+                  />
+                </Field>
+              )}
+              {!hasLongitude && (
+                <Field>
+                  <FieldLabel htmlFor="longitude">longitude</FieldLabel>
+                  <Input
+                    id="longitude"
+                    name="longitude"
+                    type="number"
+                    step="any"
+                    min="-180"
+                    max="180"
+                    value={longitude}
+                    onChange={(event) => {
+                      setLongitude(event.target.value);
+                    }}
+                    required
+                  />
+                </Field>
+              )}
+            </div>
+            <svg
+              id="pin-picker"
+              viewBox="0 0 270 340"
+              className="h-[170px] w-full border"
+              aria-label="Japan pin picker; coordinates can also be entered above"
+              onClick={(event) => {
+                const matrix = event.currentTarget.getScreenCTM();
+                if (!matrix) return;
+                const point = new DOMPoint(
+                  event.clientX,
+                  event.clientY,
+                ).matrixTransform(matrix.inverse());
+                const coords = projection.invert?.([point.x, point.y]);
+                if (coords) {
+                  if (!hasLatitude) setLatitude(String(coords[1]));
+                  if (!hasLongitude) setLongitude(String(coords[0]));
+                }
               }}
-              required
-            />
-          </Field>
-        </div>
-        <svg
-          id="pin-picker"
-          viewBox="0 0 270 340"
-          className="h-[340px] w-full border"
-          aria-label="Japan pin picker; coordinates can also be entered above"
-          onClick={(event) => {
-            const matrix = event.currentTarget.getScreenCTM();
-            if (!matrix) return;
-            const point = new DOMPoint(
-              event.clientX,
-              event.clientY,
-            ).matrixTransform(matrix.inverse());
-            const coords = projection.invert?.([point.x, point.y]);
-            if (coords) {
-              setLatitude(String(coords[1]));
-              setLongitude(String(coords[0]));
-            }
-          }}
-        >
-          <path d={land} fill="none" stroke="currentColor" />
-          {pin && <circle cx={pin[0]} cy={pin[1]} r="5" fill="currentColor" />}
-        </svg>
+            >
+              <path d={land} fill="none" stroke="currentColor" />
+              {pin && (
+                <circle cx={pin[0]} cy={pin[1]} r="5" fill="currentColor" />
+              )}
+            </svg>
+          </>
+        )}
         <Field>
           <FieldLabel htmlFor="media-place">place</FieldLabel>
           <Input
@@ -385,16 +412,18 @@ export function OwnerMedia() {
         {status}
       </p>
       <CategoryIconProviderStatus />
-      <div className="grid grid-cols-1 gap-6 min-[601px]:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="grid grid-cols-1 items-start gap-6 min-[601px]:grid-cols-[minmax(0,1fr)_280px]">
         <div
-          className="gallery-grid grid grid-cols-2 gap-[7px] min-[901px]:grid-cols-3"
+          className="gallery-grid grid grid-cols-2 content-start items-start gap-[7px] min-[901px]:grid-cols-3"
           id="media-list"
         >
           {items.map((item) => (
             <Button
               key={item.id}
               variant="ghost"
-              className="relative h-auto min-w-0 overflow-hidden border-0 p-0"
+              className="relative block h-auto min-w-0 overflow-hidden border-0 p-0"
+              aria-pressed={selectedId === item.id}
+              aria-controls="media-details"
               aria-label={`${item.data.title}, ${item.status}`}
               data-feedback-id={`owner-media-${item.id}`}
               onClick={() => {
@@ -404,13 +433,16 @@ export function OwnerMedia() {
               <img
                 src={poster(item)}
                 alt={item.data.title}
-                className="aspect-[1.15] w-full object-cover"
+                className="block h-auto w-full"
               />
               <Badge className="absolute right-2 bottom-2">{item.status}</Badge>
             </Button>
           ))}
         </div>
-        <Card className="gap-0 border-0 border-t py-4 shadow-none min-[601px]:border-t-0 min-[601px]:border-l min-[601px]:py-0">
+        <Card
+          id="media-details"
+          className="max-h-[min(40rem,calc(100dvh-10rem))] gap-0 overflow-y-auto border-0 border-t py-4 shadow-none min-[601px]:border-t-0 min-[601px]:border-l min-[601px]:py-0"
+        >
           <CardContent className="px-0 min-[601px]:pl-6">
             {selected && (
               <Metadata key={selected.id} item={selected} reload={reload} />
