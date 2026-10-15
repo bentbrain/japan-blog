@@ -84,6 +84,13 @@ export function CategoryIconStatus({ names }: { names: string[] }) {
             key={icon.normalized}
             className="flex flex-wrap items-center gap-2"
           >
+            {icon.url && (
+              <span
+                aria-hidden="true"
+                className="size-6 shrink-0 bg-current [mask-size:contain] [mask-repeat:no-repeat]"
+                style={{ maskImage: `url("${icon.url}")` }}
+              />
+            )}
             <span>
               {icon.label} icon · {statusLabel(icon)}
             </span>

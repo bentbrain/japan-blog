@@ -550,7 +550,22 @@ test('owner uploads a photo and publishes it with manual GPS and categories', as
   await page.getByLabel('latitude', { exact: true }).fill('35.6895');
   await page.getByLabel('longitude', { exact: true }).fill('139.6917');
   await page.getByRole('checkbox', { name: 'food', exact: true }).check();
-  await page.getByLabel('other categories').fill('ramen');
+  await page
+    .locator('#metadata')
+    .getByRole('button', { name: 'NEW CATEGORY', exact: true })
+    .click();
+  await page
+    .getByRole('dialog')
+    .getByLabel('name', { exact: true })
+    .fill('ramen');
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'CREATE', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(
+    page.getByRole('checkbox', { name: 'ramen', exact: true }),
+  ).toBeChecked();
   await page.getByRole('checkbox', { name: 'public', exact: true }).check();
   await page.getByRole('button', { name: 'SAVE', exact: true }).click();
   await expect(page.locator('#save-status')).toHaveText('saved');

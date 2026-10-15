@@ -179,6 +179,48 @@
           "label": "demo"
         }
       ]
+    },
+    {
+      "slug": "categories",
+      "label": "Categories",
+      "labelSingular": "Category",
+      "routable": false,
+      "supports": ["drafts"],
+      "fields": [
+        {
+          "slug": "title",
+          "type": "string",
+          "label": "category",
+          "required": true
+        }
+      ]
+    },
+    {
+      "slug": "category_icons",
+      "label": "Category icons",
+      "labelSingular": "Icon",
+      "routable": false,
+      "supports": ["drafts"],
+      "fields": [
+        {
+          "slug": "title",
+          "type": "string",
+          "label": "icon",
+          "required": true
+        },
+        {
+          "slug": "image",
+          "type": "image",
+          "label": "image",
+          "required": true
+        },
+        {
+          "slug": "category",
+          "type": "string",
+          "label": "subject",
+          "required": true
+        }
+      ]
     }
   ]
 }

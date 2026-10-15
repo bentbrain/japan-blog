@@ -62,5 +62,6 @@ export const categoryIconStatusSchema = z.object({
     'configuration',
   ]),
   canRetry: z.boolean(),
+  url: z.string().optional(),
 });
 export type CategoryIconStatus = z.infer<typeof categoryIconStatusSchema>;
