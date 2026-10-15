@@ -164,18 +164,32 @@ export const onRequest = defineMiddleware(async (context, next) => {
   )
     return Response.json({ error: 'Post required' }, { status: 400 });
   const publicPosts = path === '/' || path.startsWith('/posts/');
+  const newsletterConfirmation = path.startsWith('/newsletter/confirm');
   if (
-    (owner || ownerRoute || publicPosts || privateRender) &&
+    (owner ||
+      ownerRoute ||
+      publicPosts ||
+      privateRender ||
+      newsletterConfirmation) &&
     context.cache.enabled
   )
     context.cache.set(false);
   const response = await next();
-  if (owner || ownerRoute || mediaFile || publicPosts || privateRender) {
+  if (
+    owner ||
+    ownerRoute ||
+    mediaFile ||
+    publicPosts ||
+    privateRender ||
+    newsletterConfirmation
+  ) {
     response.headers.set('Cache-Control', 'private, no-store');
     response.headers.set('CDN-Cache-Control', 'no-store');
     response.headers.set('Cloudflare-CDN-Cache-Control', 'no-store');
   }
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (newsletterConfirmation)
+    response.headers.set('Referrer-Policy', 'no-referrer');
   return response;
 });

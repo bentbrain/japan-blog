@@ -3,7 +3,7 @@
   "entry": [
     "src/live.config.ts",
     "src/pages/**/*.{astro,ts}",
-    "src/plugins/{trip-policy.ts,admin.tsx}",
+    "src/plugins/{trip-policy.ts,admin.tsx,newsletter.ts}",
     "scripts/**/*.ts",
     "tests/**/*.ts",
     "mockups/{server.mjs,review.js}"

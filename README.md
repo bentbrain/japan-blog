@@ -38,6 +38,7 @@ pnpm build
 - `/owner/media`: uploads, capture times, coordinates and multiple categories. Missing metadata keeps an upload unpublished.
 - `/categories`: create categories and browse the generated icon library. Categories can also be created from the media page and selected on any media item. The native CMS has separate Categories and Category icons collections; generated icons are registered as image media. New categories reuse a valid icon with a matching name or supported synonym before queuing generation. Missing or corrupt icons generate through the existing bounded job queue. Regeneration retains earlier icons in the library.
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
+- `/owner/newsletter`: connect Resend, preview the next digest, send a test to the owner inbox and enable or pause the schedule.
 - `/_emdash/admin`: native CMS maintenance, revisions and passkey management.
 
 Native CMS media links under `/media_items/:slug` redirect to `/media/:slug`. Native previews require both a valid preview link and the signed-in owner session. Preview and native edit-mode pages use feedback redaction, disable indexing and prevent caching. Media publication validates the same fields as the public loader, including photo/video kind. The public map fits Japan and all published media locations so pins outside Japan remain reachable.
@@ -69,6 +70,16 @@ Secrets and local data are excluded from Git. Deployment configuration lives in 
 The production account is the sole author. Public account creation and invitations are disabled. First-time passkey setup requires a short-lived private setup cookie. Generate a setup capability and keep it private; clear `SETUP_TOKEN` after registering the owner account.
 
 Email-link sign-in uses EmDash's native Cloudflare email provider and the `EMAIL` sending binding. It sends from `login@auth.jp.bent.build`; Cloudflare Email Sending must be enabled for `auth.jp.bent.build` with its generated DKIM, SPF and return-path records. This sending subdomain is separate from the existing `bent.build` inbound mail forwarding. Passkeys remain available, and email links sign in only to an existing account. Open the emailed link in the browser session you want to authenticate.
+
+## Newsletter
+
+The native `japan-newsletter` EmDash plugin sends through Resend with React Email templates. Public pages have an email signup form. Confirmation links expire after 24 hours and require an explicit button press; opening a link alone never subscribes someone. Subscriber addresses and consent timestamps stay in private plugin storage. Unconfirmed signups expire after seven days. The form has bounded per-address, per-IP and daily confirmation limits.
+
+Connect a full-access Resend key at `/owner/newsletter`. EmDash encrypts it using the existing `EMDASH_ENCRYPTION_KEY`; it is never returned to the client. Connection creates a dedicated Resend segment. Resend Broadcasts handles unsubscribes and delivery suppression. Sending uses `hi@jp.bent.build`, with `Reply-To` set to `OWNER_EMAIL`. The owner inbox is visible to recipients when replying; this does not provision an incoming mailbox for direct messages to `hi@jp.bent.build`.
+
+Automatic sending starts paused. The default is Sunday at 18:00 in `Asia/Tokyo`; the owner can select another weekday/hour or a 1–30 day interval. The existing Cloudflare cron drives the EmDash task every five minutes. Digests contain up to 24 published journal entries not included in a previous digest, including entries added later for an earlier day. Drafts, trashed entries and sample content are excluded. Quiet periods are skipped. Owner test emails do not consume entries or go to subscribers.
+
+Private send records and a revision-fenced lease prevent overlapping dispatch. An interrupted or uncertain send blocks later automatic sends until the owner checks its provider status. A delivered broadcast is reconciled against its saved ID; unknown outcomes never trigger a fresh broadcast automatically. Newsletter preview pages are private and sandboxed, and confirmation pages disable caching and referrers. No extra schema migration or deployment-workflow change is required.
 
 ## Design review and sample assets
 
