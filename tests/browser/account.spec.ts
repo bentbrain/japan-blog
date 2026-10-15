@@ -10,10 +10,9 @@ test('owner account link opens native passkey settings', async ({
   });
   expect(setup.ok()).toBe(true);
   await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
-  await page.waitForURL('**/owner');
-  const account = page
-    .getByRole('navigation', { name: 'Main navigation' })
-    .getByRole('link', { name: 'account', exact: true });
+  await page.waitForURL((url) => url.pathname === '/owner');
+  await page.getByRole('button', { name: 'admin', exact: true }).click();
+  const account = page.getByRole('menuitem', { name: 'account', exact: true });
   await expect(account).toBeVisible();
   await expect(
     page.locator('main').getByRole('link', { name: /account/ }),

@@ -164,10 +164,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   )
     return Response.json({ error: 'Post required' }, { status: 400 });
   const publicPosts = path === '/' || path.startsWith('/posts/');
-  if ((ownerRoute || publicPosts || privateRender) && context.cache.enabled)
+  if (
+    (owner || ownerRoute || publicPosts || privateRender) &&
+    context.cache.enabled
+  )
     context.cache.set(false);
   const response = await next();
-  if (ownerRoute || mediaFile || publicPosts || privateRender) {
+  if (owner || ownerRoute || mediaFile || publicPosts || privateRender) {
     response.headers.set('Cache-Control', 'private, no-store');
     response.headers.set('CDN-Cache-Control', 'no-store');
     response.headers.set('Cloudflare-CDN-Cache-Control', 'no-store');

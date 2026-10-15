@@ -1,6 +1,9 @@
 ---
 import '../styles/globals.css';
 import Pixel from '../components/Pixel.astro';
+import { AdminMenu } from '../components/AdminMenu';
+import { env } from 'cloudflare:workers';
+import { showOwnerNavigation } from '../lib/owner-navigation';
 import { beerCounts } from '../lib/content';
 import { feedbackConfiguration } from '../lib/feedback';
 import { getRequestContext } from 'emdash';
@@ -10,6 +13,11 @@ interface Props {
   privateContent?: boolean;
 }
 const { title = 'jp.bent.build', owner = false } = Astro.props;
+const authenticatedOwner = showOwnerNavigation(
+  Astro.locals.user,
+  env.OWNER_EMAIL,
+  import.meta.env.DEV,
+);
 const cmsContext = getRequestContext();
 const privateContent =
   owner ||
@@ -42,15 +50,15 @@ const feedback = feedbackConfiguration(
     <header
       data-feedback-id="site-header"
       class:list={[
-        'site-header flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-[clamp(1rem,4vw,4rem)] py-3 text-[0.7rem] leading-[1.5] font-bold tracking-[0.05em] min-[601px]:py-0 [&_nav]:order-3 [&_nav]:flex [&_nav]:flex-wrap [&_nav]:w-full [&_nav]:justify-center [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-2 min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline',
-        !owner &&
+        'site-header flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-[clamp(1rem,4vw,4rem)] py-3 text-[0.7rem] leading-[1.5] font-bold tracking-[0.05em] min-[601px]:py-0 [&_nav]:order-3 [&_nav]:flex [&_nav]:flex-wrap [&_nav]:items-center [&_nav]:w-full [&_nav]:justify-center [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-2 min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline',
+        !authenticatedOwner &&
           'min-[360px]:py-0 min-[360px]:[&_nav]:order-none min-[360px]:[&_nav]:w-auto min-[360px]:[&_nav]:border-0 min-[360px]:[&_nav]:p-0',
       ]}
     >
       <a
         class="brand inline-flex items-baseline max-w-full min-[601px]:min-w-fit gap-[0.5em] no-underline min-[601px]:flex-1"
         data-feedback-id="brand"
-        href={owner ? '/owner' : '/'}
+        href="/"
       >
         <img
           src="/brand/favicon.svg#header"
@@ -59,34 +67,23 @@ const feedback = feedbackConfiguration(
           height="21"
           class="h-[1cap] w-auto shrink-0"
         />
-        jp.bent.build{owner ? ' / admin' : ''}
+        jp.bent.build
       </a>
       <nav aria-label="Main navigation" data-feedback-id="navigation">
-        {owner ? (
-          <>
-            <a href="/owner">posts</a>
-            <a href="/owner/media">media</a>
-            <a href="/categories">categories</a>
-            <a href="/owner/export">export</a>
-            <a href="/_emdash/admin/settings/security">account</a>
-          </>
-        ) : (
-          <>
-            <a
-              href="/"
-              aria-current={Astro.url.pathname === '/' ? 'page' : undefined}
-            >
-              blog
-            </a>
-            <a
-              href="/gallery"
-              aria-current={
-                Astro.url.pathname === '/gallery' ? 'page' : undefined
-              }
-            >
-              pics
-            </a>
-          </>
+        <a
+          href="/"
+          aria-current={Astro.url.pathname === '/' ? 'page' : undefined}
+        >
+          blog
+        </a>
+        <a
+          href="/gallery"
+          aria-current={Astro.url.pathname === '/gallery' ? 'page' : undefined}
+        >
+          pics
+        </a>
+        {authenticatedOwner && (
+          <AdminMenu pathname={Astro.url.pathname} client:load />
         )}
       </nav>
       <div
