@@ -9,7 +9,7 @@ import { formatDay, galleryIds } from '../../lib/model';
 const { slug } = Astro.params;
 if (!slug) return Astro.redirect('/404');
 const { entry: post } = await getEmDashEntry('posts', slug);
-if (!post || post.data.status !== 'published') return Astro.redirect('/404');
+if (!post || post.data.status !== 'published') return Astro.rewrite('/404');
 const media = await tripMedia();
 ---
 

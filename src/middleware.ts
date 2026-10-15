@@ -105,7 +105,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
         });
     }
   }
-  const ownerRoute = path.startsWith('/owner') || path.startsWith('/api/trip');
+  const postLifecycle =
+    /^\/_emdash\/api\/content\/posts\/([^/]+)(\/unpublish)?\/?$/.exec(path);
+  const postAction = Boolean(
+    postLifecycle &&
+    ((postLifecycle[2] && context.request.method === 'POST') ||
+      (!postLifecycle[2] && context.request.method === 'DELETE')),
+  );
+  const ownerRoute =
+    path.startsWith('/owner') || path.startsWith('/api/trip') || postAction;
   const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(context.request.method);
   const management =
     /^\/_emdash\/api\/(admin\/users|users|invites|auth\/(invite|signup)|settings\/signup)(?:\/|$)/.test(
@@ -115,7 +123,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (ownerRoute) {
     const user = context.locals.user;
     if (!user || user.role < 50)
-      return path.startsWith('/api/')
+      return path.startsWith('/api/') || postAction
         ? Response.json({ error: 'Sign in required' }, { status: 401 })
         : context.redirect('/_emdash/admin/login?redirect=/owner');
     if (
@@ -125,8 +133,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
     )
       return Response.json({ error: 'Request rejected' }, { status: 403 });
   }
+  if (
+    postAction &&
+    !/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(postLifecycle?.[1] || '')
+  )
+    return Response.json({ error: 'Post required' }, { status: 400 });
+  const publicPosts = path === '/' || path.startsWith('/posts/');
+  if ((ownerRoute || publicPosts) && context.cache.enabled)
+    context.cache.set(false);
   const response = await next();
-  if (ownerRoute || mediaFile) {
+  if (ownerRoute || mediaFile || publicPosts) {
     response.headers.set('Cache-Control', 'private, no-store');
     response.headers.set('CDN-Cache-Control', 'no-store');
     response.headers.set('Cloudflare-CDN-Cache-Control', 'no-store');

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
+import { assertStatus, serverSignals } from './integration-diagnostics';
 
 const base = 'http://127.0.0.1:4390';
 const server = spawn(
@@ -14,12 +15,17 @@ const server = spawn(
   },
 );
 let logs = '';
-server.stdout.on('data', (value: Buffer) => {
-  logs = (logs + value.toString()).slice(-8000);
-});
-server.stderr.on('data', (value: Buffer) => {
-  logs = (logs + value.toString()).slice(-8000);
-});
+const started = Date.now();
+const diagnosticSignals: { atMs: number; signals: string[] }[] = [];
+function captureOutput(value: Buffer) {
+  const output = value.toString();
+  logs = (logs + output).slice(-8000);
+  const signals = serverSignals(output);
+  if (signals.length)
+    diagnosticSignals.push({ atMs: Date.now() - started, signals });
+}
+server.stdout.on('data', captureOutput);
+server.stderr.on('data', captureOutput);
 let cookie = '';
 const item = z.object({
   success: z.literal(true),
@@ -53,8 +59,8 @@ async function request(
     });
     const bytes = await response.arrayBuffer();
     const text = new TextDecoder().decode(bytes);
-    // Dependency optimization can restart workerd while the Vite proxy is
-    // forwarding a request. Retry only its identifiable dispatch error, only
+    // The Vite proxy can lose its internal workerd connection. Preserve the
+    // existing retries for its identifiable dispatch error, only
     // for reads and idempotent setup or denied invitation probes. Application
     // errors and content mutations are never retried.
     if (
@@ -68,6 +74,16 @@ async function request(
       await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
       continue;
     }
+    if (response.status >= 500)
+      await assertStatus(
+        new Response(bytes, {
+          status: response.status,
+          headers: response.headers,
+        }),
+        'below 500',
+        `${method} integration request`,
+        diagnosticSignals,
+      );
     return new Response([204, 304].includes(response.status) ? null : bytes, {
       status: response.status,
       headers: response.headers,
@@ -185,30 +201,34 @@ try {
     );
     assert.equal(anonymous.status, 401);
   }
-  for (const headers of [
-    new Headers({ Cookie: cookie, 'Content-Type': 'application/json' }),
-    new Headers({
-      Cookie: cookie,
-      'Content-Type': 'application/json',
-      Origin: 'https://attacker.invalid',
-      'X-EmDash-Request': '1',
-    }),
-    new Headers({
-      Cookie: cookie,
-      'Content-Type': 'application/json',
-      Origin: base,
-    }),
-  ])
-    assert.equal(
-      (
+  // Exercise consecutive early denials with bodies on the same dev transport.
+  // Each probe is sent once; every status must be 403, including proxy failures.
+  for (let probe = 0; probe < 100; probe++) {
+    for (const headers of [
+      new Headers({ Cookie: cookie, 'Content-Type': 'application/json' }),
+      new Headers({
+        Cookie: cookie,
+        'Content-Type': 'application/json',
+        Origin: 'https://attacker.invalid',
+        'X-EmDash-Request': '1',
+      }),
+      new Headers({
+        Cookie: cookie,
+        'Content-Type': 'application/json',
+        Origin: base,
+      }),
+    ])
+      await assertStatus(
         await fetch(base + '/api/trip/category-icons', {
           method: 'POST',
           headers,
           body: JSON.stringify({ category: 'private fixture' }),
-        })
-      ).status,
-      403,
-    );
+        }),
+        403,
+        `category-icon CSRF rejection probe ${String(probe)}`,
+        diagnosticSignals,
+      );
+  }
   assert.equal(
     (
       await request('/api/trip/category-icons', {
@@ -244,15 +264,15 @@ try {
       Origin: base,
     }),
   ])
-    assert.equal(
-      (
-        await fetch(base + providerPath, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ action: 'resume' }),
-        })
-      ).status,
+    await assertStatus(
+      await fetch(base + providerPath, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'resume' }),
+      }),
       403,
+      'category provider CSRF rejection',
+      diagnosticSignals,
     );
   const providerStatus = await request(providerPath);
   assert.equal(providerStatus.status, 200);
@@ -804,7 +824,166 @@ try {
     document: { type: 'doc', content: [{ type: 'paragraph' }] },
   });
   assert.equal(recovered.status, 200, await recovered.text());
-  await request(`/_emdash/api/content/posts/${postId}`, undefined, 'DELETE');
+  // All lifecycle operations use only this ephemeral D1/R2 fixture.
+  const postPath = `/_emdash/api/content/posts/${postId}`;
+  const beforeActions = item.parse(await (await request(postPath)).json());
+  const mediaBeforeActions: unknown = await (
+    await request(`/_emdash/api/content/media_items/${id}`)
+  ).json();
+  const historyBefore: unknown = await (
+    await request(`${postPath}/revisions`)
+  ).json();
+  const mutationRequests = [
+    { path: `${postPath}/unpublish`, method: 'POST' },
+    { path: postPath, method: 'DELETE' },
+  ];
+  for (const { path, method } of mutationRequests) {
+    assert.equal((await request(path, {}, method, false)).status, 401);
+    for (const headers of [
+      new Headers({ Cookie: cookie, Origin: base }),
+      new Headers({ Cookie: cookie, 'X-EmDash-Request': '1' }),
+      new Headers({
+        Cookie: cookie,
+        'X-EmDash-Request': '1',
+        Origin: 'https://example.invalid',
+      }),
+    ]) {
+      assert.equal((await fetch(base + path, { method, headers })).status, 403);
+    }
+  }
+  assert.ok(
+    (await request(`${postPath}/unpublish`, undefined, 'GET')).status >= 400,
+  );
+  assert.equal(
+    item.parse(await (await request(postPath)).json()).data._rev,
+    beforeActions.data._rev,
+  );
+  for (const badId of [
+    "' OR 1=1 --",
+    'invalid',
+    'posts',
+    '01M4AAAAAAAAAAAAAAAAAAAAAA;DROP',
+  ]) {
+    const path = `/_emdash/api/content/posts/${encodeURIComponent(badId)}`;
+    assert.equal((await request(`${path}/unpublish`, {}, 'POST')).status, 400);
+    assert.equal((await request(path, undefined, 'DELETE')).status, 400);
+  }
+  const unpublished = await request(`${postPath}/unpublish`, {
+    _rev: beforeActions.data._rev,
+  });
+  assert.equal(unpublished.status, 200, await unpublished.text());
+  const draft = item.parse(await (await request(postPath)).json());
+  assert.deepEqual(draft.data.item.data, beforeActions.data.item.data);
+  const publicPost = await request(`/posts/${postId}`, undefined, 'GET', false);
+  assert.equal(publicPost.status, 404);
+  assert.match(publicPost.headers.get('Cache-Control') || '', /no-store/);
+  const afterHome = await request('/', undefined, 'GET', false);
+  assert.match(afterHome.headers.get('Cache-Control') || '', /no-store/);
+  assert.ok(!(await afterHome.text()).includes('Full post body verification'));
+  assert.equal((await request(`/api/trip/posts?id=${postId}`)).status, 200);
+  assert.equal(
+    (await request(`${postPath}/unpublish`, { _rev: beforeActions.data._rev }))
+      .status,
+    409,
+  );
+  const scheduled = await request(`${postPath}/schedule`, {
+    _rev: draft.data._rev,
+    scheduledAt: '2099-10-16T12:00:00Z',
+  });
+  assert.equal(scheduled.status, 200, await scheduled.text());
+  const scheduledPost = item.parse(await (await request(postPath)).json());
+  assert.equal(
+    (await request(`${postPath}/unpublish`, { _rev: scheduledPost.data._rev }))
+      .status,
+    200,
+  );
+  const unscheduled = z
+    .object({
+      data: z.object({
+        item: z.object({
+          status: z.string(),
+          scheduledAt: z.null(),
+          draftRevisionId: z.string(),
+        }),
+      }),
+    })
+    .parse(await (await request(postPath)).json());
+  assert.equal(unscheduled.data.item.status, 'draft');
+  const revisionsAfter = JSON.stringify(
+    await (await request(`${postPath}/revisions`)).json(),
+  );
+  const historyIds = z
+    .object({
+      data: z.object({ items: z.array(z.object({ id: z.string() })) }),
+    })
+    .parse(historyBefore).data.items;
+  for (const revision of historyIds)
+    assert.ok(revisionsAfter.includes(revision.id));
+  const deletedPost = await request(postPath, undefined, 'DELETE');
+  assert.equal(deletedPost.status, 200, await deletedPost.text());
+  assert.equal((await request(postPath)).status, 404);
+  assert.equal(
+    (await request(`/posts/${postId}`, undefined, 'GET', false)).status,
+    404,
+  );
+  const trash = await request('/_emdash/api/content/posts/trash');
+  assert.ok(JSON.stringify(await trash.json()).includes(postId));
+  assert.deepEqual(
+    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+    mediaBeforeActions,
+  );
+  assert.equal(
+    (await request(`/_emdash/api/media/asset/${draftAsset.id}/video.mp4`))
+      .status,
+    200,
+  );
+  assert.equal(
+    (await request(nativeUploaded.url, undefined, 'GET', false)).status,
+    200,
+  );
+  assert.equal(
+    (await request(`/api/trip/posts?id=${rejectedBody.post.id}`)).status,
+    200,
+  );
+  const deletionFixture = item.parse(
+    await (
+      await request('/_emdash/api/content/posts', {
+        slug: `synthetic-deletion-${crypto.randomUUID()}`,
+        data: {
+          title: 'Synthetic published deletion',
+          day: '2099-10-15',
+          gallery: [],
+          content: [],
+        },
+      })
+    ).json(),
+  ).data.item.id;
+  assert.equal((await publish('posts', deletionFixture)).status, 200);
+  assert.equal(
+    (await request(`/posts/${deletionFixture}`, undefined, 'GET', false))
+      .status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(
+        `/_emdash/api/content/posts/${deletionFixture}`,
+        undefined,
+        'DELETE',
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request(`/posts/${deletionFixture}`, undefined, 'GET', false))
+      .status,
+    404,
+  );
+
+  console.log(
+    'Synthetic post lifecycle passed: owner/anonymous, CSRF, malicious IDs, public 404/no-store, drafts/history/schedule, CMS trash and unchanged media/other posts.',
+  );
+
   await request(`/_emdash/api/content/media_items/${id}`, undefined, 'DELETE');
   console.log(
     'Full flow passed: owner auth, CSRF, original privacy, R2 upload/ranges, GPS publication, categories, beer revisions, day exports and rich-text publication.',

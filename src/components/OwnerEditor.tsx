@@ -14,6 +14,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from './ui/alert-dialog';
 import { Checkbox } from './ui/checkbox';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
@@ -53,6 +64,12 @@ function EditorForm({
   const [shopDesign, setShopDesign] = useState(post.data.shop_design ?? null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
+  const busy = useRef(false);
+  const deleted = useRef(false);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
+  const [action, setAction] = useState<'unpublish' | 'delete'>();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [dirty, setDirty] = useState(false);
   const editGeneration = useRef(0);
   function markDirty() {
@@ -112,7 +129,7 @@ function EditorForm({
   }, []);
   useEffect(() => {
     const leave = (event: BeforeUnloadEvent) => {
-      if (dirty) event.preventDefault();
+      if (dirty && !deleted.current) event.preventDefault();
     };
     window.addEventListener('beforeunload', leave);
     return () => {
@@ -121,7 +138,7 @@ function EditorForm({
   }, [dirty]);
   async function save(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editor || saving) return;
+    if (!editor || busy.current) return;
     if (shopDesign && !shopDesignSchema.safeParse(shopDesign).success) {
       setStatus('use a product link from shop.bent.build');
       return;
@@ -131,6 +148,7 @@ function EditorForm({
     const publish =
       submitted.submitter instanceof HTMLButtonElement &&
       submitted.submitter.dataset.publish === 'true';
+    busy.current = true;
     setSaving(true);
     const submittedGeneration = editGeneration.current;
     try {
@@ -166,7 +184,55 @@ function EditorForm({
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Save failed');
     } finally {
+      busy.current = false;
       setSaving(false);
+    }
+  }
+  async function mutatePost(nextAction: 'unpublish' | 'delete') {
+    if (!post.id || busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    setAction(nextAction);
+    setDeleteError('');
+    setStatus('');
+    const submittedGeneration = editGeneration.current;
+    const path = `/_emdash/api/content/posts/${encodeURIComponent(post.id)}`;
+    try {
+      if (nextAction === 'unpublish') {
+        const result = z
+          .object({
+            data: z.object({
+              _rev: z.string(),
+              item: z.object({ status: z.string() }),
+            }),
+          })
+          .parse(await api(`${path}/unpublish`, { _rev: post.revision }));
+        onSaved({
+          ...post,
+          revision: result.data._rev,
+          status: result.data.item.status,
+        });
+        setStatus(
+          [
+            'unpublished',
+            ...(dirty || editGeneration.current !== submittedGeneration
+              ? ['unsaved edits']
+              : []),
+          ].join('\n'),
+        );
+      } else {
+        await api(path, undefined, 'DELETE');
+        deleted.current = true;
+        window.location.assign('/owner');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Request failed';
+      if (nextAction === 'delete') setDeleteError(message);
+      else setStatus(message);
+    } finally {
+      busy.current = false;
+      setSaving(false);
+      setAction(undefined);
     }
   }
   return (
@@ -459,13 +525,76 @@ function EditorForm({
           >
             PUBLISH
           </Button>
-          {post.id && (
+          {post.id && post.status === 'published' && (
             <a
               href={`/posts/${post.id}`}
               className={buttonVariants({ variant: 'link' })}
             >
               VIEW POST
             </a>
+          )}
+          {post.id && (
+            <>
+              <Separator />
+              {(post.status === 'published' || post.status === 'scheduled') && (
+                <Button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    void mutatePost('unpublish');
+                  }}
+                >
+                  {action === 'unpublish' ? 'UNPUBLISHING' : 'UNPUBLISH'}
+                </Button>
+              )}
+              <AlertDialog
+                open={deleteOpen}
+                onOpenChange={(open, details) => {
+                  if (busy.current) {
+                    details.cancel();
+                    return;
+                  }
+                  setDeleteOpen(open);
+                  setDeleteError('');
+                }}
+              >
+                <AlertDialogTrigger
+                  render={<Button type="button" disabled={saving} />}
+                >
+                  DELETE POST
+                </AlertDialogTrigger>
+                <AlertDialogContent initialFocus={cancelDelete}>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>delete post?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      moves this post to trash and removes it from the journal.
+                      media stays in the library.
+                      {dirty && ' unsaved edits will be discarded.'}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  {deleteError && <p role="alert">{deleteError}</p>}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel
+                      ref={cancelDelete}
+                      type="button"
+                      disabled={saving}
+                    >
+                      CANCEL
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      type="button"
+                      variant="default"
+                      disabled={saving}
+                      onClick={() => {
+                        void mutatePost('delete');
+                      }}
+                    >
+                      {action === 'delete' ? 'DELETING' : 'DELETE'}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
           )}
           <p className="whitespace-pre-wrap empty:hidden" role="status">
             {status}
