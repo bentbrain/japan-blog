@@ -84,8 +84,15 @@ test('custom category uses a stable themed fallback and public requests cannot e
   page,
   baseURL,
 }) => {
+  const ownerStatusLoaded = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/trip/category-icons/provider') &&
+      response.request().method() === 'GET',
+  );
   await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/media');
   await page.waitForURL('**/owner/media');
+  // Finish the owner-only mount request before observing public navigation.
+  await ownerStatusLoaded;
   const headers = { Origin: baseURL || '', 'X-EmDash-Request': '1' };
   const created = await page.request.post('/_emdash/api/content/media_items', {
     headers,

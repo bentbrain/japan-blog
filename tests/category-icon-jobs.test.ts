@@ -11,6 +11,8 @@ import {
   claimIconJob,
   drainIconOutbox,
   ownerIconStatuses,
+  ownerIconProviderStatus,
+  resumeIconProvider,
   readyCategoryIcons,
   retryCategoryIcon,
   runCategoryIconJobs,
@@ -1020,4 +1022,228 @@ void test('revocation check bypasses draft overlays and immediately removes unpu
     "UPDATE ec_media_items SET status='published',deleted_at='2099-01-01' WHERE id='revocation'",
   ).run();
   assert.deepEqual(await currentPublishedCategoryNames(env.DB), []);
+});
+
+for (const secondOutcome of ['failed', 'ready', 'uncertain']) {
+  void test(`acknowledged uncertainty follows the latest ${secondOutcome} generation for retry consent`, async () => {
+    await saveCategories(['chained recovery']);
+    await runCategoryIconJobs(environment(), {
+      now: () => now,
+      generate: () => Promise.resolve({ status: 'uncertain' }),
+    });
+    assert.equal(
+      await retryCategoryIcon(
+        environment(),
+        'chained recovery',
+        false,
+        now + 1,
+      ),
+      false,
+    );
+    assert.equal(
+      await retryCategoryIcon(environment(), 'chained recovery', true, now + 1),
+      true,
+    );
+    await runCategoryIconJobs(environment(), {
+      now: () => now + 1,
+      generate: () =>
+        Promise.resolve(
+          secondOutcome === 'ready'
+            ? { status: 'ready', bytes: pngBytes() }
+            : secondOutcome === 'failed'
+              ? { status: 'failed' }
+              : { status: 'uncertain' },
+        ),
+    });
+    const [status] = await ownerIconStatuses(environment(), [
+      'chained recovery',
+    ]);
+    assert.ok(status);
+    assert.equal(status.state, secondOutcome);
+    assert.equal(status.canRetry, true);
+    const retry = await retryCategoryIcon(
+      environment(),
+      'chained recovery',
+      false,
+      now + 2,
+    );
+    assert.equal(retry, secondOutcome !== 'uncertain');
+    if (secondOutcome === 'uncertain')
+      assert.equal(
+        await retryCategoryIcon(
+          environment(),
+          'chained recovery',
+          true,
+          now + 2,
+        ),
+        true,
+      );
+    assert.equal((await latestJob('chained recovery')).generation, 3);
+    assert.equal(await count('jp_icon_attempts'), 2);
+    assert.equal(
+      await retryCategoryIcon(environment(), 'chained recovery', true, now + 3),
+      false,
+    );
+  });
+}
+
+for (const failure of ['removed', 'capped']) {
+  void test(`explicit provider resume recovers a ${failure} configuration category without changing jobs or limits`, async () => {
+    await saveCategories(['configuration recovery'], 'configuration-recovery');
+    const generations = failure === 'capped' ? 3 : 1;
+    for (let generation = 1; generation <= generations; generation++) {
+      await runCategoryIconJobs(environment(), {
+        now: () => now + generation,
+        generate: () => Promise.resolve({ status: 'blocked_configuration' }),
+      });
+      if (generation < generations)
+        assert.equal(
+          await retryCategoryIcon(
+            environment(),
+            'configuration recovery',
+            false,
+            now + generation + 1,
+          ),
+          true,
+        );
+    }
+    if (failure === 'removed')
+      await environment()
+        .DB.prepare(
+          "DELETE FROM ec_media_items WHERE id='configuration-recovery'",
+        )
+        .run();
+    assert.deepEqual(await ownerIconProviderStatus(environment()), {
+      paused: true,
+      canResume: true,
+    });
+    const jobsBefore = await environment()
+      .DB.prepare('SELECT * FROM jp_icon_jobs ORDER BY id')
+      .all();
+    const categoriesBefore = await environment()
+      .DB.prepare('SELECT * FROM jp_categories ORDER BY id')
+      .all();
+    const attemptsBefore = await count('jp_icon_attempts');
+    assert.equal(
+      await resumeIconProvider({ ...environment(), OPENAI_API_KEY: undefined }),
+      false,
+    );
+    assert.equal(
+      await resumeIconProvider({
+        ...environment(),
+        CATEGORY_ICON_MODEL: 'unsupported',
+      }),
+      false,
+    );
+    assert.equal(await resumeIconProvider(environment()), true);
+    assert.equal(await resumeIconProvider(environment()), false);
+    assert.deepEqual(
+      (
+        await environment()
+          .DB.prepare('SELECT * FROM jp_icon_jobs ORDER BY id')
+          .all()
+      ).results,
+      jobsBefore.results,
+    );
+    assert.deepEqual(
+      (
+        await environment()
+          .DB.prepare('SELECT * FROM jp_categories ORDER BY id')
+          .all()
+      ).results,
+      categoriesBefore.results,
+    );
+    assert.equal(await count('jp_icon_attempts'), attemptsBefore);
+    await saveCategories(['queued after provider recovery']);
+    let calls = 0;
+    await runCategoryIconJobs(environment(), {
+      now: () => now + day,
+      generate: () => {
+        calls++;
+        return Promise.resolve({ status: 'failed' });
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(
+      (await latestJob('configuration recovery')).status,
+      'configuration',
+    );
+    assert.equal(
+      (await storedCategory('configuration recovery')).generation,
+      generations,
+    );
+    assert.deepEqual(await ownerIconProviderStatus(environment()), {
+      paused: false,
+      canResume: false,
+    });
+  });
+}
+
+void test('provider resume preserves rolling budget, exhausted attempts and unknown results', async () => {
+  await saveCategories(['unknown before pause']);
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: () => Promise.resolve({ status: 'uncertain' }),
+  });
+  await saveCategories(['rate limit exhausted']);
+  for (const time of [now + 1, now + 120_001, now + 360_001])
+    await runCategoryIconJobs(environment(), {
+      now: () => time,
+      generate: () => Promise.resolve({ status: 'rate_limited' }),
+    });
+  await saveCategories(['pause after budget']);
+  await runCategoryIconJobs(environment(), {
+    now: () => now + 360_002,
+    generate: () => Promise.resolve({ status: 'blocked_configuration' }),
+  });
+  await saveCategories(['waiting for budget']);
+  assert.equal(await count('jp_icon_attempts'), 5);
+  assert.equal(await resumeIconProvider(environment()), true);
+  let calls = 0;
+  const generate: typeof generateCategoryIcon = () => {
+    calls++;
+    return Promise.resolve({ status: 'failed' });
+  };
+  await runCategoryIconJobs(environment(), {
+    now: () => now + 360_003,
+    generate,
+  });
+  assert.equal(calls, 0);
+  assert.equal((await latestJob('unknown before pause')).status, 'uncertain');
+  assert.equal((await latestJob('unknown before pause')).attempts, 1);
+  assert.equal((await latestJob('rate limit exhausted')).status, 'failed');
+  assert.equal((await latestJob('rate limit exhausted')).attempts, 3);
+  await runCategoryIconJobs(environment(), {
+    now: () => now + day + 1,
+    generate,
+  });
+  assert.equal(calls, 1);
+  assert.equal((await latestJob('waiting for budget')).status, 'failed');
+  assert.equal((await latestJob('unknown before pause')).status, 'uncertain');
+  assert.equal((await storedCategory('rate limit exhausted')).generation, 1);
+});
+
+void test('a provider pause cannot hide a fresh unknown result or remove its consent requirement', async () => {
+  await saveCategories(['fresh unknown']);
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: () => Promise.resolve({ status: 'uncertain' }),
+  });
+  await saveCategories(['other configuration error']);
+  await runCategoryIconJobs(environment(), {
+    now: () => now + 1,
+    generate: () => Promise.resolve({ status: 'blocked_configuration' }),
+  });
+  const [status] = await ownerIconStatuses(environment(), ['fresh unknown']);
+  assert.equal(status?.state, 'uncertain');
+  assert.equal(
+    await retryCategoryIcon(environment(), 'fresh unknown', false, now + 2),
+    false,
+  );
+  assert.equal(await resumeIconProvider(environment()), true);
+  assert.equal(
+    await retryCategoryIcon(environment(), 'fresh unknown', false, now + 2),
+    false,
+  );
+  assert.equal((await latestJob('fresh unknown')).generation, 1);
 });

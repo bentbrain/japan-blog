@@ -43,12 +43,17 @@ export function CategoryIconStatus({ names }: { names: string[] }) {
       }
     };
     void load();
+    const refresh = () => {
+      void load();
+    };
+    window.addEventListener('category-icons:changed', refresh);
     const timer = setInterval(() => {
       void load();
     }, 15_000);
     return () => {
       active = false;
       clearInterval(timer);
+      window.removeEventListener('category-icons:changed', refresh);
     };
   }, [identity]);
   const selected = new Set(categoryNames(names).map((name) => name.normalized));
@@ -63,6 +68,7 @@ export function CategoryIconStatus({ names }: { names: string[] }) {
         responseSchema.parse(await api('/api/trip/category-icons')).icons,
       );
       setError('');
+      window.dispatchEvent(new Event('category-icons:changed'));
     } catch (error) {
       setError(error instanceof Error ? error.message : 'could not retry icon');
     } finally {

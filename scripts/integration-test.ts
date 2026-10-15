@@ -217,6 +217,61 @@ try {
     ).status,
     404,
   );
+  const providerPath = '/api/trip/category-icons/provider';
+  for (const method of ['GET', 'POST'])
+    assert.equal(
+      (
+        await request(
+          providerPath,
+          method === 'POST' ? { action: 'resume' } : undefined,
+          method,
+          false,
+        )
+      ).status,
+      401,
+    );
+  for (const headers of [
+    new Headers({ Cookie: cookie, 'Content-Type': 'application/json' }),
+    new Headers({
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+      Origin: 'https://attacker.invalid',
+      'X-EmDash-Request': '1',
+    }),
+    new Headers({
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+      Origin: base,
+    }),
+  ])
+    assert.equal(
+      (
+        await fetch(base + providerPath, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ action: 'resume' }),
+        })
+      ).status,
+      403,
+    );
+  const providerStatus = await request(providerPath);
+  assert.equal(providerStatus.status, 200);
+  assert.match(providerStatus.headers.get('Cache-Control') || '', /no-store/);
+  assert.match(
+    providerStatus.headers.get('CDN-Cache-Control') || '',
+    /no-store/,
+  );
+  assert.deepEqual(await providerStatus.json(), {
+    paused: false,
+    canResume: false,
+  });
+  for (const body of [
+    {},
+    { action: 'retry' },
+    { action: 'resume', acknowledgeCharge: true },
+  ])
+    assert.equal((await request(providerPath, body)).status, 400);
+  assert.equal((await request(providerPath, { action: 'resume' })).status, 409);
   const iconStatus = await request('/api/trip/category-icons');
   assert.match(iconStatus.headers.get('Cache-Control') || '', /no-store/);
   assert.equal(

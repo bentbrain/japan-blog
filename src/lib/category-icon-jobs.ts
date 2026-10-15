@@ -217,6 +217,24 @@ export async function runCategoryIconJobs(
   ]);
 }
 
+// Recovery only opens the provider circuit. It never changes a job, creates a
+// generation, resets a limit, or retries an uncertain result.
+export async function ownerIconProviderStatus(env: IconEnvironment) {
+  const settings = await env.DB.prepare(
+    'SELECT provider_blocked FROM jp_icon_settings WHERE id=1',
+  ).first<{ provider_blocked: number }>();
+  const paused = settings?.provider_blocked === 1;
+  return { paused, canResume: paused && configured(env) };
+}
+
+export async function resumeIconProvider(env: IconEnvironment) {
+  if (!configured(env)) return false;
+  const result = await env.DB.prepare(
+    'UPDATE jp_icon_settings SET provider_blocked=0 WHERE id=1 AND provider_blocked=1',
+  ).run();
+  return result.meta.changes === 1;
+}
+
 export async function ownerIconStatuses(
   env: IconEnvironment,
   names: string[],
@@ -250,10 +268,10 @@ export async function ownerIconStatuses(
       ? 'default'
       : !configured(env)
         ? 'setup'
-        : blocked?.provider_blocked
-          ? 'configuration'
-          : job?.status === 'uncertain'
-            ? 'uncertain'
+        : job?.status === 'uncertain'
+          ? 'uncertain'
+          : blocked?.provider_blocked
+            ? 'configuration'
             : job?.status === 'failed'
               ? 'failed'
               : job?.status === 'configuration'
@@ -287,10 +305,11 @@ export async function retryCategoryIcon(
   const normalized = categoryNames([name])[0]?.normalized;
   if (!normalized || isDefaultCategory(normalized) || !configured(env))
     return false;
-  // Explicit owner retry is the only operation that clears a provider failure.
+  // An explicit category retry can also resume the provider. The separate
+  // resume action does not require a category or spend a generation.
   const result = await env.DB.batch<CategoryRow>([
     env.DB.prepare(
-      `UPDATE jp_categories SET generation=generation+1 WHERE normalized=? AND generation<3 AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE category_id=jp_categories.id AND status IN ('pending','running')) AND (?=1 OR NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE category_id=jp_categories.id AND status='uncertain')) RETURNING *`,
+      `UPDATE jp_categories SET generation=generation+1 WHERE normalized=? AND generation<3 AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE category_id=jp_categories.id AND status IN ('pending','running')) AND (?=1 OR NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE category_id=jp_categories.id AND generation=jp_categories.generation AND status='uncertain')) RETURNING *`,
     ).bind(normalized, acknowledgeCharge ? 1 : 0),
     env.DB.prepare(
       `INSERT INTO jp_icon_jobs(id,category_id,version,model,generation,status,available_at,created_at) SELECT id || ':' || generation,id,?,?,generation,'pending',?,? FROM jp_categories WHERE normalized=? AND changes()=1`,
