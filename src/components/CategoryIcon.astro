@@ -1,30 +1,37 @@
 ---
+import { builtInCategoryIconUrl } from '../lib/category-icons';
 interface Props {
+  name: string;
   url?: string;
 }
-const { url } = Astro.props;
+const { name, url: generatedUrl } = Astro.props;
+const builtInUrl = builtInCategoryIconUrl(name);
+const url = builtInUrl || generatedUrl;
 ---
 
 <span
   class="category-icon relative inline-block size-[1.7em] shrink-0"
   aria-hidden="true"
-  data-icon-url={url}
+  data-icon-url={builtInUrl ? undefined : url}
+  data-builtin-icon={builtInUrl ? name : undefined}
 >
-  <svg
-    viewBox="0 0 16 16"
-    class="absolute inset-0 size-full"
-    shape-rendering="crispEdges"
-  >
-    <path
-      d="M5 4h6v1h1v6h-1v1H5v-1H4V5h1zM6 6v4h4V6z"
-      fill="currentColor"
-      fill-rule="evenodd"
-    />
-  </svg>
+  {!builtInUrl && (
+    <svg
+      viewBox="0 0 16 16"
+      class="absolute inset-0 size-full"
+      shape-rendering="crispEdges"
+    >
+      <path
+        d="M5 4h6v1h1v6h-1v1H5v-1H4V5h1zM6 6v4h4V6z"
+        fill="currentColor"
+        fill-rule="evenodd"
+      />
+    </svg>
+  )}
   {url && (
     <span
-      hidden
-      class="absolute inset-0 bg-current [mask-image:var(--category-icon)] [mask-size:contain] [mask-position:center] [mask-repeat:no-repeat]"
+      hidden={!builtInUrl}
+      class="absolute inset-0 bg-current [image-rendering:pixelated] [mask-image:var(--category-icon)] [mask-mode:alpha] [mask-size:contain] [mask-position:center] [mask-repeat:no-repeat]"
       style={`--category-icon:url("${url}")`}
       data-generated-icon
     />

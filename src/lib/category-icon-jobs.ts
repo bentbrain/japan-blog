@@ -1,5 +1,6 @@
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import {
+  builtInCategoryNames,
   categoryNames,
   iconHash,
   iconModel,
@@ -128,11 +129,13 @@ export async function claimIconJob(env: IconEnvironment, now = Date.now()) {
     'SELECT provider_blocked FROM jp_icon_settings WHERE id=1',
   ).first<{ provider_blocked: number }>();
   if (blocked?.provider_blocked) return null;
+  const builtIns = builtInCategoryNames();
   const token = crypto.randomUUID();
   const result = await env.DB.batch<JobRow>([
     env.DB.prepare(
-      `UPDATE jp_icon_jobs SET status='running', attempts=attempts+1, lease_token=?, lease_until=? WHERE id=(SELECT id FROM jp_icon_jobs WHERE status='pending' AND available_at<=? AND attempts<3 ORDER BY available_at,created_at,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE status='running') AND (SELECT COUNT(*) FROM jp_icon_attempts WHERE started_at>?)<5 RETURNING *`,
-    ).bind(token, now + 180_000, now, now - 86_400_000),
+      // Keep pre-upgrade built-in jobs/history intact, but never dispatch them.
+      `UPDATE jp_icon_jobs SET status='running', attempts=attempts+1, lease_token=?, lease_until=? WHERE id=(SELECT j.id FROM jp_icon_jobs j JOIN jp_categories c ON c.id=j.category_id WHERE j.status='pending' AND j.available_at<=? AND j.attempts<3 AND c.normalized NOT IN (${builtIns.map(() => '?').join(',')}) ORDER BY j.available_at,j.created_at,j.id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE status='running') AND (SELECT COUNT(*) FROM jp_icon_attempts WHERE started_at>?)<5 RETURNING *`,
+    ).bind(token, now + 180_000, now, ...builtIns, now - 86_400_000),
     env.DB.prepare(
       `INSERT INTO jp_icon_attempts(token,job_id,started_at) SELECT ?,id,? FROM jp_icon_jobs WHERE lease_token=? AND status='running'`,
     ).bind(token, now, token),

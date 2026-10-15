@@ -3,7 +3,6 @@ import Site from '../layouts/Site.astro';
 import { buttonVariants } from '../components/ui/button';
 import MediaTile from '../components/MediaTile.astro';
 import ShopAd from '../components/ShopAd.astro';
-import Pixel from '../components/Pixel.astro';
 import CategoryIcon from '../components/CategoryIcon.astro';
 import { tripMedia } from '../lib/content';
 import { env } from 'cloudflare:workers';
@@ -50,16 +49,12 @@ const media = allMedia.filter(
           }
           aria-current={category === name ? 'page' : undefined}
         >
-          {name !== 'all' &&
-            (['food', 'shopping', 'landscape', 'beer'].includes(
-              normalizeCategory(name)?.normalized || '',
-            ) ? (
-              <Pixel name={normalizeCategory(name)?.normalized} centerPaint />
-            ) : (
-              <CategoryIcon
-                url={icons.get(normalizeCategory(name)?.normalized || '')}
-              />
-            ))}
+          {name !== 'all' && (
+            <CategoryIcon
+              name={normalizeCategory(name)?.normalized || ''}
+              url={icons.get(normalizeCategory(name)?.normalized || '')}
+            />
+          )}
           {name}
         </a>
       ))}
