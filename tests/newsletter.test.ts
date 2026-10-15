@@ -526,6 +526,57 @@ void test('digests preserve every photo, place the linked shirt after photos and
   assert.ok(!withoutDesign.html.includes('SHOP DESIGN'));
   assert.ok(withoutDesign.html.includes('shop.bent.build ↗'));
 });
+void test('digest headings retain trip numbering across already-sent entries and preserve existing day titles', async () => {
+  const f = fixture();
+  const first = post('first');
+  first.data.day = '2026-10-10';
+  f.posts.push(first, post('later'));
+  await f.storage.sent.put('first', { runId: 'previous-week' });
+  const posts = await pendingDigestPosts(f.ctx);
+  assert.equal(posts[0]?.title, 'day 6: synthetic entry later');
+  const later = f.posts[1];
+  assert.ok(later);
+  later.data.title = 'day 9: owner title';
+  assert.equal(
+    (await pendingDigestPosts(f.ctx))[0]?.title,
+    'day 9: owner title',
+  );
+});
+
+void test('photo changes after broadcast preparation prevent sending the saved snapshot', async () => {
+  const f = fixture();
+  await due(f);
+  f.posts.push(post('one'));
+  let version = 'original';
+  f.ctx.assets = {
+    prepare: () =>
+      Promise.resolve({
+        images: [
+          {
+            src: `https://jp.bent.build/${version}.jpg`,
+            alt: 'published photo',
+            width: 560,
+            height: 400,
+          },
+        ],
+      }),
+    read: () => Promise.resolve(null),
+  };
+  f.setRespond((call) => {
+    if (call.path === '/broadcasts') version = 'changed';
+    return Promise.resolve(
+      Response.json({ id: 'provider-id', status: 'draft' }),
+    );
+  });
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  assert.ok(!f.calls.some((call) => call.path.endsWith('/send')));
+  await checkNewsletterRun(f.ctx);
+  await assert.rejects(
+    configureNewsletter(f.ctx, { action: 'resume' }, 'owner@example.com'),
+    /Delivery still needs checking/,
+  );
+  assert.ok(!f.calls.some((call) => call.path.endsWith('/send')));
+});
 void test('cleanup removes expired confirmations and unconfirmed addresses without removing confirmed subscriptions', async () => {
   const f = fixture();
   await configured(f);

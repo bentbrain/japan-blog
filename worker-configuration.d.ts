@@ -4,6 +4,7 @@ interface __BaseEnv_Env {
 	SESSION: KVNamespace;
 	MEDIA: R2Bucket;
 	DB: D1Database;
+	IMAGES: ImagesBinding;
 	EMDASH_ENCRYPTION_KEY: string;
 	OWNER_EMAIL: string;
 	SETUP_TOKEN: string;

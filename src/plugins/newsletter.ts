@@ -1,5 +1,7 @@
 import { definePlugin } from 'emdash';
 import { env } from 'cloudflare:workers';
+import { pluginResponse } from 'emdash/plugin';
+import { newsletterContext } from '../lib/newsletter-runtime';
 import {
   configureNewsletter,
   confirmSubscription,
@@ -14,9 +16,14 @@ import { newsletterUrl } from '../lib/newsletter-model';
 export function createPlugin() {
   return definePlugin({
     id: 'japan-newsletter',
-    version: '1.0.0',
-    capabilities: ['content:read', 'network:request'],
-    allowedHosts: ['api.resend.com'],
+    version: '1.1.0',
+    capabilities: [
+      'content:read',
+      'media:read',
+      'media:bytes:read',
+      'network:request',
+    ],
+    allowedHosts: ['api.resend.com', 'shop.bent.build'],
     storage: {
       subscribers: { indexes: ['confirmed', 'requestedAt'] },
       confirmations: { indexes: ['expiresAt'] },
@@ -34,9 +41,30 @@ export function createPlugin() {
       'plugin:activate': async (_event, ctx) => {
         await ctx.cron?.schedule('digest', { schedule: '*/5 * * * *' });
       },
-      cron: newsletterCron(() => env.OWNER_EMAIL),
+      cron: newsletterCron(() => env.OWNER_EMAIL, newsletterContext),
     },
     routes: {
+      image: {
+        public: true,
+        methods: ['GET'],
+        request: { body: 'none' },
+        response: 'raw',
+        handler: async (ctx) => {
+          const query = new URL(ctx.request.url).searchParams;
+          try {
+            const bytes = await newsletterContext(ctx).assets?.read(
+              query.get('post') || '',
+              query.get('key') || '',
+            );
+            if (bytes)
+              return pluginResponse({
+                headers: { 'Content-Type': 'image/jpeg' },
+                body: { kind: 'bytes', value: bytes },
+              });
+          } catch {}
+          return pluginResponse({ status: 404 });
+        },
+      },
       preview: {
         methods: ['GET'],
         handler: async (ctx) => {
@@ -47,7 +75,14 @@ export function createPlugin() {
           )
             throw new Error('Owner account required');
           return digestEmail(
-            await pendingDigestPosts(ctx),
+            await pendingDigestPosts(
+              newsletterContext(
+                ctx,
+                import.meta.env.DEV
+                  ? new URL(ctx.request.url).origin
+                  : newsletterUrl,
+              ),
+            ),
             newsletterUrl,
             true,
           );
@@ -93,7 +128,14 @@ export function createPlugin() {
             (!import.meta.env.DEV && ctx.user.email !== env.OWNER_EMAIL)
           )
             throw new Error('Owner account required');
-          return newsletterStatus(ctx);
+          return newsletterStatus(
+            newsletterContext(
+              ctx,
+              import.meta.env.DEV
+                ? new URL(ctx.request.url).origin
+                : newsletterUrl,
+            ),
+          );
         },
       },
       manage: {
@@ -112,7 +154,12 @@ export function createPlugin() {
           )
             throw new Error('Request rejected');
           return configureNewsletter(
-            ctx,
+            newsletterContext(
+              ctx,
+              import.meta.env.DEV
+                ? new URL(ctx.request.url).origin
+                : newsletterUrl,
+            ),
             ctx.input,
             import.meta.env.DEV ? ctx.user.email : env.OWNER_EMAIL,
           );

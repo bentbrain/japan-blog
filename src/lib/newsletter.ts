@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import type { PluginContext, StorageCollection, ContentAccess } from 'emdash';
+import type {
+  PluginContext,
+  StorageCollection,
+  ContentAccess,
+  MediaAccess,
+} from 'emdash';
 import { confirmationEmail, digestEmail } from '../emails/newsletter';
 import {
   newsletterExcerpt,
@@ -10,7 +15,9 @@ import {
   nextNewsletterSend,
   type DigestPost,
 } from './newsletter-model';
-import { daySchema } from './model';
+import { daySchema, tokyoDay } from './model';
+import { storyTitle } from './story';
+import type { NewsletterAssets } from './newsletter-assets';
 
 const hour = 3600_000;
 const subscriberSchema = z.object({
@@ -66,6 +73,8 @@ export type NewsletterContext = {
     get(key: string): Promise<unknown>;
   };
   content?: Pick<ContentAccess, 'get' | 'list'>;
+  media?: Pick<MediaAccess, 'get' | 'readBytes'>;
+  assets?: NewsletterAssets;
   http?: PluginContext['http'];
   cron?: PluginContext['cron'];
   log: Pick<PluginContext['log'], 'warn'>;
@@ -319,10 +328,71 @@ export async function confirmSubscription(
   }
 }
 
+async function newsletterFirstDay(ctx: NewsletterContext) {
+  const days: string[] = [];
+  for (const collection of ['posts', 'media_items', 'beers']) {
+    let cursor: string | undefined;
+    do {
+      const page = await ctx.content?.list(collection, {
+        where: { status: 'published' },
+        limit: 100,
+        cursor,
+        orderBy: {
+          [collection === 'media_items' ? 'captured_at' : 'day']: 'asc',
+        },
+      });
+      if (!page) break;
+      const count = days.length;
+      for (const item of page.items) {
+        if (item.status !== 'published' || item.data.demo) continue;
+        const value =
+          collection === 'media_items'
+            ? z
+                .union([z.iso.datetime({ offset: true }), z.date()])
+                .safeParse(item.data.captured_at)
+            : daySchema.safeParse(item.data.day);
+        if (value.success)
+          days.push(
+            collection === 'media_items'
+              ? tokyoDay(new Date(value.data))
+              : String(value.data),
+          );
+      }
+      if (days.length > count) break;
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+  }
+  return days.sort()[0];
+}
+
+async function newsletterPost(
+  ctx: NewsletterContext,
+  item: NonNullable<Awaited<ReturnType<ContentAccess['get']>>>,
+  firstDay: string | undefined,
+): Promise<DigestPost | null> {
+  if (item.status !== 'published' || !item.slug || item.data.demo) return null;
+  const parsed = z
+    .object({ title: z.string(), day: daySchema })
+    .safeParse(item.data);
+  if (!parsed.success) return null;
+  const { day, title } = parsed.data;
+  return {
+    id: item.id,
+    title: /^day \d+: /i.test(title)
+      ? title
+      : storyTitle(day, firstDay || day, title),
+    day,
+    url: `${newsletterUrl}/posts/${encodeURIComponent(item.slug)}`,
+    excerpt: newsletterExcerpt(item.data.content),
+    ...(await ctx.assets?.prepare(item)),
+  };
+}
+
 export async function pendingDigestPosts(
   ctx: NewsletterContext,
 ): Promise<DigestPost[]> {
   if (!ctx.content) throw new Error('Newsletter content unavailable');
+  const firstDay = await newsletterFirstDay(ctx);
   const posts: DigestPost[] = [];
   let cursor: string | undefined;
   do {
@@ -344,16 +414,9 @@ export async function pendingDigestPosts(
         sent.has(item.id)
       )
         continue;
-      const parsed = z
-        .object({ title: z.string(), day: daySchema })
-        .safeParse(item.data);
-      if (!parsed.success) continue;
-      posts.push({
-        id: item.id,
-        ...parsed.data,
-        url: `${newsletterUrl}/posts/${encodeURIComponent(item.slug)}`,
-        excerpt: newsletterExcerpt(item.data.content),
-      });
+      const post = await newsletterPost(ctx, item, firstDay);
+      if (!post) continue;
+      posts.push(post);
       if (posts.length === 24) return posts;
     }
     cursor = page.hasMore ? page.cursor : undefined;
@@ -447,6 +510,7 @@ async function resumeNewsletterRun(ctx: NewsletterContext) {
     if (broadcast.status === 'draft') {
       // A previously prepared draft may contain entries that were later
       // unpublished. Check current live entries before any recovery send.
+      const firstDay = await newsletterFirstDay(ctx);
       for (const id of run.postIds) {
         const post = await ctx.content?.get('posts', id);
         if (
@@ -457,13 +521,7 @@ async function resumeNewsletterRun(ctx: NewsletterContext) {
           !run.postHashes ||
           run.postHashes[id] !==
             (await newsletterHash(
-              JSON.stringify({
-                id: post.id,
-                title: post.data.title,
-                day: post.data.day,
-                url: `${newsletterUrl}/posts/${encodeURIComponent(post.slug)}`,
-                excerpt: newsletterExcerpt(post.data.content),
-              }),
+              JSON.stringify(await newsletterPost(ctx, post, firstDay)),
             ))
         )
           throw new Error('Publication changed');
@@ -556,13 +614,16 @@ async function discardNewsletterRun(ctx: NewsletterContext) {
   }
 }
 
-export function newsletterCron(ownerEmail: () => string) {
+export function newsletterCron(
+  ownerEmail: () => string,
+  prepare: (ctx: NewsletterContext) => NewsletterContext = (ctx) => ctx,
+) {
   return {
     timeout: 90_000,
     async handler(event: { name: string }, ctx: NewsletterContext) {
       if (event.name !== 'digest') return;
       try {
-        await runNewsletter(ctx, ownerEmail());
+        await runNewsletter(prepare(ctx), ownerEmail());
         await cleanupNewsletter(ctx);
       } catch {
         ctx.log.warn('newsletter_schedule_failed');
@@ -649,17 +710,15 @@ export async function runNewsletter(
       await runs.put(id, sending);
       // Recheck the live records immediately before dispatch. Staged revisions
       // and entries unpublished during preparation never enter a send.
+      const firstDay = await newsletterFirstDay(ctx);
       for (const post of posts) {
         const live = await ctx.content?.get('posts', post.id);
         if (
           !live ||
           live.status !== 'published' ||
           live.data.demo ||
-          live.data.title !== post.title ||
-          live.data.day !== post.day ||
-          `${newsletterUrl}/posts/${encodeURIComponent(live.slug ?? '')}` !==
-            post.url ||
-          newsletterExcerpt(live.data.content) !== post.excerpt
+          JSON.stringify(await newsletterPost(ctx, live, firstDay)) !==
+            JSON.stringify(post)
         )
           throw new Error('Publication changed');
       }

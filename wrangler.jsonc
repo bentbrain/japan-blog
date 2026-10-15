@@ -5,6 +5,7 @@
   "main": "./src/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  "images": { "binding": "IMAGES" },
   "send_email": [
     {
       "name": "EMAIL",

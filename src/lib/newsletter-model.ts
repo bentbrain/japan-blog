@@ -16,6 +16,7 @@ export type NewsletterSettings = z.infer<typeof newsletterSettingsSchema>;
 const newsletterImageSchema = z.object({
   src: z.union([
     z.url({ protocol: /^https$/ }),
+    z.url({ protocol: /^http$/, hostname: /^(localhost|127\.0\.0\.1)$/ }),
     z.string().regex(/^cid:[a-zA-Z0-9._-]+$/),
   ]),
   alt: z.string().max(300),

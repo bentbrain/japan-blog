@@ -1,6 +1,112 @@
 import { expect, test } from '@playwright/test';
+import { z } from 'zod';
+import { readFile } from 'node:fs/promises';
+import { newsletterJpeg } from '../../src/lib/newsletter-image';
+import { newsletterStatusSchema } from '../../src/lib/newsletter-model';
 
 const plugin = '/_emdash/api/plugins/japan-newsletter';
+
+test('published uploaded photos reach the native image binding and stop serving when the post is unpublished', async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL ?? '' };
+  await page.request.post('/_emdash/api/setup/dev-bypass', {
+    headers,
+    data: {},
+  });
+  await page.request.get('/_emdash/api/auth/dev-bypass?redirect=/');
+  const buffer = await readFile('public/demo/japan.jpg');
+  const file = {
+    name: 'synthetic-newsletter.jpg',
+    mimeType: 'image/jpeg',
+    buffer,
+  };
+  const uploaded = await page.request.post('/api/trip/upload', {
+    headers,
+    multipart: { original: file, display: file, poster: file },
+  });
+  expect(uploaded.status()).toBe(201);
+  const media = z
+    .object({
+      data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
+    })
+    .parse(await uploaded.json()).data;
+  const published = await page.request.patch('/api/trip/media', {
+    headers,
+    data: {
+      id: media.item.id,
+      revision: media._rev,
+      publish: true,
+      metadata: {
+        title: 'synthetic newsletter photo',
+        captured_at: '2026-10-15T20:15:00+09:00',
+        latitude: 35.6895,
+        longitude: 139.6917,
+        place: 'synthetic location',
+        categories: [],
+      },
+    },
+  });
+  expect(published.status()).toBe(200);
+  const created = await page.request.post('/_emdash/api/content/posts', {
+    headers,
+    data: {
+      slug: `synthetic-newsletter-${crypto.randomUUID()}`,
+      data: {
+        title: 'day 1: synthetic newsletter',
+        day: '2026-10-15',
+        gallery: [media.item.id],
+      },
+    },
+  });
+  expect(created.status()).toBe(201);
+  const post = z
+    .object({
+      data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
+    })
+    .parse(await created.json()).data;
+  expect(
+    (
+      await page.request.post(
+        `/_emdash/api/content/posts/${post.item.id}/publish`,
+        { headers, data: { _rev: post._rev } },
+      )
+    ).ok(),
+  ).toBe(true);
+  const owner = await page.request.get(`${plugin}/owner`, { headers });
+  expect(owner.status()).toBe(200);
+  const status = z
+    .object({ data: newsletterStatusSchema })
+    .parse(await owner.json()).data;
+  const photo = status.posts.find((p) => p.id === post.item.id)?.images?.[0];
+  expect(photo).toBeDefined();
+  if (!photo) return;
+  const anonymous = await browser.newContext({ baseURL });
+  try {
+    const image = await anonymous.request.get(photo.src);
+    expect(image.status()).toBe(200);
+    expect(image.headers()['content-type']).toBe('image/jpeg');
+    expect(image.headers()['cache-control']).toContain('no-store');
+    const bytes = Uint8Array.from(await image.body());
+    const jpeg = newsletterJpeg(bytes);
+    expect(bytes.length).toBeLessThanOrEqual(150_000);
+    expect(jpeg.width).toBeLessThanOrEqual(1120);
+    expect(jpeg.bytes).toEqual(bytes);
+    expect(
+      (
+        await page.request.post(
+          `/_emdash/api/content/posts/${post.item.id}/unpublish`,
+          { headers },
+        )
+      ).ok(),
+    ).toBe(true);
+    expect((await anonymous.request.get(photo.src)).status()).toBe(404);
+  } finally {
+    await anonymous.close();
+  }
+});
 
 test('public signup is accessible, reports unavailable transport honestly and blocks owner access', async ({
   page,
