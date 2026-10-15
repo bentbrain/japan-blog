@@ -630,6 +630,8 @@ test('category-only edits retain capture seconds and milliseconds', async ({
         item: z.object({
           data: z.object({
             captured_at: z.string(),
+            latitude: z.number(),
+            longitude: z.number(),
             categories: z.array(z.string()),
           }),
         }),
@@ -638,7 +640,20 @@ test('category-only edits retain capture seconds and milliseconds', async ({
     .parse(await saved.json()).data.item.data;
   expect(metadata.categories).toContain('shopping');
   expect(metadata.captured_at).toBe(captured);
-  await page.getByLabel('captured in japan').fill('2026-10-16T00:01:07.456');
+  expect(metadata.latitude).toBe(35.6895);
+  expect(metadata.longitude).toBe(139.6917);
+  await expect(page.locator('#metadata time')).toHaveAttribute(
+    'datetime',
+    captured,
+  );
+  await expect(
+    page.locator(
+      '#metadata input[name="captured"],#metadata input[name="latitude"],#metadata input[name="longitude"]',
+    ),
+  ).toHaveCount(0);
+  await page
+    .getByLabel('place', { exact: true })
+    .fill('synthetic changed place');
   const secondSave = page.waitForResponse(
     (response) =>
       response.url().endsWith('/api/trip/media') &&
@@ -654,11 +669,23 @@ test('category-only edits retain capture seconds and milliseconds', async ({
     z
       .object({
         data: z.object({
-          item: z.object({ data: z.object({ captured_at: z.string() }) }),
+          item: z.object({
+            data: z.object({
+              captured_at: z.string(),
+              latitude: z.number(),
+              longitude: z.number(),
+              place: z.string(),
+            }),
+          }),
         }),
       })
-      .parse(await edited.json()).data.item.data.captured_at,
-  ).toBe('2026-10-15T15:01:07.456Z');
+      .parse(await edited.json()).data.item.data,
+  ).toEqual({
+    captured_at: captured,
+    latitude: 35.6895,
+    longitude: 139.6917,
+    place: 'synthetic changed place',
+  });
 });
 
 test('cancelling PNG export during loading or saving prevents a download', async ({
