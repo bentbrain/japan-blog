@@ -13,7 +13,19 @@ import type { IconEnvironment } from './category-icon-jobs';
 import { iconAssets, validIconAsset } from './icon-library';
 import { z } from 'zod';
 
-type CMS = App.Locals['emdash'];
+type CMS = Pick<
+  App.Locals['emdash'],
+  | 'db'
+  | 'handleContentList'
+  | 'handleContentGetIncludingTrashed'
+  | 'handleMediaCreate'
+> & {
+  // Native runtime policy rejections carry structured details that differ
+  // from Astro's HTTP envelope. Synchronization only consumes success here.
+  handleContentCreate(
+    ...args: Parameters<App.Locals['emdash']['handleContentCreate']>
+  ): Promise<{ success: boolean }>;
+};
 const definitions: {
   slug: string;
   label: string;
@@ -113,7 +125,7 @@ export async function registerCategory(env: IconEnvironment, label: string) {
 export async function categoryCollection(
   env: IconEnvironment,
   cms: CMS,
-  user: NonNullable<App.Locals['user']>,
+  user: Pick<NonNullable<App.Locals['user']>, 'id' | 'role'>,
 ) {
   await ensureCollections(cms);
   await drainIconOutbox(env);
@@ -145,15 +157,22 @@ export async function categoryCollection(
   const names = await savedCategoryNames(env);
   for (const name of categoryNames(names)) {
     if (represented.has(name.normalized)) continue;
+    const slug = await iconHash(name.normalized);
+    // Trashed records still reserve their slugs. Preserve that tombstone and
+    // media's saved labels instead of recreating or restoring content on reads.
+    if (
+      (await cms.handleContentGetIncludingTrashed('categories', slug)).success
+    )
+      continue;
     const result = await cms.handleContentCreate('categories', {
-      slug: await iconHash(name.normalized),
+      slug,
       data: { title: name.label },
       actor,
     });
     if (
       !result.success &&
       !(
-        await cms.handleContentGet(
+        await cms.handleContentGetIncludingTrashed(
           'categories',
           await iconHash(name.normalized),
         )
@@ -167,7 +186,11 @@ export async function categoryCollection(
     const bytes = await validIconAsset(env, asset);
     if (!bytes) continue;
     const slug = await iconHash(asset.storage_key);
-    if (!library.some((item) => item.slug === slug)) {
+    if (
+      !library.some((item) => item.slug === slug) &&
+      !(await cms.handleContentGetIncludingTrashed('category_icons', slug))
+        .success
+    ) {
       let media = await cms.db
         .selectFrom('media')
         .select('id')
@@ -184,10 +207,15 @@ export async function categoryCollection(
           storageKey: asset.storage_key,
           authorId: user.id,
         });
-        if (!created.success) throw new Error('Could not save icon media');
-        media = z
-          .object({ item: z.object({ id: z.string() }) })
-          .parse(created.data).item;
+        media = created.success
+          ? z.object({ item: z.object({ id: z.string() }) }).parse(created.data)
+              .item
+          : await cms.db
+              .selectFrom('media')
+              .select('id')
+              .where('storage_key', '=', asset.storage_key)
+              .executeTakeFirst();
+        if (!media) throw new Error('Could not save icon media');
       }
       const created = await cms.handleContentCreate('category_icons', {
         slug,
@@ -200,7 +228,8 @@ export async function categoryCollection(
       });
       if (
         !created.success &&
-        !(await cms.handleContentGet('category_icons', slug)).success
+        !(await cms.handleContentGetIncludingTrashed('category_icons', slug))
+          .success
       )
         throw new Error('Could not save icon collection');
     }

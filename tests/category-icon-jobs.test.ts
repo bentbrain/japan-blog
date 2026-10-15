@@ -65,6 +65,8 @@ async function resetSchema() {
     DROP TABLE IF EXISTS jp_icon_settings;
     DROP TABLE IF EXISTS ec_media_items;
     DROP TABLE IF EXISTS revisions;
+    DROP TABLE IF EXISTS media;
+    CREATE TABLE media(id TEXT PRIMARY KEY,storage_key TEXT);
     CREATE TABLE ec_media_items (
       id TEXT PRIMARY KEY, categories TEXT, draft_revision_id TEXT,
       status TEXT NOT NULL DEFAULT 'draft', deleted_at TEXT,
@@ -1706,4 +1708,38 @@ void test('missing or corrupt library assets and mismatched modifiers queue a ne
   await drainIconOutbox(environment(), now + 2);
   assert.equal((await storedCategory('noodles')).ready_key, null);
   assert.equal((await latestJob('noodles')).status, 'pending');
+});
+
+void test('dispatch candidate beyond the first fifty pending rows reuses its icon before spending', async () => {
+  await saveCategories(['ramen']);
+  await drainIconOutbox(environment(), now);
+  const targetId = createHash('sha256').update('noodles').digest('hex');
+  const waiting: string[] = [];
+  for (let index = 0; waiting.length < 50; index++) {
+    const label = `waiting fixture ${String(index)}`;
+    if (createHash('sha256').update(label).digest('hex') > targetId)
+      waiting.push(label);
+  }
+  for (const label of [...waiting, 'noodles']) {
+    await saveCategories([label]);
+    await drainIconOutbox(environment(), now + 1);
+  }
+  await runCategoryIconJobs(environment(), {
+    now: () => now,
+    generate: () => Promise.resolve({ status: 'ready', bytes: pngBytes() }),
+  });
+  const calls: string[] = [];
+  await runCategoryIconJobs(environment(), {
+    now: () => now + 2,
+    generate: (input) => {
+      calls.push(input.category.normalized);
+      return Promise.resolve({ status: 'failed' });
+    },
+  });
+  assert.equal(calls.includes('noodles'), false);
+  assert.equal(
+    (await storedCategory('noodles')).ready_key,
+    (await storedCategory('ramen')).ready_key,
+  );
+  assert.equal((await latestJob('noodles')).attempts, 0);
 });

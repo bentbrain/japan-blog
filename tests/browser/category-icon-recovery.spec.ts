@@ -115,6 +115,9 @@ test.beforeEach(async () => {
     envFiles: [],
   });
   await env().DB.batch([
+    env().DB.prepare(
+      'CREATE TABLE media(id TEXT PRIMARY KEY,storage_key TEXT)',
+    ),
     env().DB.prepare('CREATE TABLE revisions(id TEXT PRIMARY KEY,data TEXT)'),
     env().DB.prepare(
       "CREATE TABLE ec_media_items(id TEXT PRIMARY KEY,categories TEXT,draft_revision_id TEXT,status TEXT DEFAULT 'draft',deleted_at TEXT)",

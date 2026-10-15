@@ -17,3 +17,8 @@ BEGIN
   INSERT OR IGNORE INTO jp_icon_assets(storage_key,category_id,normalized,label,version)
   VALUES(NEW.ready_key,NEW.id,NEW.normalized,NEW.label,NEW.ready_version);
 END;
+--> statement-breakpoint
+-- Ordinary uploads keep their existing behavior. Generated icons have one
+-- durable media identity even when owner requests register them concurrently.
+CREATE UNIQUE INDEX IF NOT EXISTS jp_icon_media_storage_key
+ON media(storage_key) WHERE storage_key LIKE 'category-icons/%';

@@ -146,17 +146,51 @@ export async function claimIconJob(env: IconEnvironment, now = Date.now()) {
   ).first<{ provider_blocked: number }>();
   if (blocked?.provider_blocked) return null;
   const builtIns = builtInCategoryNames();
-  const token = crypto.randomUUID();
-  const result = await env.DB.batch<JobRow>([
-    env.DB.prepare(
-      // Keep pre-upgrade built-in jobs/history intact, but never dispatch them.
-      `UPDATE jp_icon_jobs SET status='running', attempts=attempts+1, lease_token=?, lease_until=? WHERE id=(SELECT j.id FROM jp_icon_jobs j JOIN jp_categories c ON c.id=j.category_id WHERE j.status='pending' AND j.available_at<=? AND j.attempts<3 AND c.normalized NOT IN (${builtIns.map(() => '?').join(',')}) ORDER BY j.available_at,j.created_at,j.id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE status='running') AND (SELECT COUNT(*) FROM jp_icon_attempts WHERE started_at>?)<5 RETURNING *`,
-    ).bind(token, now + 180_000, now, ...builtIns, now - 86_400_000),
-    env.DB.prepare(
-      `INSERT INTO jp_icon_attempts(token,job_id,started_at) SELECT ?,id,? FROM jp_icon_jobs WHERE lease_token=? AND status='running'`,
-    ).bind(token, now, token),
-  ]);
-  return result[0]?.results[0] || null;
+  // Check the actual ordered candidate, and claim that exact ID. A competing
+  // worker cannot substitute an unchecked job while storage validation awaits.
+  for (let inspected = 0; inspected < 50; inspected++) {
+    const candidate = await env.DB.prepare(
+      `SELECT j.*,c.normalized,c.ready_key FROM jp_icon_jobs j JOIN jp_categories c ON c.id=j.category_id WHERE j.status='pending' AND j.available_at<=? AND j.attempts<3 AND c.normalized NOT IN (${builtIns.map(() => '?').join(',')}) ORDER BY j.available_at,j.created_at,j.id LIMIT 1`,
+    )
+      .bind(now, ...builtIns)
+      .first<JobRow & { normalized: string; ready_key: string | null }>();
+    if (!candidate) return null;
+    if (
+      candidate.generation === 1 &&
+      candidate.attempts === 0 &&
+      !candidate.ready_key
+    ) {
+      const asset = await matchingIcon(env, candidate.normalized);
+      if (asset) {
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE jp_categories SET ready_key=?,ready_version=? WHERE id=? AND generation=1 AND ready_key IS NULL AND EXISTS(SELECT 1 FROM jp_icon_jobs WHERE id=? AND status='pending' AND attempts=0 AND generation=1)`,
+          ).bind(
+            asset.storage_key,
+            asset.version,
+            candidate.category_id,
+            candidate.id,
+          ),
+          env.DB.prepare(
+            `UPDATE jp_icon_jobs SET status='ready' WHERE id=? AND status='pending' AND attempts=0 AND changes()=1`,
+          ).bind(candidate.id),
+        ]);
+        continue;
+      }
+    }
+    const token = crypto.randomUUID();
+    const result = await env.DB.batch<JobRow>([
+      env.DB.prepare(
+        `UPDATE jp_icon_jobs SET status='running', attempts=attempts+1, lease_token=?, lease_until=? WHERE id=? AND status='pending' AND available_at<=? AND attempts<3 AND NOT EXISTS(SELECT 1 FROM jp_icon_jobs WHERE status='running') AND (SELECT COUNT(*) FROM jp_icon_attempts WHERE started_at>?)<5 RETURNING *`,
+      ).bind(token, now + 180_000, candidate.id, now, now - 86_400_000),
+      env.DB.prepare(
+        `INSERT INTO jp_icon_attempts(token,job_id,started_at) SELECT ?,id,? FROM jp_icon_jobs WHERE lease_token=? AND status='running'`,
+      ).bind(token, now, token),
+    ]);
+    return result[0]?.results[0] || null;
+  }
+  // A run that reused fifty icons yields to the next tick without spending.
+  return null;
 }
 
 export async function runCategoryIconJobs(
@@ -165,23 +199,6 @@ export async function runCategoryIconJobs(
 ) {
   const now = deps.now || Date.now;
   await drainIconOutbox(env, now());
-  // A matching icon may have finished while a new category was queued. Reuse
-  // only untouched first generations, never override explicit regeneration.
-  const waiting = await env.DB.prepare(
-    `SELECT c.id,c.normalized,j.id AS job_id FROM jp_categories c JOIN jp_icon_jobs j ON j.category_id=c.id WHERE c.ready_key IS NULL AND j.status='pending' AND j.generation=1 AND j.attempts=0 LIMIT 50`,
-  ).all<{ id: string; normalized: string; job_id: string }>();
-  for (const category of waiting.results) {
-    const asset = await matchingIcon(env, category.normalized);
-    if (!asset) continue;
-    await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE jp_categories SET ready_key=?,ready_version=? WHERE id=? AND ready_key IS NULL AND EXISTS(SELECT 1 FROM jp_icon_jobs WHERE id=? AND status='pending' AND attempts=0)`,
-      ).bind(asset.storage_key, asset.version, category.id, category.job_id),
-      env.DB.prepare(
-        `UPDATE jp_icon_jobs SET status='ready' WHERE id=? AND status='pending' AND attempts=0 AND changes()=1`,
-      ).bind(category.job_id),
-    ]);
-  }
   const job = await claimIconJob(env, now());
   if (!job) return;
   const category = await env.DB.prepare(
