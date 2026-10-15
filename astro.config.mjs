@@ -39,7 +39,7 @@ export default defineConfig({
       plugins: [
         {
           id: 'japan-newsletter',
-          version: '1.0.0',
+          version: '1.1.0',
           entrypoint: fileURLToPath(
             new URL('./src/plugins/newsletter.ts', import.meta.url),
           ),

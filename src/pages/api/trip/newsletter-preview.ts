@@ -18,7 +18,7 @@ export const GET: APIRoute = async ({ locals, request }) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'private, no-store',
       'Content-Security-Policy':
-        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+        "default-src 'none'; img-src 'self' https://jp.bent.build; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
       'Referrer-Policy': 'no-referrer',
       'X-Robots-Tag': 'noindex',
     },
