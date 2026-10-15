@@ -604,7 +604,166 @@ try {
     document: { type: 'doc', content: [{ type: 'paragraph' }] },
   });
   assert.equal(recovered.status, 200, await recovered.text());
-  await request(`/_emdash/api/content/posts/${postId}`, undefined, 'DELETE');
+  // All lifecycle operations use only this ephemeral D1/R2 fixture.
+  const postPath = `/_emdash/api/content/posts/${postId}`;
+  const beforeActions = item.parse(await (await request(postPath)).json());
+  const mediaBeforeActions: unknown = await (
+    await request(`/_emdash/api/content/media_items/${id}`)
+  ).json();
+  const historyBefore: unknown = await (
+    await request(`${postPath}/revisions`)
+  ).json();
+  const mutationRequests = [
+    { path: `${postPath}/unpublish`, method: 'POST' },
+    { path: postPath, method: 'DELETE' },
+  ];
+  for (const { path, method } of mutationRequests) {
+    assert.equal((await request(path, {}, method, false)).status, 401);
+    for (const headers of [
+      new Headers({ Cookie: cookie, Origin: base }),
+      new Headers({ Cookie: cookie, 'X-EmDash-Request': '1' }),
+      new Headers({
+        Cookie: cookie,
+        'X-EmDash-Request': '1',
+        Origin: 'https://example.invalid',
+      }),
+    ]) {
+      assert.equal((await fetch(base + path, { method, headers })).status, 403);
+    }
+  }
+  assert.ok(
+    (await request(`${postPath}/unpublish`, undefined, 'GET')).status >= 400,
+  );
+  assert.equal(
+    item.parse(await (await request(postPath)).json()).data._rev,
+    beforeActions.data._rev,
+  );
+  for (const badId of [
+    "' OR 1=1 --",
+    'invalid',
+    'posts',
+    '01M4AAAAAAAAAAAAAAAAAAAAAA;DROP',
+  ]) {
+    const path = `/_emdash/api/content/posts/${encodeURIComponent(badId)}`;
+    assert.equal((await request(`${path}/unpublish`, {}, 'POST')).status, 400);
+    assert.equal((await request(path, undefined, 'DELETE')).status, 400);
+  }
+  const unpublished = await request(`${postPath}/unpublish`, {
+    _rev: beforeActions.data._rev,
+  });
+  assert.equal(unpublished.status, 200, await unpublished.text());
+  const draft = item.parse(await (await request(postPath)).json());
+  assert.deepEqual(draft.data.item.data, beforeActions.data.item.data);
+  const publicPost = await request(`/posts/${postId}`, undefined, 'GET', false);
+  assert.equal(publicPost.status, 404);
+  assert.match(publicPost.headers.get('Cache-Control') || '', /no-store/);
+  const afterHome = await request('/', undefined, 'GET', false);
+  assert.match(afterHome.headers.get('Cache-Control') || '', /no-store/);
+  assert.ok(!(await afterHome.text()).includes('Full post body verification'));
+  assert.equal((await request(`/api/trip/posts?id=${postId}`)).status, 200);
+  assert.equal(
+    (await request(`${postPath}/unpublish`, { _rev: beforeActions.data._rev }))
+      .status,
+    409,
+  );
+  const scheduled = await request(`${postPath}/schedule`, {
+    _rev: draft.data._rev,
+    scheduledAt: '2099-10-16T12:00:00Z',
+  });
+  assert.equal(scheduled.status, 200, await scheduled.text());
+  const scheduledPost = item.parse(await (await request(postPath)).json());
+  assert.equal(
+    (await request(`${postPath}/unpublish`, { _rev: scheduledPost.data._rev }))
+      .status,
+    200,
+  );
+  const unscheduled = z
+    .object({
+      data: z.object({
+        item: z.object({
+          status: z.string(),
+          scheduledAt: z.null(),
+          draftRevisionId: z.string(),
+        }),
+      }),
+    })
+    .parse(await (await request(postPath)).json());
+  assert.equal(unscheduled.data.item.status, 'draft');
+  const revisionsAfter = JSON.stringify(
+    await (await request(`${postPath}/revisions`)).json(),
+  );
+  const historyIds = z
+    .object({
+      data: z.object({ items: z.array(z.object({ id: z.string() })) }),
+    })
+    .parse(historyBefore).data.items;
+  for (const revision of historyIds)
+    assert.ok(revisionsAfter.includes(revision.id));
+  const deletedPost = await request(postPath, undefined, 'DELETE');
+  assert.equal(deletedPost.status, 200, await deletedPost.text());
+  assert.equal((await request(postPath)).status, 404);
+  assert.equal(
+    (await request(`/posts/${postId}`, undefined, 'GET', false)).status,
+    404,
+  );
+  const trash = await request('/_emdash/api/content/posts/trash');
+  assert.ok(JSON.stringify(await trash.json()).includes(postId));
+  assert.deepEqual(
+    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+    mediaBeforeActions,
+  );
+  assert.equal(
+    (await request(`/_emdash/api/media/asset/${draftAsset.id}/video.mp4`))
+      .status,
+    200,
+  );
+  assert.equal(
+    (await request(nativeUploaded.url, undefined, 'GET', false)).status,
+    200,
+  );
+  assert.equal(
+    (await request(`/api/trip/posts?id=${rejectedBody.post.id}`)).status,
+    200,
+  );
+  const deletionFixture = item.parse(
+    await (
+      await request('/_emdash/api/content/posts', {
+        slug: `synthetic-deletion-${crypto.randomUUID()}`,
+        data: {
+          title: 'Synthetic published deletion',
+          day: '2099-10-15',
+          gallery: [],
+          content: [],
+        },
+      })
+    ).json(),
+  ).data.item.id;
+  assert.equal((await publish('posts', deletionFixture)).status, 200);
+  assert.equal(
+    (await request(`/posts/${deletionFixture}`, undefined, 'GET', false))
+      .status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(
+        `/_emdash/api/content/posts/${deletionFixture}`,
+        undefined,
+        'DELETE',
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await request(`/posts/${deletionFixture}`, undefined, 'GET', false))
+      .status,
+    404,
+  );
+
+  console.log(
+    'Synthetic post lifecycle passed: owner/anonymous, CSRF, malicious IDs, public 404/no-store, drafts/history/schedule, CMS trash and unchanged media/other posts.',
+  );
+
   await request(`/_emdash/api/content/media_items/${id}`, undefined, 'DELETE');
   console.log(
     'Full flow passed: owner auth, CSRF, original privacy, R2 upload/ranges, GPS publication, categories, beer revisions, day exports and rich-text publication.',

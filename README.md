@@ -34,7 +34,7 @@ pnpm build
 ## Owner tools
 
 - `/owner`: posts and daily beer entries.
-- `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, optional shop design, drafts and publishing. Paste a public shop.bent.build product or featured link and choose black or white. The journal and post page show its flat t-shirt image and link to that product with the chosen colour.
+- `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, optional shop design, drafts and publishing. Existing posts can be unpublished to an editable draft or moved to CMS trash after confirmation. Media and revision history stay in the CMS. Paste a public shop.bent.build product or featured link and choose black or white. The journal and post page show its flat t-shirt image and link to that product with the chosen colour.
 - `/owner/media`: uploads, capture times, coordinates and multiple categories. Missing metadata keeps an upload unpublished.
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
 - `/_emdash/admin`: native CMS maintenance, revisions and passkey management.
