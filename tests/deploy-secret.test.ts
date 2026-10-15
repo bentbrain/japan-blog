@@ -1,62 +1,336 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import {
-  mkdtemp,
+  chmod,
   mkdir,
+  mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
-  chmod,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { promisify } from 'node:util';
 import { test } from 'node:test';
-const run = promisify(execFile);
+import { setTimeout } from 'node:timers/promises';
 
-void test('verified deploy passes only the runtime binding through stdin and fails before deploy without a key', async () => {
+const script = resolve('scripts/deploy-verified.mjs');
+const syntheticKey = 'synthetic-secret-fixture';
+
+async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'jp-deploy-fixture-'));
-  try {
-    const bin = join(directory, 'bin');
-    await mkdir(bin);
-    const evidence = join(directory, 'received.json');
-    const executable = join(bin, 'pnpm');
-    await writeFile(
-      executable,
-      `#!/usr/bin/env node
-const fs=require('node:fs');
-let data='';process.stdin.on('data',part=>data+=part);process.stdin.on('end',()=>{fs.writeFileSync(process.env.FIXTURE_EVIDENCE,JSON.stringify({args:process.argv.slice(2),binding:JSON.parse(data),keyInEnvironment:Boolean(process.env.OPENAI_API_KEY)}));});
+  const bin = join(directory, 'bin');
+  const temporary = join(directory, 'temporary');
+  const evidence = join(directory, 'received.json');
+  await mkdir(bin);
+  await mkdir(temporary);
+  await writeFile(
+    join(bin, 'pnpm'),
+    `#!${process.execPath}
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn, spawnSync } = require('node:child_process');
+const args = process.argv.slice(2);
+const file = args[args.indexOf('--secrets-file') + 1];
+// Reopen the path exactly as Wrangler does, including on the Linux CI runner.
+const binding = JSON.parse(fs.readFileSync(file, 'utf8'));
+assert.equal(binding.OPENAI_API_KEY === 'synthetic-secret-fixture', true);
+assert.deepEqual(Object.keys(binding), ['OPENAI_API_KEY']);
+assert.equal(Object.hasOwn(process.env, 'OPENAI_API_KEY'), false);
+assert.equal(process.env.CLOUDFLARE_API_TOKEN === 'synthetic-cloudflare-token', true);
+assert.equal(args.some(arg => arg.includes('synthetic-secret-fixture')), false);
+assert.deepEqual(args.slice(0, -1), ['exec', 'wrangler', 'deploy', '--secrets-file']);
+assert.equal(fs.lstatSync(file).isFile(), true);
+assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
+assert.equal(path.dirname(path.dirname(file)), fs.realpathSync(process.env.TMPDIR));
+const waiting = ['wait', 'stubborn'].includes(process.env.FIXTURE_MODE);
+if (process.env.FIXTURE_MODE === 'stubborn') process.on('SIGTERM', () => {});
+let descendant;
+if (waiting) {
+  descendant = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); process.send('ready')"], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  descendant.once('message', ready);
+} else {
+  ready();
+}
+function ready() {
+  fs.writeFileSync(process.env.FIXTURE_EVIDENCE, JSON.stringify({ file, pid: process.pid, descendant: descendant?.pid }));
+  if (waiting) {
+    setInterval(() => {}, 1000);
+  } else if (process.env.FIXTURE_MODE === 'signal') {
+    process.kill(process.pid, 'SIGTERM');
+  } else if (process.env.FIXTURE_MODE === 'wrangler') {
+    const result = spawnSync(process.execPath, [process.env.FIXTURE_WRANGLER, 'deploy', '--config', process.env.FIXTURE_CONFIG, '--secrets-file', file, '--dry-run', '--outdir', process.env.FIXTURE_OUTPUT], { env: process.env, encoding: 'utf8' });
+    assert.equal((result.stdout + result.stderr).includes('synthetic-secret-fixture'), false);
+    process.exitCode = result.status ?? 1;
+  } else {
+    process.exitCode = Number(process.env.FIXTURE_EXIT || 0);
+  }
+}
 `,
+  );
+  await chmod(join(bin, 'pnpm'), 0o700);
+  const env = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH || ''}`,
+    TMPDIR: temporary,
+    TMP: temporary,
+    TEMP: temporary,
+    FIXTURE_EVIDENCE: evidence,
+    OPENAI_API_KEY: syntheticKey,
+    CLOUDFLARE_API_TOKEN: 'synthetic-cloudflare-token',
+    CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: 'false',
+    WRANGLER_SEND_METRICS: 'false',
+    CI: 'true',
+  };
+  return { directory, bin, temporary, evidence, env };
+}
+
+function launch(env: NodeJS.ProcessEnv, cwd: string) {
+  const child = spawn(process.execPath, [script], {
+    env,
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout
+    .setEncoding('utf8')
+    .on('data', (part: string) => (stdout += part));
+  child.stderr
+    .setEncoding('utf8')
+    .on('data', (part: string) => (stderr += part));
+  const completed = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      resolve({ code, signal, stdout, stderr });
+    });
+  });
+  return { child, completed };
+}
+
+async function readEvidence(file: string) {
+  const received: unknown = JSON.parse(await readFile(file, 'utf8'));
+  assert.ok(received && typeof received === 'object');
+  assert.ok('file' in received && typeof received.file === 'string');
+  return received.file;
+}
+
+void test('verified deploy reopens a private temporary JSON file and cleans it after success or failure', async () => {
+  const setup = await fixture();
+  try {
+    for (const exitCode of [0, 7]) {
+      const result = await launch(
+        { ...setup.env, FIXTURE_EXIT: String(exitCode) },
+        setup.directory,
+      ).completed;
+      assert.equal(result.stdout === '' && result.stderr === '', true);
+      assert.equal(result.code, exitCode);
+      assert.equal(result.signal, null);
+      const file = await readEvidence(setup.evidence);
+      await assert.rejects(readFile(file), { code: 'ENOENT' });
+      assert.deepEqual(await readdir(setup.temporary), []);
+    }
+  } finally {
+    await rm(setup.directory, { recursive: true, force: true });
+  }
+});
+
+void test('missing keys and child startup errors fail without leaving temporary files', async () => {
+  const setup = await fixture();
+  try {
+    const missing = await launch(
+      { ...setup.env, OPENAI_API_KEY: '   ' },
+      setup.directory,
+    ).completed;
+    assert.equal(missing.code, 1);
+    assert.equal(missing.stdout, '');
+    assert.equal(
+      missing.stderr.trim(),
+      'OPENAI_API_KEY GitHub Actions secret is required',
     );
-    await chmod(executable, 0o700);
-    const env = {
-      ...process.env,
-      PATH: `${bin}:${process.env.PATH || ''}`,
-      FIXTURE_EVIDENCE: evidence,
-      OPENAI_API_KEY: 'synthetic-secret-fixture',
-    };
-    const result = await run(
-      process.execPath,
-      [resolve('scripts/deploy-verified.mjs')],
-      { env },
+    const startup = await launch(
+      { ...setup.env, PATH: setup.temporary },
+      setup.directory,
+    ).completed;
+    assert.equal(startup.code, 1);
+    assert.equal(startup.stdout === '' && startup.stderr === '', true);
+    assert.deepEqual(await readdir(setup.temporary), []);
+    await assert.rejects(readFile(setup.evidence), { code: 'ENOENT' });
+  } finally {
+    await rm(setup.directory, { recursive: true, force: true });
+  }
+});
+
+void test('temporary directories inside the repository are rejected before writing the key', async () => {
+  const setup = await fixture();
+  try {
+    const result = await launch(
+      { ...setup.env, TMPDIR: resolve() },
+      setup.directory,
+    ).completed;
+    assert.equal(result.code, 1);
+    assert.equal(
+      result.stderr.trim(),
+      'Deployment secrets require a temporary directory outside the repository',
     );
     assert.equal(result.stdout, '');
-    assert.equal(result.stderr, '');
-    const received: unknown = JSON.parse(await readFile(evidence, 'utf8'));
-    assert.deepEqual(received, {
-      args: ['exec', 'wrangler', 'deploy', '--secrets-file', '/dev/stdin'],
-      binding: { OPENAI_API_KEY: 'synthetic-secret-fixture' },
-      keyInEnvironment: false,
-    });
-    await rm(evidence);
-    await assert.rejects(
-      run(process.execPath, [resolve('scripts/deploy-verified.mjs')], {
-        env: { ...env, OPENAI_API_KEY: '' },
-      }),
-      /OPENAI_API_KEY GitHub Actions secret is required/,
-    );
-    await assert.rejects(readFile(evidence), /ENOENT/);
+    await assert.rejects(readFile(setup.evidence), { code: 'ENOENT' });
+    assert.deepEqual(await readdir(setup.temporary), []);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(setup.directory, { recursive: true, force: true });
+  }
+});
+
+void test('child termination is propagated as a signal after cleanup', async () => {
+  const setup = await fixture();
+  try {
+    const result = await launch(
+      { ...setup.env, FIXTURE_MODE: 'signal' },
+      setup.directory,
+    ).completed;
+    assert.equal(result.code, null);
+    assert.equal(result.signal, 'SIGTERM');
+    assert.equal(result.stdout === '' && result.stderr === '', true);
+    assert.deepEqual(await readdir(setup.temporary), []);
+  } finally {
+    await rm(setup.directory, { recursive: true, force: true });
+  }
+});
+
+async function waitForEvidence(file: string) {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    try {
+      return await readEvidence(file);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== 'ENOENT'
+      ) {
+        throw error;
+      }
+      await setTimeout(10);
+    }
+  }
+  throw new Error('Deployment child did not become ready');
+}
+
+async function assertStopped(pid: number) {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      assert.ok(
+        error instanceof Error && 'code' in error && error.code === 'ESRCH',
+      );
+      return;
+    }
+    await setTimeout(10);
+  }
+  assert.fail('Deployment descendant remained alive');
+}
+
+const cancellations: { signal: NodeJS.Signals; mode: string }[] = [
+  { signal: 'SIGTERM', mode: 'wait' },
+  { signal: 'SIGINT', mode: 'wait' },
+  { signal: 'SIGHUP', mode: 'wait' },
+  { signal: 'SIGTERM', mode: 'stubborn' },
+];
+for (const { signal, mode } of cancellations) {
+  void test(
+    `handled ${signal} stops the ${mode} deployment group and removes the secret`,
+    { timeout: 15000 },
+    async () => {
+      const setup = await fixture();
+      const deployment = launch(
+        { ...setup.env, FIXTURE_MODE: mode },
+        setup.directory,
+      );
+      try {
+        const file = await waitForEvidence(setup.evidence);
+        const received: unknown = JSON.parse(
+          await readFile(setup.evidence, 'utf8'),
+        );
+        assert.ok(received && typeof received === 'object');
+        assert.ok('pid' in received && typeof received.pid === 'number');
+        assert.ok(
+          'descendant' in received && typeof received.descendant === 'number',
+        );
+        deployment.child.kill(signal);
+        if (mode === 'stubborn') {
+          await setTimeout(30);
+          assert.ok((await readFile(file)).length > 0);
+          deployment.child.kill(signal);
+        }
+        const result = await deployment.completed;
+        assert.equal(result.code, null);
+        assert.equal(result.signal, signal);
+        assert.equal(result.stdout === '' && result.stderr === '', true);
+        await assert.rejects(readFile(file), { code: 'ENOENT' });
+        assert.deepEqual(await readdir(setup.temporary), []);
+        await assertStopped(received.pid);
+        await assertStopped(received.descendant);
+      } finally {
+        deployment.child.kill('SIGTERM');
+        await deployment.completed;
+        await rm(setup.directory, { recursive: true, force: true });
+      }
+    },
+  );
+}
+
+void test('Wrangler consumes the same file in an offline dry run with a synthetic binding', async () => {
+  const setup = await fixture();
+  try {
+    const config = join(setup.directory, 'wrangler.json');
+    const output = join(setup.directory, 'output');
+    await writeFile(
+      config,
+      JSON.stringify({
+        name: 'deployment-secret-fixture',
+        main: 'worker.mjs',
+        compatibility_date: '2026-10-15',
+      }),
+    );
+    await writeFile(
+      join(setup.directory, 'worker.mjs'),
+      "export default { fetch() { return new Response('fixture'); } };\n",
+    );
+    const result = await launch(
+      {
+        ...setup.env,
+        FIXTURE_MODE: 'wrangler',
+        FIXTURE_WRANGLER: resolve('node_modules/wrangler/bin/wrangler.js'),
+        FIXTURE_CONFIG: config,
+        FIXTURE_OUTPUT: output,
+        // Keep Wrangler logs and config in this disposable fixture as well.
+        WRANGLER_LOG_PATH: join(setup.directory, 'wrangler.log'),
+        XDG_CONFIG_HOME: join(setup.directory, 'config'),
+      },
+      setup.directory,
+    ).completed;
+    assert.equal(result.stdout === '' && result.stderr === '', true);
+    assert.equal(result.code, 0);
+    assert.equal(result.signal, null);
+    assert.ok((await readdir(output)).includes('worker.js'));
+    const outputText = await readFile(join(output, 'worker.js'), 'utf8');
+    assert.equal(outputText.includes(syntheticKey), false);
+    const logs = await readFile(join(setup.directory, 'wrangler.log'), 'utf8');
+    assert.equal(logs.includes(syntheticKey), false);
+    assert.deepEqual(
+      (await readdir(setup.temporary)).filter((name) =>
+        name.startsWith('jp-deploy-secrets-'),
+      ),
+      [],
+    );
+  } finally {
+    await rm(setup.directory, { recursive: true, force: true });
   }
 });
