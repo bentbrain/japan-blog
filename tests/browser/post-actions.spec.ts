@@ -19,6 +19,14 @@ async function createPost(page: Page, baseURL: string, title: string) {
   return nativePost.parse(await created.json()).data;
 }
 
+async function hasUnsavedChanges(page: Page) {
+  return page.evaluate(() => {
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+}
+
 test.beforeEach(async ({ page, baseURL }) => {
   const setup = await page.request.post('/_emdash/api/setup/dev-bypass', {
     headers: { 'X-EmDash-Request': '1', Origin: baseURL ?? '' },
@@ -61,11 +69,39 @@ test('owner unpublishes to an editable draft and confirms CMS trash deletion', a
       exact: true,
     });
     await expect(unpublish).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'SAVE DRAFT', exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole('button', { name: 'PUBLISH', exact: true }),
+    ).toBeEnabled();
+    expect(await hasUnsavedChanges(page)).toBe(false);
+    let leavePrompts = 0;
+    page.on('dialog', (dialog) => {
+      leavePrompts++;
+      void dialog.dismiss();
+    });
+    await page
+      .getByRole('button', { name: 'DELETE POST', exact: true })
+      .click();
+    await page
+      .getByRole('alertdialog')
+      .getByRole('button', { name: 'CANCEL', exact: true })
+      .click();
+    expect(await hasUnsavedChanges(page)).toBe(false);
+    await page.getByRole('link', { name: 'VIEW POST', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/posts/${id}$`));
+    expect(leavePrompts).toBe(0);
+    await page.goto(`/owner/posts/${id}`);
+    await expect(unpublish).toBeVisible();
+
     await page
       .getByLabel('title', { exact: true })
       .fill('unsaved synthetic title');
+    expect(await hasUnsavedChanges(page)).toBe(true);
     await unpublish.click();
     await expect(page.getByRole('status')).toContainText('unpublished');
+    expect(await hasUnsavedChanges(page)).toBe(true);
     await expect(page.getByLabel('title', { exact: true })).toHaveValue(
       'unsaved synthetic title',
     );
@@ -76,6 +112,7 @@ test('owner unpublishes to an editable draft and confirms CMS trash deletion', a
     ).toHaveCount(0);
     await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
     await expect(page.getByRole('status')).toHaveText('draft saved');
+    expect(await hasUnsavedChanges(page)).toBe(false);
     await page.reload();
     await expect(page.getByLabel('title', { exact: true })).toHaveValue(
       'unsaved synthetic title',
@@ -222,4 +259,16 @@ test('pending and failed lifecycle requests keep the editor and confirmation', a
   expect((await page.request.get(`/api/trip/posts?id=${id}`)).status()).toBe(
     200,
   );
+  expect(await hasUnsavedChanges(page)).toBe(false);
+  await page.getByRole('button', { name: 'UNPUBLISH', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('unpublished');
+  expect(await hasUnsavedChanges(page)).toBe(false);
+  let leavePrompts = 0;
+  page.on('dialog', (dialog) => {
+    leavePrompts++;
+    void dialog.dismiss();
+  });
+  await page.goto('/owner');
+  await expect(page).toHaveURL(/\/owner$/);
+  expect(leavePrompts).toBe(0);
 });
