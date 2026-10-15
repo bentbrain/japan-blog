@@ -579,6 +579,103 @@ try {
   });
   const nativePhotoId = item.parse(await nativePhoto.json()).data.item.id;
   assert.equal((await publish('media_items', nativePhotoId)).status, 200);
+  const nativeMediaPath = `/media_items/${nativePhotoId}`;
+  const nativeMediaLink = await request(
+    nativeMediaPath,
+    undefined,
+    'GET',
+    false,
+  );
+  assert.equal(nativeMediaLink.status, 301, 'CMS media link does not redirect');
+  assert.equal(
+    nativeMediaLink.headers.get('Location'),
+    `/media/${nativePhotoId}`,
+  );
+  assert.equal(
+    (await request(`/media/${nativePhotoId}`, undefined, 'GET', false)).status,
+    200,
+  );
+  const nativePhotoRevision = item.parse(
+    await (
+      await request(`/_emdash/api/content/media_items/${nativePhotoId}`)
+    ).json(),
+  ).data._rev;
+  const stagedPhoto = await request(
+    `/_emdash/api/content/media_items/${nativePhotoId}`,
+    {
+      data: { title: 'Synthetic unpublished media title' },
+      _rev: nativePhotoRevision,
+    },
+    'PUT',
+  );
+  assert.equal(stagedPhoto.status, 200);
+  const mediaPreviewResponse = await request(
+    `/_emdash/api/content/media_items/${nativePhotoId}/preview-url`,
+    {},
+  );
+  assert.equal(mediaPreviewResponse.status, 200);
+  const mediaPreviewPath = z
+    .object({ data: z.object({ url: z.string() }) })
+    .parse(await mediaPreviewResponse.json()).data.url;
+  const mediaPreviewUrl = new URL(mediaPreviewPath, base);
+  for (const path of [
+    mediaPreviewPath,
+    `/media/${nativePhotoId}${mediaPreviewUrl.search}`,
+    `/gallery${mediaPreviewUrl.search}`,
+    `/${mediaPreviewUrl.search}`,
+  ]) {
+    const anonymousPreview = await request(path, undefined, 'GET', false);
+    assert.equal(
+      anonymousPreview.status,
+      404,
+      'Anonymous media preview exposed staged edits',
+    );
+    assert.equal(
+      anonymousPreview.headers.get('Cache-Control'),
+      'private, no-store',
+    );
+  }
+  const mediaPreviewRedirect = await request(mediaPreviewPath);
+  assert.equal(mediaPreviewRedirect.status, 301);
+  const privateMediaPath = mediaPreviewRedirect.headers.get('Location');
+  assert.ok(privateMediaPath);
+  for (const path of [privateMediaPath, `/gallery${mediaPreviewUrl.search}`]) {
+    const ownerMediaPreview = await request(path);
+    assert.equal(ownerMediaPreview.status, 200);
+    const privateHtml = await ownerMediaPreview.text();
+    assert.ok(privateHtml.includes('Synthetic unpublished media title'));
+    assert.ok(privateHtml.includes('data-feedback-redact="true"'));
+    assert.ok(privateHtml.includes('data-feedback-private="true"'));
+    assert.ok(privateHtml.includes('name="robots" content="noindex"'));
+    assert.equal(
+      ownerMediaPreview.headers.get('Cache-Control'),
+      'private, no-store',
+    );
+    assert.equal(
+      ownerMediaPreview.headers.get('Cloudflare-CDN-Cache-Control'),
+      'no-store',
+    );
+  }
+  const publicPhotoHtml = await (
+    await request(`/media/${nativePhotoId}`, undefined, 'GET', false)
+  ).text();
+  assert.ok(publicPhotoHtml.includes('Native photo'));
+  assert.ok(!publicPhotoHtml.includes('Synthetic unpublished media title'));
+  const incompleteMedia = await request('/_emdash/api/content/media_items', {
+    slug: `incomplete-${crypto.randomUUID()}`,
+    data: {
+      ...metadata,
+      title: 'Synthetic media without a kind',
+      asset: { id: nativeUploaded.id },
+    },
+  });
+  const incompleteMediaId = item.parse(await incompleteMedia.json()).data.item
+    .id;
+  assert.equal(
+    (await publish('media_items', incompleteMediaId)).status,
+    422,
+    'Native CMS published media that disappears from the public UI',
+  );
   assert.equal(
     (await request(nativeUploaded.url, undefined, 'GET', false)).status,
     200,
@@ -643,7 +740,52 @@ try {
     },
   });
   const postId = item.parse(await post.json()).data.item.id;
+  const previewResponse = await request(
+    `/_emdash/api/content/posts/${postId}/preview-url`,
+    {},
+  );
+  assert.equal(previewResponse.status, 200);
+  const previewPath = z
+    .object({ data: z.object({ url: z.string() }) })
+    .parse(await previewResponse.json()).data.url;
+  const ownerPreview = await request(previewPath);
+  assert.equal(
+    ownerPreview.status,
+    200,
+    'Native owner draft preview is broken',
+  );
+  const previewHtml = await ownerPreview.text();
+  assert.ok(previewHtml.includes('Full post body verification'));
+  assert.ok(previewHtml.includes('data-feedback-redact="true"'));
+  assert.ok(previewHtml.includes('data-feedback-private="true"'));
+  assert.ok(previewHtml.includes('name="robots" content="noindex"'));
+  assert.equal(ownerPreview.headers.get('Cache-Control'), 'private, no-store');
+  const invalidPreview = new URL(previewPath, base);
+  invalidPreview.searchParams.set('_preview', 'invalid');
+  assert.equal(
+    (await request(invalidPreview.pathname + invalidPreview.search)).status,
+    404,
+    'Invalid preview token exposed an owner draft',
+  );
+  assert.equal(
+    (await request(previewPath, undefined, 'GET', false)).status,
+    404,
+    'Preview token alone exposed an owner draft',
+  );
+  assert.equal(
+    (await request(`/posts/${postId}`, undefined, 'GET', false)).status,
+    404,
+  );
   assert.equal((await publish('posts', postId)).status, 200);
+  assert.equal(
+    (await request(previewPath, undefined, 'GET', false)).status,
+    404,
+    'Anonymous preview may expose staged edits on a published post',
+  );
+  assert.equal(
+    (await request(`/posts/${postId}`, undefined, 'GET', false)).status,
+    200,
+  );
 
   const nativeEditView = await request(`/api/trip/posts?id=${postId}`);
   assert.equal(nativeEditView.status, 200, await nativeEditView.text());

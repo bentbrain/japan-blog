@@ -1,8 +1,10 @@
 import { ContentSaveRejectedError, definePlugin } from 'emdash';
-import { daySchema, metadataSchema } from '../lib/model';
+import { daySchema, metadataSchema, mediaSchema } from '../lib/model';
 import { z } from 'zod';
 import { normalizeCategory } from '../lib/category-icons';
 import { shopDesignSchema } from '../lib/shop-design';
+
+const publishableMediaSchema = mediaSchema.omit({ id: true, slug: true });
 
 export function embeddedMediaReferences(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(embeddedMediaReferences);
@@ -22,6 +24,8 @@ export function validateMedia(
   const data = metadataSchema.safeParse(content);
   if (!data.success)
     return 'Add capture time and valid coordinates before publishing.';
+  if (!publishableMediaSchema.safeParse(content).success)
+    return 'Choose photo or video and complete the media details before publishing.';
   if (
     content.kind === 'video' &&
     (typeof content.duration !== 'number' ||
