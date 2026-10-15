@@ -1,4 +1,6 @@
 import { decode, encode } from 'fast-png';
+import { categoryIconRequestId } from './category-icon-diagnostics';
+import type { CategoryIconDiagnostic } from './category-icon-diagnostics';
 
 const IMAGE_ENDPOINT = 'https://api.openai.com/v1/images/generations';
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -36,6 +38,7 @@ export interface CategoryIconImageInput {
 export interface CategoryIconImageDependencies {
   fetch?: typeof fetch;
   timeoutMs?: number;
+  diagnose?: (detail: CategoryIconDiagnostic) => void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -129,6 +132,7 @@ async function requestImage(
   input: CategoryIconImageInput,
   fetchImage: typeof fetch,
   signal: AbortSignal,
+  diagnostic: CategoryIconDiagnostic,
 ): Promise<CategoryIconImageOutcome> {
   const response = await fetchImage(IMAGE_ENDPOINT, {
     method: 'POST',
@@ -148,6 +152,11 @@ async function requestImage(
     }),
     signal,
   });
+  diagnostic.httpStatus = response.status;
+  const requestId = categoryIconRequestId(response.headers.get('x-request-id'));
+  if (requestId) diagnostic.providerRequestId = requestId;
+  diagnostic.stage = 'status';
+  diagnostic.reason = 'response_received';
   if (
     response.status === 429 ||
     response.status === 401 ||
@@ -160,9 +169,14 @@ async function requestImage(
       status: response.status >= 500 ? 'uncertain' : 'blocked_configuration',
     };
   }
+  diagnostic.stage = 'body';
+  diagnostic.reason = 'missing_body';
   if (!response.body) return { status: 'uncertain' };
+  diagnostic.reason = 'read_failed';
   const bytes = await readBounded(response.body, MAX_RESPONSE_BYTES, signal);
   let payload: unknown;
+  diagnostic.stage = 'json';
+  diagnostic.reason = 'invalid_json';
   try {
     payload = JSON.parse(
       new TextDecoder('utf-8', { fatal: true }).decode(bytes),
@@ -179,6 +193,8 @@ async function requestImage(
     };
   }
   if (!response.ok) {
+    diagnostic.stage = 'status';
+    diagnostic.reason = 'response_received';
     const error = isRecord(payload) ? payload.error : undefined;
     if (
       isRecord(error) &&
@@ -197,6 +213,8 @@ async function requestImage(
           : 'uncertain',
     };
   }
+  diagnostic.stage = 'shape';
+  diagnostic.reason = 'invalid_shape';
   if (
     !isRecord(payload) ||
     !Array.isArray(payload.data) ||
@@ -205,10 +223,14 @@ async function requestImage(
     return { status: 'uncertain' };
   const image: unknown = payload.data[0];
   if (!isRecord(image) || 'url' in image) return { status: 'uncertain' };
-  return {
-    status: 'ready',
-    bytes: await normalizeCategoryIconPng(base64Png(image.b64_json)),
-  };
+  diagnostic.stage = 'base64';
+  diagnostic.reason = 'invalid_base64';
+  const source = base64Png(image.b64_json);
+  diagnostic.stage = 'png';
+  diagnostic.reason = 'invalid_png';
+  const normalized = await normalizeCategoryIconPng(source);
+  diagnostic.reason = 'normalized';
+  return { status: 'ready', bytes: normalized };
 }
 
 /** Makes exactly one provider request. An uncertain result must never be retried implicitly. */
@@ -222,6 +244,10 @@ export async function generateCategoryIcon(
     !MODELS.has(input.model)
   )
     return { status: 'blocked_configuration' };
+  const diagnostic: CategoryIconDiagnostic = {
+    stage: 'transport',
+    reason: 'request_failed',
+  };
   const controller = new AbortController();
   const requestedTimeout = dependencies.timeoutMs ?? 90_000;
   const timeoutMs = Number.isFinite(requestedTimeout)
@@ -230,19 +256,30 @@ export async function generateCategoryIcon(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<CategoryIconImageOutcome>((resolve) => {
     timer = setTimeout(() => {
+      diagnostic.reason = 'timeout';
       controller.abort();
       resolve({ status: 'uncertain' });
     }, timeoutMs);
   });
   try {
     return await Promise.race([
-      requestImage(input, dependencies.fetch ?? fetch, controller.signal),
+      requestImage(
+        input,
+        dependencies.fetch ?? fetch,
+        controller.signal,
+        diagnostic,
+      ),
       timeout,
     ]);
   } catch {
     return { status: 'uncertain' };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    try {
+      dependencies.diagnose?.({ ...diagnostic });
+    } catch {
+      // A diagnostic observer cannot change the provider outcome.
+    }
   }
 }
 
