@@ -5,6 +5,8 @@ import japan from '../lib/japan.json';
 import { CategoryIconProviderStatus } from './CategoryIconProviderStatus';
 import { CategoryIconStatus } from './CategoryIconStatus';
 import { CreateCategory } from './CreateCategory';
+import { BulkMediaEditor } from './BulkMediaEditor';
+import type { MediaChanges } from '../lib/media-edits';
 import { categoryNames } from '../lib/category-icons';
 import {
   categoryCollectionSchema,
@@ -346,8 +348,15 @@ export function OwnerMedia() {
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selecting, setSelecting] = useState(false);
-  const [publishIds, setPublishIds] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [publishing, setPublishing] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editStatus, setEditStatus] = useState('');
+  const [editErrors, setEditErrors] = useState<
+    { id: string; title: string; message: string }[]
+  >([]);
+  const editLock = useRef(false);
   const [publishStatus, setPublishStatus] = useState('');
   const [publishErrors, setPublishErrors] = useState<
     { id: string; title: string; message: string }[]
@@ -358,8 +367,60 @@ export function OwnerMedia() {
   const selected = items.find((item) => item.id === selectedId);
   const drafts = items.filter((item) => item.status === 'draft');
   const publishSelection = drafts.filter((item) =>
-    publishIds.includes(item.id),
+    selectedIds.includes(item.id),
   );
+  const editable = items.filter((item) =>
+    ['draft', 'published'].includes(item.status),
+  );
+  const editSelection = editable.filter((item) =>
+    selectedIds.includes(item.id),
+  );
+  async function editSelected(changes: MediaChanges) {
+    if (editLock.current || !editSelection.length) return;
+    editLock.current = true;
+    setEditing(true);
+    setEditErrors([]);
+    const errors: { id: string; title: string; message: string }[] = [];
+    let saved = 0;
+    try {
+      for (const [index, item] of editSelection.entries()) {
+        setEditStatus(
+          `saving ${String(index + 1)} / ${String(editSelection.length)}`,
+        );
+        try {
+          await api(
+            '/api/trip/media/edit',
+            { id: item.id, revision: item._rev, changes },
+            'PATCH',
+          );
+          saved++;
+        } catch (error) {
+          errors.push({
+            id: item.id,
+            title: item.data.title,
+            message: error instanceof Error ? error.message : 'Save failed',
+          });
+          setEditErrors([...errors]);
+        }
+      }
+      const summary = `${String(saved)} saved${errors.length ? `; ${String(errors.length)} failed` : ''}`;
+      if (errors.length) setSelectedIds(errors.map((error) => error.id));
+      try {
+        await reload();
+        setEditStatus(summary);
+        // Retain a successful selection so the same drafts can be published next.
+        if (!errors.length) setEditOpen(false);
+      } catch {
+        setSelectedIds([]);
+        setEditStatus(
+          `${summary}; could not refresh media. Reload the page before retrying.`,
+        );
+      }
+    } finally {
+      editLock.current = false;
+      setEditing(false);
+    }
+  }
   async function publishSelected() {
     if (publishLock.current || !publishSelection.length) return;
     publishLock.current = true;
@@ -402,7 +463,7 @@ export function OwnerMedia() {
                 : value,
             ),
           );
-          setPublishIds((ids) => ids.filter((id) => id !== item.id));
+          setSelectedIds((ids) => ids.filter((id) => id !== item.id));
           published++;
         } catch (error) {
           errors.push({
@@ -467,7 +528,7 @@ export function OwnerMedia() {
   }, []);
   async function upload(files: File[]) {
     setSelecting(false);
-    setPublishIds([]);
+    setSelectedIds([]);
     setUploading(true);
     try {
       for (const [index, file] of files.entries()) {
@@ -508,13 +569,18 @@ export function OwnerMedia() {
         <div className="ml-auto flex flex-wrap items-center gap-3">
           <Button
             disabled={
-              !ready || uploading || saving || publishing || !items.length
+              !ready ||
+              uploading ||
+              saving ||
+              publishing ||
+              editing ||
+              !items.length
             }
             aria-pressed={selecting}
             onClick={() => {
               setSelecting(!selecting);
               setSelectedId(undefined);
-              setPublishIds([]);
+              setSelectedIds([]);
             }}
           >
             {selecting ? 'CANCEL' : 'SELECT'}
@@ -522,7 +588,7 @@ export function OwnerMedia() {
           <CreateCategory onCreated={onCategories} />
           <Button
             variant="default"
-            disabled={!ready || uploading || publishing}
+            disabled={!ready || uploading || saving || publishing || editing}
             onClick={() => fileInput.current?.click()}
           >
             UPLOAD
@@ -535,7 +601,7 @@ export function OwnerMedia() {
           type="file"
           multiple
           accept="image/*,video/mp4,video/quicktime"
-          disabled={!ready || uploading || publishing}
+          disabled={!ready || uploading || saving || publishing || editing}
           onChange={(event) => {
             if (event.target.files) void upload(Array.from(event.target.files));
           }}
@@ -554,28 +620,47 @@ export function OwnerMedia() {
           className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-3 border bg-background p-3"
           aria-label="publish media"
         >
-          <span className="text-sm">{publishSelection.length} selected</span>
+          <span className="text-sm">{editSelection.length} selected</span>
           <Button
             size="sm"
-            disabled={publishing || !drafts.length}
+            disabled={publishing || editing || !editable.length}
             onClick={() => {
-              setPublishIds(drafts.map((item) => item.id));
+              setSelectedIds(editable.map((item) => item.id));
+            }}
+          >
+            SELECT ALL
+          </Button>
+          <Button
+            size="sm"
+            disabled={publishing || editing || !drafts.length}
+            onClick={() => {
+              setSelectedIds(drafts.map((item) => item.id));
             }}
           >
             SELECT ALL DRAFTS
           </Button>
           <Button
             size="sm"
-            disabled={publishing || !publishIds.length}
+            disabled={publishing || editing || !selectedIds.length}
             onClick={() => {
-              setPublishIds([]);
+              setSelectedIds([]);
             }}
           >
             CLEAR
           </Button>
           <Button
+            disabled={publishing || editing || !editSelection.length}
+            onClick={() => {
+              setEditStatus('');
+              setEditErrors([]);
+              setEditOpen(true);
+            }}
+          >
+            EDIT ({editSelection.length})
+          </Button>
+          <Button
             variant="default"
-            disabled={publishing || !publishSelection.length}
+            disabled={publishing || editing || !publishSelection.length}
             onClick={() => {
               void publishSelected();
             }}
@@ -585,6 +670,49 @@ export function OwnerMedia() {
               : `PUBLISH (${String(publishSelection.length)})`}
           </Button>
         </div>
+      )}
+      {editOpen && (
+        <BulkMediaEditor
+          count={editSelection.length}
+          categories={categoryNames([
+            ...categories,
+            ...items.flatMap((item) => item.data.categories || []),
+          ]).map((category) => category.label)}
+          places={[
+            ...new Set(
+              items.flatMap((item) =>
+                item.data.place ? [item.data.place] : [],
+              ),
+            ),
+          ]}
+          busy={editing}
+          status={[
+            editStatus,
+            ...editErrors.map((error) => `${error.title}: ${error.message}`),
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          onApply={editSelected}
+          onClose={() => {
+            setEditOpen(false);
+          }}
+        />
+      )}
+      <p
+        id="edit-status"
+        role="status"
+        className="my-3 whitespace-pre-wrap empty:hidden"
+      >
+        {editStatus}
+      </p>
+      {!editOpen && editErrors.length > 0 && (
+        <ul className="mb-4 space-y-2 text-sm" aria-label="editing errors">
+          {editErrors.map((error) => (
+            <li key={error.id}>
+              {error.title}: {error.message}
+            </li>
+          ))}
+        </ul>
       )}
       <p
         id="publish-status"
@@ -614,16 +742,21 @@ export function OwnerMedia() {
               className="relative block h-auto min-w-0 overflow-hidden border-0 p-0"
               aria-pressed={
                 selecting
-                  ? publishIds.includes(item.id) && item.status === 'draft'
+                  ? selectedIds.includes(item.id)
                   : selectedId === item.id
               }
               aria-controls={selecting ? undefined : 'media-details'}
-              disabled={selecting && (publishing || item.status !== 'draft')}
+              disabled={
+                selecting &&
+                (publishing ||
+                  editing ||
+                  !['draft', 'published'].includes(item.status))
+              }
               aria-label={`${item.data.title}, ${item.status}`}
               data-feedback-id={`owner-media-${item.id}`}
               onClick={() => {
                 if (selecting)
-                  setPublishIds((ids) =>
+                  setSelectedIds((ids) =>
                     ids.includes(item.id)
                       ? ids.filter((id) => id !== item.id)
                       : [...ids, item.id],
@@ -636,12 +769,12 @@ export function OwnerMedia() {
                 alt={item.data.title}
                 className="block h-auto w-full"
               />
-              {selecting && item.status === 'draft' && (
+              {selecting && ['draft', 'published'].includes(item.status) && (
                 <span
                   aria-hidden="true"
                   className="absolute top-2 left-2 flex size-6 items-center justify-center border bg-background text-foreground"
                 >
-                  {publishIds.includes(item.id) ? '✓' : ''}
+                  {selectedIds.includes(item.id) ? '✓' : ''}
                 </span>
               )}
               <Badge className="absolute right-2 bottom-2">{item.status}</Badge>

@@ -2,7 +2,7 @@
 
 Blog. Astro and emDash on Cloudflare Workers, with D1 records and R2 media.
 
-Public blog, categorised gallery, geolocated media map and beer counter. The owner uses a TipTap rich text editor with shadcn/Base UI controls and emDash passkey login. Owner tools preserve original media, edit capture metadata and export Instagram stories as PNG or animated MP4.
+Public blog, categorised gallery, geolocated media map and beer counter. The owner uses a TipTap rich text editor with shadcn/Base UI controls and emDash passkey login. Owner tools preserve original media, fill missing capture metadata and export Instagram stories as PNG or animated MP4.
 
 The application uses Tailwind utilities and shadcn components on Base UI. Theme tokens and the official shadcn state utilities live in `src/styles/globals.css`.
 
@@ -35,7 +35,7 @@ pnpm build
 
 - `/owner`: posts and daily beer entries.
 - `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, optional shop design, drafts and publishing. Existing posts can be unpublished to an editable draft or moved to CMS trash after confirmation. Media and revision history stay in the CMS. Paste a public shop.bent.build product or featured link and choose black or white. The blog and post page show its flat t-shirt image and link to that product with the chosen colour.
-- `/owner/media`: uploads, capture times, coordinates and multiple categories. Use SELECT to choose drafts or SELECT ALL DRAFTS, then PUBLISH to publish the selection. Progress and per-item errors appear together; failed drafts stay selected. Missing metadata keeps an upload unpublished.
+- `/owner/media`: uploads, capture times, coordinates and multiple categories. Use SELECT to choose drafts and published photos, or SELECT ALL. EDIT changes titles, place and categories together. Only checked fields change; categories support add, remove and replace. Original capture metadata stays unchanged. Published photos update immediately; drafts stay private. Keep the selection to PUBLISH its drafts, or use SELECT ALL DRAFTS. Progress and per-photo errors appear together; failed photos stay selected for retry. Missing metadata keeps an upload unpublished.
 - `/categories`: create categories and browse the generated icon library. Categories can also be created from the media page and selected on any media item. The native CMS has separate Categories and Category icons collections; generated icons are registered as image media. New categories reuse a valid icon with a matching name or supported synonym before queuing generation. Missing or corrupt icons generate through the existing bounded job queue. Regeneration retains earlier icons in the library.
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
 - `/owner/newsletter`: connect Resend, preview the next digest, send a test to the owner inbox and enable or pause the schedule.
