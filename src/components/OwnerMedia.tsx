@@ -72,11 +72,15 @@ function Metadata({
   reload,
   categories,
   onCategories,
+  saving,
+  setSaving,
 }: {
   item: Media;
   reload: () => Promise<void>;
   categories: string[];
   onCategories: (collection: CategoryCollection) => void;
+  saving: boolean;
+  setSaving: (saving: boolean) => void;
 }) {
   const captured = captureInputValue(item.data.captured_at);
   const storedLatitude = metadataSchema.shape.latitude.safeParse(
@@ -98,7 +102,6 @@ function Metadata({
   const [selectedCategories, setSelectedCategories] = useState(
     item.data.categories || [],
   );
-  const [saving, setSaving] = useState(false);
   const pin =
     latitude && longitude
       ? projection([Number(longitude), Number(latitude)])
@@ -341,9 +344,90 @@ export function OwnerMedia() {
   const [selectedId, setSelectedId] = useState<string>();
   const [status, setStatus] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [publishIds, setPublishIds] = useState<string[]>([]);
+  const [publishing, setPublishing] = useState(false);
+  const [publishStatus, setPublishStatus] = useState('');
+  const [publishErrors, setPublishErrors] = useState<
+    { id: string; title: string; message: string }[]
+  >([]);
+  const publishLock = useRef(false);
   const [ready, setReady] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const selected = items.find((item) => item.id === selectedId);
+  const drafts = items.filter((item) => item.status === 'draft');
+  const publishSelection = drafts.filter((item) =>
+    publishIds.includes(item.id),
+  );
+  async function publishSelected() {
+    if (publishLock.current || !publishSelection.length) return;
+    publishLock.current = true;
+    setPublishing(true);
+    setPublishErrors([]);
+    const errors: { id: string; title: string; message: string }[] = [];
+    let published = 0;
+    try {
+      for (const [index, item] of publishSelection.entries()) {
+        setPublishStatus(
+          `publishing ${String(index + 1)} / ${String(publishSelection.length)}`,
+        );
+        try {
+          const result = z
+            .object({
+              data: z.object({
+                _rev: z.string(),
+                item: z.object({
+                  id: z.string(),
+                  status: z.literal('published'),
+                }),
+              }),
+            })
+            .parse(
+              await api(
+                `/_emdash/api/content/media_items/${encodeURIComponent(item.id)}/publish`,
+                {
+                  _rev: item._rev,
+                },
+              ),
+            );
+          setItems((values) =>
+            values.map((value) =>
+              value.id === result.data.item.id
+                ? {
+                    ...value,
+                    status: result.data.item.status,
+                    _rev: result.data._rev,
+                  }
+                : value,
+            ),
+          );
+          setPublishIds((ids) => ids.filter((id) => id !== item.id));
+          published++;
+        } catch (error) {
+          errors.push({
+            id: item.id,
+            title: item.data.title,
+            message: error instanceof Error ? error.message : 'Publish failed',
+          });
+          setPublishErrors([...errors]);
+        }
+      }
+      const summary = `${String(published)} published${errors.length ? `; ${String(errors.length)} failed` : ''}`;
+      // Refresh once for conflicts and uncertain network responses, never once per photo.
+      try {
+        await reload();
+        setPublishStatus(summary);
+      } catch {
+        setPublishStatus(
+          `${summary}; could not refresh media. Reload the page before retrying.`,
+        );
+      }
+    } finally {
+      publishLock.current = false;
+      setPublishing(false);
+    }
+  }
   async function reload() {
     setItems(
       z.object({ items: z.array(schema) }).parse(await api('/api/trip/media'))
@@ -420,10 +504,23 @@ export function OwnerMedia() {
       <div className="mb-5 flex items-center justify-between gap-3">
         <h1>media</h1>
         <div className="ml-auto flex flex-wrap items-center gap-3">
+          <Button
+            disabled={
+              !ready || uploading || saving || publishing || !items.length
+            }
+            aria-pressed={selecting}
+            onClick={() => {
+              setSelecting(!selecting);
+              setSelectedId(undefined);
+              setPublishIds([]);
+            }}
+          >
+            {selecting ? 'CANCEL' : 'SELECT'}
+          </Button>
           <CreateCategory onCreated={onCategories} />
           <Button
             variant="default"
-            disabled={!ready || uploading}
+            disabled={!ready || uploading || publishing}
             onClick={() => fileInput.current?.click()}
           >
             UPLOAD
@@ -436,7 +533,7 @@ export function OwnerMedia() {
           type="file"
           multiple
           accept="image/*,video/mp4,video/quicktime"
-          disabled={!ready || uploading}
+          disabled={!ready || uploading || publishing}
           onChange={(event) => {
             if (event.target.files) void upload(Array.from(event.target.files));
           }}
@@ -450,6 +547,59 @@ export function OwnerMedia() {
         {status}
       </p>
       <CategoryIconProviderStatus />
+      {selecting && (
+        <div
+          className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-3 border bg-background p-3"
+          aria-label="publish media"
+        >
+          <span className="text-sm">{publishSelection.length} selected</span>
+          <Button
+            size="sm"
+            disabled={publishing || !drafts.length}
+            onClick={() => {
+              setPublishIds(drafts.map((item) => item.id));
+            }}
+          >
+            SELECT ALL DRAFTS
+          </Button>
+          <Button
+            size="sm"
+            disabled={publishing || !publishIds.length}
+            onClick={() => {
+              setPublishIds([]);
+            }}
+          >
+            CLEAR
+          </Button>
+          <Button
+            variant="default"
+            disabled={publishing || !publishSelection.length}
+            onClick={() => {
+              void publishSelected();
+            }}
+          >
+            {publishing
+              ? 'PUBLISHING'
+              : `PUBLISH (${String(publishSelection.length)})`}
+          </Button>
+        </div>
+      )}
+      <p
+        id="publish-status"
+        role="status"
+        className="my-3 whitespace-pre-wrap empty:hidden"
+      >
+        {publishStatus}
+      </p>
+      {publishErrors.length > 0 && (
+        <ul className="mb-4 space-y-2 text-sm" aria-label="publishing errors">
+          {publishErrors.map((error) => (
+            <li key={error.id}>
+              {error.title}: {error.message}
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="grid grid-cols-1 items-start gap-6 min-[601px]:grid-cols-[minmax(0,1fr)_280px]">
         <div
           className="gallery-grid grid grid-cols-2 content-start items-start gap-[7px] min-[901px]:grid-cols-3"
@@ -460,12 +610,23 @@ export function OwnerMedia() {
               key={item.id}
               variant="ghost"
               className="relative block h-auto min-w-0 overflow-hidden border-0 p-0"
-              aria-pressed={selectedId === item.id}
-              aria-controls="media-details"
+              aria-pressed={
+                selecting
+                  ? publishIds.includes(item.id) && item.status === 'draft'
+                  : selectedId === item.id
+              }
+              aria-controls={selecting ? undefined : 'media-details'}
+              disabled={selecting && (publishing || item.status !== 'draft')}
               aria-label={`${item.data.title}, ${item.status}`}
               data-feedback-id={`owner-media-${item.id}`}
               onClick={() => {
-                setSelectedId(item.id);
+                if (selecting)
+                  setPublishIds((ids) =>
+                    ids.includes(item.id)
+                      ? ids.filter((id) => id !== item.id)
+                      : [...ids, item.id],
+                  );
+                else setSelectedId(item.id);
               }}
             >
               <img
@@ -473,6 +634,14 @@ export function OwnerMedia() {
                 alt={item.data.title}
                 className="block h-auto w-full"
               />
+              {selecting && item.status === 'draft' && (
+                <span
+                  aria-hidden="true"
+                  className="absolute top-2 left-2 flex size-6 items-center justify-center border bg-background text-foreground"
+                >
+                  {publishIds.includes(item.id) ? '✓' : ''}
+                </span>
+              )}
               <Badge className="absolute right-2 bottom-2">{item.status}</Badge>
             </Button>
           ))}
@@ -489,6 +658,8 @@ export function OwnerMedia() {
                 reload={reload}
                 categories={categories}
                 onCategories={onCategories}
+                saving={saving}
+                setSaving={setSaving}
               />
             )}
           </CardContent>
