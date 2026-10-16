@@ -4,6 +4,7 @@ import { buttonVariants } from '../../components/ui/button';
 import ShopAd from '../../components/ShopAd.astro';
 import { tripMedia } from '../../lib/content';
 import { mediaUrl, formatDay, tokyoDay } from '../../lib/model';
+import { isJapanMapLocation } from '../../lib/map';
 const media = await tripMedia();
 const index = media.findIndex(
     (item) => item.slug === Astro.params.slug || item.id === Astro.params.slug,
@@ -64,12 +65,14 @@ const previous = media[(index - 1 + media.length) % media.length],
         {item.place} / {formatDay(tokyoDay(item.captured_at))} /{' '}
         {item.categories.join(', ')}
       </span>
-      <a
-        class={buttonVariants({ variant: 'link', className: 'p-0 h-auto' })}
-        href={`/?media=${item.id}#japan-map`}
-      >
-        VIEW ON MAP
-      </a>
+      {isJapanMapLocation(item) && (
+        <a
+          class={buttonVariants({ variant: 'link', className: 'p-0 h-auto' })}
+          href={`/?media=${item.id}#japan-map`}
+        >
+          VIEW ON MAP
+        </a>
+      )}
     </div>
   </section>
   <ShopAd slot="after-newsletter" />

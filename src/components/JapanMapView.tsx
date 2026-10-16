@@ -169,7 +169,9 @@ export function JapanMapView({
         })}
       </svg>
       {!groups.length && (
-        <span className="absolute bottom-3 left-3">no photos yet</span>
+        <span className="absolute bottom-3 left-3">
+          no photos near japan yet
+        </span>
       )}
     </div>
   );
