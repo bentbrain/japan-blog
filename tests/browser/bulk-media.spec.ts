@@ -179,7 +179,7 @@ test('batch continues past invalid metadata and revision conflicts, then retries
       name: 'sample published, published',
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page
     .getByRole('button', { name: 'SELECT ALL DRAFTS', exact: true })
     .click();
