@@ -202,6 +202,8 @@ test('batch continues past invalid metadata and revision conflicts, then retries
     if (requested.length === 1) await gate;
     await route.continue();
   });
+  // Count only batch refreshes. A prior page mount can overlap the reload.
+  refreshes = 0;
   const firstRequest = page.waitForRequest('**/media_items/*/publish');
   await page.getByRole('button', { name: 'PUBLISH (3)', exact: true }).click();
   await firstRequest;
@@ -222,7 +224,7 @@ test('batch continues past invalid metadata and revision conflicts, then retries
     '1 published; 2 failed',
   );
   expect(requested).toHaveLength(3);
-  expect(refreshes).toBe(2);
+  expect(refreshes).toBe(1);
   await expect(
     page.getByRole('list', { name: 'publishing errors' }).getByRole('listitem'),
   ).toHaveCount(2);
