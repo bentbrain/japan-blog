@@ -201,3 +201,81 @@ for (const width of [390, 1778]) {
     }
   }
 }
+
+test('category links update the query and results without replacing the document', async ({
+  page,
+}) => {
+  await page.goto('/gallery?category=missing&keep=1');
+  await expect(page.getByText('no photos yet', { exact: true })).toBeVisible();
+  let documentRequests = 0;
+  page.on('request', (request) => {
+    if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+      documentRequests++;
+  });
+  const filters = page.getByRole('navigation', { name: 'Media categories' });
+  await filters.getByRole('link', { name: 'food', exact: true }).click();
+  await expect(page).toHaveURL(/category=food/);
+  await expect(
+    page.getByRole('img', { name: 'Synthetic gallery alignment fixture' }),
+  ).toBeVisible();
+  await expect(
+    filters.getByRole('link', { name: 'food', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
+  await page.goBack();
+  await expect(page.getByText('no photos yet', { exact: true })).toBeVisible();
+  await page.goForward();
+  await expect(
+    page.getByRole('img', { name: 'Synthetic gallery alignment fixture' }),
+  ).toBeVisible();
+  await filters.getByRole('link', { name: 'all', exact: true }).click();
+  expect(new URL(page.url()).searchParams.has('category')).toBe(false);
+  expect(documentRequests).toBe(0);
+  expect(new URL(page.url()).searchParams.get('keep')).toBe('1');
+});
+
+for (const route of [
+  '/',
+  '/gallery',
+  '/media/gallery-alignment-fixture',
+  '/newsletter/privacy',
+]) {
+  test(`shared header stays visible after scrolling ${route}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 600 });
+    await page.goto(route);
+    await page.evaluate(() => {
+      window.scrollTo(0, 500);
+    });
+    const header = page.getByRole('banner');
+    await expect(header).toHaveCSS('position', 'sticky');
+    expect((await header.boundingBox())?.y).toBe(0);
+  });
+}
+
+test('direct category links still filter when JavaScript is disabled', async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    javaScriptEnabled: false,
+    baseURL,
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto('/gallery?category=missing');
+    await expect(
+      page.getByText('no photos yet', { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole('navigation', { name: 'Media categories' })
+      .getByRole('link', { name: 'food', exact: true })
+      .click();
+    await expect(
+      page.getByRole('img', { name: 'Synthetic gallery alignment fixture' }),
+    ).toBeVisible();
+    await expect(page.getByText('no photos yet', { exact: true })).toBeHidden();
+  } finally {
+    await context.close();
+  }
+});
