@@ -171,50 +171,78 @@ for (const { title, ratio, shape } of [
   { title: 'tokyo / 7', ratio: 2 / 3, shape: 'portrait' },
   { title: 'tokyo / 8', ratio: 2, shape: 'landscape' },
 ]) {
-  test(`story preview and PNG retain ${shape} proportions`, async ({
-    page,
-  }, info) => {
-    await openSampleExport(page);
-    const selection = page.locator('#export-selection');
-    while (await selection.getByRole('checkbox', { checked: true }).count())
+  for (const angle of ['no skew', 'right edge up']) {
+    test(`story preview and PNG retain ${shape} proportions with ${angle}`, async ({
+      page,
+    }, info) => {
+      await openSampleExport(page);
+      const selection = page.locator('#export-selection');
+      while (await selection.getByRole('checkbox', { checked: true }).count())
+        await selection
+          .getByRole('checkbox', { checked: true })
+          .first()
+          .uncheck();
       await selection
-        .getByRole('checkbox', { checked: true })
-        .first()
-        .uncheck();
-    await selection
-      .locator('.select-media')
-      .filter({
-        has: page.getByRole('img', { name: title, exact: true }),
-      })
-      .getByRole('checkbox')
-      .check();
-    await page.getByRole('combobox', { name: 'card angle' }).click();
-    await page.getByRole('option', { name: 'no skew', exact: true }).click();
-    await expect(
-      page.getByRole('button', { name: 'EXPORT PNG' }),
-    ).toBeEnabled();
-    const preview = await page
-      .locator('#story-preview canvas')
-      .evaluate((canvas) => {
-        if (!(canvas instanceof HTMLCanvasElement))
-          throw new Error('Preview required');
-        return canvas.toDataURL('image/png').split(',')[1] || '';
+        .locator('.select-media')
+        .filter({
+          has: page.getByRole('img', { name: title, exact: true }),
+        })
+        .getByRole('checkbox')
+        .check();
+      await page.getByRole('combobox', { name: 'card angle' }).click();
+      await page.getByRole('option', { name: angle, exact: true }).click();
+      await expect(
+        page.getByRole('button', { name: 'EXPORT PNG' }),
+      ).toBeEnabled();
+      const preview = await page
+        .locator('#story-preview canvas')
+        .evaluate((canvas) => {
+          if (!(canvas instanceof HTMLCanvasElement))
+            throw new Error('Preview required');
+          return canvas.toDataURL('image/png').split(',')[1] || '';
+        });
+      await page.locator('[data-feedback-id="story-composition"]').screenshot({
+        path: info.outputPath('preview.png'),
       });
-    const bounds = photoBounds(Buffer.from(preview, 'base64'));
-    // The two-pixel border stroke covers one pixel along each photo edge.
-    expect(Math.abs(bounds.width - bounds.height * ratio)).toBeLessThanOrEqual(
-      3,
-    );
-    const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'EXPORT PNG' }).click();
-    const file = await download;
-    const path = info.outputPath('proportions.png');
-    await file.saveAs(path);
-    const exported = photoBounds(await readFile(path));
-    expect(
-      Math.abs(exported.width - exported.height * ratio),
-    ).toBeLessThanOrEqual(3);
-  });
+      const bounds = photoBounds(Buffer.from(preview, 'base64'));
+      if (angle === 'no skew')
+        expect(
+          Math.abs(bounds.width - bounds.height * ratio),
+        ).toBeLessThanOrEqual(3);
+      const download = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'EXPORT PNG' }).click();
+      const file = await download;
+      const path = info.outputPath('proportions.png');
+      await file.saveAs(path);
+      const previewBytes = Buffer.from(preview, 'base64');
+      const exportedBytes = await readFile(path);
+      const exported = photoBounds(exportedBytes);
+      if (angle === 'no skew')
+        expect(
+          Math.abs(exported.width - exported.height * ratio),
+        ).toBeLessThanOrEqual(3);
+      expect(
+        Buffer.compare(
+          Buffer.from(decode(exportedBytes).data),
+          Buffer.from(decode(previewBytes).data),
+        ),
+      ).toBe(0);
+      for (const bytes of [previewBytes, exportedBytes]) {
+        const { width, data } = decode(bytes);
+        // This row crosses both photo edges, away from the title and counter.
+        const white = Array.from({ length: width }, (_, x) => {
+          const offset = (850 * width + x) * 4;
+          return (
+            (data[offset] || 0) > 200 &&
+            (data[offset + 1] || 0) > 200 &&
+            (data[offset + 2] || 0) > 200
+          );
+        }).filter(Boolean).length;
+        expect(white).toBeGreaterThanOrEqual(2);
+        expect(white).toBeLessThanOrEqual(4);
+      }
+    });
+  }
 }
 
 for (const width of [390, 1280]) {
