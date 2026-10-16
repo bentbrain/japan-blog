@@ -269,3 +269,183 @@ for (const width of [390, 1280]) {
     ).toBe(width);
   });
 }
+
+test('story day numbering starts with the first photo capture day, not earlier posts or beers', async ({
+  page,
+}) => {
+  await openSampleExport(page);
+  const response = page.waitForResponse(
+    (response) => response.url().endsWith('/api/trip/story') && response.ok(),
+  );
+  await page.getByRole('combobox', { name: 'day', exact: true }).click();
+  await page.getByRole('option', { name: '2026-10-14', exact: true }).click();
+  const manifest = z
+    .object({ day: z.string(), title: z.string() })
+    .parse(await (await response).json());
+  expect(manifest.day).toBe('2026-10-14');
+  expect(manifest.title).toBe('day 1: kyoto');
+  await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
+  const nextResponse = page.waitForResponse(
+    (response) => response.url().endsWith('/api/trip/story') && response.ok(),
+  );
+  await page.clock.setFixedTime(new Date('2030-01-01T12:00:00Z'));
+  await page.getByRole('combobox', { name: 'day', exact: true }).click();
+  await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
+  const next = z
+    .object({ day: z.string(), title: z.string() })
+    .parse(await (await nextResponse).json());
+  expect(next.day).toBe('2026-10-15');
+  expect(next.title).toMatch(/^day 2: /);
+});
+
+for (const width of [390, 1280]) {
+  test(`dragging reorders the export stack at ${String(width)}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openSampleExport(page);
+    const tiles = page.locator('#export-selection .select-media');
+    const original = await tiles.evaluateAll((elements) =>
+      elements.map((element) => element.getAttribute('data-media-id')),
+    );
+    const handle = tiles.first().getByRole('button', { name: /^Drag / });
+    await handle.scrollIntoViewIfNeeded();
+    const source = await handle.boundingBox();
+    const target = await tiles.nth(2).boundingBox();
+    if (!source || !target) throw new Error('Drag bounds required');
+    const from = {
+      x: source.x + source.width / 2,
+      y: source.y + source.height / 2,
+    };
+    const to = { x: target.x + target.width / 2, y: target.y + 30 };
+    const response = page.waitForResponse(
+      (response) => response.url().endsWith('/api/trip/story') && response.ok(),
+    );
+    if (width === 390) {
+      const session = await page.context().newCDPSession(page);
+      await session.send('Input.dispatchTouchEvent', {
+        type: 'touchStart',
+        touchPoints: [from],
+      });
+      await session.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: from.x + 10, y: from.y + 10 }],
+      });
+      await session.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [to],
+      });
+      await expect(tiles.nth(2)).toHaveAttribute('data-drop-target', 'true');
+      await session.send('Input.dispatchTouchEvent', {
+        type: 'touchEnd',
+        touchPoints: [],
+      });
+      await session.detach();
+    } else {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move(to.x, to.y, { steps: 12 });
+      await expect(tiles.nth(2)).toHaveAttribute('data-drop-target', 'true');
+      await page.mouse.up();
+    }
+    const manifest = z
+      .object({ media: z.array(z.object({ id: z.string() })) })
+      .parse(await (await response).json());
+    const expected = [
+      original[1],
+      original[2],
+      original[0],
+      ...original.slice(3),
+    ];
+    expect(manifest.media.map((item) => item.id)).toEqual(expected);
+    expect(
+      await tiles.evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute('data-media-id')),
+      ),
+    ).toEqual(expected);
+    await expect(tiles.locator('[data-dragging="true"]')).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'EXPORT PNG' }),
+    ).toBeEnabled();
+  });
+}
+
+test('cancelling a drag or dropping outside selected photos preserves the stack', async ({
+  page,
+}) => {
+  await openSampleExport(page);
+  const tiles = page.locator('#export-selection .select-media');
+  await tiles.last().getByRole('checkbox').uncheck();
+  await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
+  const original = await tiles.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute('data-media-id')),
+  );
+  const handle = tiles.first().getByRole('button', { name: /^Drag / });
+  const source = await handle.boundingBox();
+  const target = await tiles.nth(1).boundingBox();
+  const unselected = await tiles.last().boundingBox();
+  if (!source || !target || !unselected)
+    throw new Error('Drag bounds required');
+  for (const cancel of ['escape', 'unselected', 'outside']) {
+    await page.mouse.move(source.x + 10, source.y + 10);
+    await page.mouse.down();
+    const destination = cancel === 'unselected' ? unselected : target;
+    await page.mouse.move(destination.x + 30, destination.y + 30, { steps: 8 });
+    if (cancel === 'escape') await page.keyboard.press('Escape');
+    if (cancel === 'outside') await page.mouse.move(5, 100);
+    await page.mouse.up();
+    expect(
+      await tiles.evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute('data-media-id')),
+      ),
+    ).toEqual(original);
+    await expect(
+      page.locator('[data-dragging="true"], [data-drop-target="true"]'),
+    ).toHaveCount(0);
+  }
+});
+
+test('dragging scrolls a short viewport and stops scrolling on cancellation', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 500 });
+  await openSampleExport(page);
+  const handle = page
+    .locator('#export-selection .select-media')
+    .first()
+    .getByRole('button', { name: /^Drag / });
+  await handle.scrollIntoViewIfNeeded();
+  const box = await handle.boundingBox();
+  if (!box) throw new Error('Drag handle required');
+  const before = await page.evaluate(() => scrollY);
+  await page.mouse.move(box.x + 10, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(180, 490, { steps: 10 });
+  await expect
+    .poll(() => page.evaluate(() => scrollY))
+    .toBeGreaterThan(before + 50);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  const stopped = await page.evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => {
+        resolve();
+      }),
+    );
+    return scrollY;
+  });
+  const later = await page.evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          resolve();
+        }),
+      ),
+    );
+    return scrollY;
+  });
+  expect(later).toBe(stopped);
+  await expect(
+    page.locator('[data-dragging="true"], [data-drop-target="true"]'),
+  ).toHaveCount(0);
+});

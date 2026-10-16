@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
 import { loadStory, renderStory } from '../lib/story-renderer';
@@ -42,23 +42,123 @@ export function StoryExporter({ media }: { media: Media[] }) {
   const renderer = useRef<Awaited<ReturnType<typeof loadStory>>>(undefined);
   const story = useRef<Story>(undefined);
   const abort = useRef<AbortController>(undefined);
+  const drag = useRef<{
+    id: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    x: number;
+    y: number;
+    active: boolean;
+    target?: string;
+  }>(undefined);
+  const dragFrame = useRef<number>(undefined);
+  const [dragging, setDragging] = useState<string>();
+  const [dropTarget, setDropTarget] = useState<string>();
   const visible = media.filter((item) => item.day === day);
   const ordered = [
     ...selected.flatMap((id) => visible.filter((item) => item.id === id)),
     ...visible.filter((item) => !selected.includes(item.id)),
   ];
-  function move(id: string, direction: -1 | 1) {
+  function reorder(id: string, targetId: string) {
     setPlaying(false);
     setSelected((current) => {
       const index = current.indexOf(id);
-      const target = index + direction;
-      if (index < 0 || target < 0 || target >= current.length) return current;
+      const target = current.indexOf(targetId);
+      if (index < 0 || target < 0 || index === target) return current;
       const next = [...current];
       next.splice(index, 1);
       next.splice(target, 0, id);
       return next;
     });
   }
+  function move(id: string, direction: -1 | 1) {
+    const target = selected[selected.indexOf(id) + direction];
+    if (target) reorder(id, target);
+  }
+  function cancelDrag() {
+    drag.current = undefined;
+    if (dragFrame.current !== undefined)
+      cancelAnimationFrame(dragFrame.current);
+    dragFrame.current = undefined;
+    setDragging(undefined);
+    setDropTarget(undefined);
+  }
+  function updateDragTarget() {
+    const current = drag.current;
+    if (!current?.active) return;
+    const tile = document
+      .elementFromPoint(current.x, current.y)
+      ?.closest('[data-media-id]');
+    const id = tile instanceof HTMLElement ? tile.dataset.mediaId : undefined;
+    current.target = id && selected.includes(id) ? id : undefined;
+    setDropTarget(current.target);
+  }
+  function scrollDrag() {
+    const current = drag.current;
+    if (!current?.active) return;
+    const distance =
+      current.y < 48
+        ? current.y - 48
+        : current.y > innerHeight - 48
+          ? current.y - innerHeight + 48
+          : 0;
+    if (distance) window.scrollBy(0, Math.max(-16, Math.min(16, distance / 3)));
+    updateDragTarget();
+    dragFrame.current = requestAnimationFrame(scrollDrag);
+  }
+  function startDrag(event: PointerEvent<HTMLButtonElement>, id: string) {
+    if (
+      rendering ||
+      selected.length < 2 ||
+      event.button !== 0 ||
+      !event.isPrimary
+    )
+      return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
+    };
+  }
+  function moveDrag(event: PointerEvent<HTMLButtonElement>) {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    current.x = event.clientX;
+    current.y = event.clientY;
+    if (
+      !current.active &&
+      Math.hypot(current.x - current.startX, current.y - current.startY) >= 6
+    ) {
+      current.active = true;
+      setPlaying(false);
+      setDragging(current.id);
+      scrollDrag();
+    }
+    if (current.active) event.preventDefault();
+  }
+  function finishDrag(event: PointerEvent<HTMLButtonElement>) {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    current.x = event.clientX;
+    current.y = event.clientY;
+    updateDragTarget();
+    cancelDrag();
+    if (current.active && current.target) reorder(current.id, current.target);
+  }
+  useEffect(() => {
+    cancelDrag();
+    return () => {
+      drag.current = undefined;
+      if (dragFrame.current !== undefined)
+        cancelAnimationFrame(dragFrame.current);
+    };
+  }, [day, selected, rendering]);
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
@@ -221,7 +321,7 @@ export function StoryExporter({ media }: { media: Media[] }) {
               </SelectContent>
             </Select>
           </Field>
-          <p id="stack-order">stack order, back to front</p>
+          <p id="stack-order">stack order, back to front. drag ↕ to reorder</p>
           <div
             className="gallery-grid grid grid-cols-2 items-start gap-[7px] min-[901px]:grid-cols-3"
             id="export-selection"
@@ -230,9 +330,13 @@ export function StoryExporter({ media }: { media: Media[] }) {
             {ordered.map((item) => (
               <div
                 key={item.id}
-                className="select-media relative"
+                className="select-media relative data-[dragging=true]:opacity-50 data-[drop-target=true]:outline-2 data-[drop-target=true]:outline-offset-2"
                 data-day={item.day}
                 data-media-id={item.id}
+                data-dragging={dragging === item.id}
+                data-drop-target={
+                  dropTarget === item.id && dragging !== item.id
+                }
               >
                 <Checkbox
                   id={`export-${item.id}`}
@@ -253,10 +357,34 @@ export function StoryExporter({ media }: { media: Media[] }) {
                     );
                   }}
                 />
+                {selected.includes(item.id) && (
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    className="absolute top-2.5 left-2.5 z-10 touch-none cursor-grab bg-background active:cursor-grabbing"
+                    aria-label={`Drag ${item.title} to reorder`}
+                    aria-describedby="stack-order"
+                    disabled={rendering || selected.length < 2}
+                    onPointerDown={(event) => {
+                      startDrag(event, item.id);
+                    }}
+                    onPointerMove={moveDrag}
+                    onPointerUp={finishDrag}
+                    onPointerCancel={cancelDrag}
+                    onLostPointerCapture={cancelDrag}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') cancelDrag();
+                    }}
+                  >
+                    ↕
+                  </Button>
+                )}
                 <FieldLabel htmlFor={`export-${item.id}`} className="m-0 block">
                   <img
                     src={item.poster}
                     alt={item.title}
+                    draggable={false}
                     className="block h-auto w-full"
                   />
                   <span className="sr-only">{item.title}</span>
