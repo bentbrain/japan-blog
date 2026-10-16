@@ -9,7 +9,7 @@ const { item, inline = false } = Astro.props;
 
 {inline && item.kind === 'video' ? (
   <div
-    class="media-tile relative block aspect-[1.15] min-w-0 overflow-hidden border-0 bg-muted p-0 [&_img]:size-full [&_img]:object-cover [&_video]:size-full [&_video]:object-cover"
+    class="media-tile relative block min-w-0 self-start overflow-hidden border-0 bg-muted p-0 [&_img]:block [&_img]:h-auto [&_img]:w-full [&_video]:block [&_video]:h-auto [&_video]:w-full"
     data-feedback-id={`media-${item.id}`}
   >
     <video
@@ -23,7 +23,7 @@ const { item, inline = false } = Astro.props;
   </div>
 ) : (
   <a
-    class="media-tile relative block aspect-[1.15] min-w-0 overflow-hidden border-0 bg-muted p-0 [&_img]:size-full [&_img]:object-cover [&_video]:size-full [&_video]:object-cover"
+    class="media-tile relative block min-w-0 self-start overflow-hidden border-0 bg-muted p-0 [&_img]:block [&_img]:h-auto [&_img]:w-full [&_video]:block [&_video]:h-auto [&_video]:w-full"
     href={`/media/${item.slug || item.id}`}
     data-feedback-id={`media-${item.id}`}
     aria-label={item.title}

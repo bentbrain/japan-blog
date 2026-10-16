@@ -12,7 +12,12 @@ import {
   embeddedMediaReferences,
 } from '../src/plugins/trip-policy';
 import { iso6709 } from '../src/lib/metadata';
-import { storyTitle, tileCenters } from '../src/lib/story';
+import {
+  storyTitle,
+  storyTileSize,
+  tileCenters,
+  type Story,
+} from '../src/lib/story';
 
 void test('capture times group into Japan days across UTC midnight', () => {
   assert.equal(tokyoDay(new Date('2026-10-14T14:59:59Z')), '2026-10-14');
@@ -135,13 +140,32 @@ void test('all story tiles remain within Instagram safe margins at maximum selec
       assert.ok(current.x > previous.x);
       assert.ok(current.y > previous.y);
     }
-    for (const tile of tileCenters(count)) {
-      // The unskewed cards are wider; the angled cards extend further vertically.
-      assert.ok(tile.x - 636 / 2 > 64);
-      assert.ok(tile.x + 636 / 2 < 1016);
-      assert.ok(tile.y - (636 * 0.23 + 436) / 2 - 8 > 400);
-      assert.ok(tile.y + (636 * 0.23 + 436) / 2 + 8 < 1320);
-    }
+    const perspectives: Story['perspective'][] = ['straight', 'angled'];
+    for (const perspective of perspectives)
+      for (const source of [
+        { width: 120, height: 180 },
+        { width: 240, height: 120 },
+        { width: 100, height: 100 },
+        { width: 100, height: 1000 },
+        { width: 1000, height: 100 },
+      ]) {
+        const size = storyTileSize(source.width, source.height, perspective);
+        assert.ok(
+          Math.abs(size.width / size.height - source.width / source.height) <
+            0.0001,
+        );
+        const width = (size.width + 16) * (perspective === 'angled' ? 0.78 : 1);
+        const height =
+          size.height +
+          16 +
+          (perspective === 'angled' ? (size.width + 16) * 0.23 : 0);
+        for (const tile of centers) {
+          assert.ok(tile.x - width / 2 > 64);
+          assert.ok(tile.x + width / 2 < 1016);
+          assert.ok(tile.y - height / 2 - 8 > 400);
+          assert.ok(tile.y + height / 2 + 8 < 1320);
+        }
+      }
   }
 });
 void test('story day numbers count calendar days from the trip start', () => {

@@ -43,6 +43,22 @@ export function StoryExporter({ media }: { media: Media[] }) {
   const story = useRef<Story>(undefined);
   const abort = useRef<AbortController>(undefined);
   const visible = media.filter((item) => item.day === day);
+  const ordered = [
+    ...selected.flatMap((id) => visible.filter((item) => item.id === id)),
+    ...visible.filter((item) => !selected.includes(item.id)),
+  ];
+  function move(id: string, direction: -1 | 1) {
+    setPlaying(false);
+    setSelected((current) => {
+      const index = current.indexOf(id);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      next.splice(index, 1);
+      next.splice(target, 0, id);
+      return next;
+    });
+  }
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
@@ -205,15 +221,18 @@ export function StoryExporter({ media }: { media: Media[] }) {
               </SelectContent>
             </Select>
           </Field>
+          <p id="stack-order">stack order, back to front</p>
           <div
-            className="gallery-grid grid grid-cols-2 gap-[7px] min-[901px]:grid-cols-3"
+            className="gallery-grid grid grid-cols-2 items-start gap-[7px] min-[901px]:grid-cols-3"
             id="export-selection"
+            aria-describedby="stack-order"
           >
-            {visible.map((item) => (
+            {ordered.map((item) => (
               <div
                 key={item.id}
                 className="select-media relative"
                 data-day={item.day}
+                data-media-id={item.id}
               >
                 <Checkbox
                   id={`export-${item.id}`}
@@ -238,10 +257,46 @@ export function StoryExporter({ media }: { media: Media[] }) {
                   <img
                     src={item.poster}
                     alt={item.title}
-                    className="aspect-[1.15] w-full object-cover"
+                    className="block h-auto w-full"
                   />
                   <span className="sr-only">{item.title}</span>
                 </FieldLabel>
+                {selected.includes(item.id) && (
+                  <div className="flex flex-wrap items-center justify-between gap-1 border border-t-0 p-1">
+                    <span
+                      className="px-1"
+                      aria-label={`Stack position ${String(selected.indexOf(item.id) + 1)} of ${String(selected.length)}`}
+                    >
+                      {selected.indexOf(item.id) + 1} / {selected.length}
+                    </span>
+                    <div className="flex gap-1">
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="outline"
+                        aria-label={`Move ${item.title} toward back`}
+                        disabled={rendering || selected[0] === item.id}
+                        onClick={() => {
+                          move(item.id, -1);
+                        }}
+                      >
+                        ←
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="outline"
+                        aria-label={`Move ${item.title} toward front`}
+                        disabled={rendering || selected.at(-1) === item.id}
+                        onClick={() => {
+                          move(item.id, 1);
+                        }}
+                      >
+                        →
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

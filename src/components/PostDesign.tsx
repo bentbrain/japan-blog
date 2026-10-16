@@ -7,7 +7,7 @@ import {
 export function PostDesign({ design }: { design: ShopDesign }) {
   return (
     <div
-      className="post-design flex h-full flex-col overflow-hidden border bg-white min-[601px]:h-auto"
+      className="post-design flex flex-col overflow-hidden border bg-white"
       data-feedback-id="post-design"
     >
       <div className="min-h-0 flex-1 p-4">
@@ -18,7 +18,7 @@ export function PostDesign({ design }: { design: ShopDesign }) {
           height="768"
           loading="lazy"
           draggable={false}
-          className="mx-auto size-full object-contain min-[601px]:aspect-square min-[601px]:h-auto min-[601px]:max-w-[420px]"
+          className="mx-auto aspect-square h-auto w-full max-w-[420px] object-contain"
         />
       </div>
       <a

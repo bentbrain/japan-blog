@@ -14,7 +14,9 @@ import { drawStory, type Story } from './story';
 export async function loadStory(story: Story, signal?: AbortSignal) {
   const inputs: Input[] = [];
   const bitmaps: ImageBitmap[] = [];
-  const frames: ((time: number) => Promise<CanvasImageSource>)[] = [];
+  const frames: ((
+    time: number,
+  ) => Promise<ImageBitmap | HTMLCanvasElement | OffscreenCanvas>)[] = [];
   const cancel = () => {
     for (const input of inputs) input.dispose();
   };
@@ -27,22 +29,7 @@ export async function loadStory(story: Story, signal?: AbortSignal) {
         const bitmap = await createImageBitmap(blob);
         bitmaps.push(bitmap);
         signal?.throwIfAborted();
-        const tile = document.createElement('canvas');
-        tile.width = 620;
-        tile.height = 420;
-        const context = tile.getContext('2d');
-        if (!context) throw new Error('Canvas unavailable');
-        const scale = Math.max(620 / bitmap.width, 420 / bitmap.height);
-        const width = bitmap.width * scale,
-          height = bitmap.height * scale;
-        context.drawImage(
-          bitmap,
-          (620 - width) / 2,
-          (420 - height) / 2,
-          width,
-          height,
-        );
-        frames.push(() => Promise.resolve(tile));
+        frames.push(() => Promise.resolve(bitmap));
       } else {
         const input = new Input({
           source: new UrlSource(media.url),
@@ -55,8 +42,6 @@ export async function loadStory(story: Story, signal?: AbortSignal) {
           throw new Error('Video cannot be decoded in this browser');
         const sink = new CanvasSink(track, {
           width: 620,
-          height: 420,
-          fit: 'cover',
         });
         frames.push(async (time) => {
           const result = await sink.getCanvas(

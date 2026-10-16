@@ -29,7 +29,7 @@ function CarouselControls({ count }: { count: number }) {
     };
   }, [api]);
   return count > 1 ? (
-    <div className="flex items-center justify-between gap-3 px-4 py-3 min-[601px]:hidden">
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
       <span aria-live="polite" aria-atomic="true">
         {current} / {count}
       </span>
@@ -44,7 +44,6 @@ function CarouselControls({ count }: { count: number }) {
 const carouselOptions: CarouselOptions = {
   align: 'start',
   containScroll: 'trimSnaps',
-  breakpoints: { '(min-width: 601px)': { active: false } },
   watchDrag: (_api, event) =>
     !(event.target instanceof Element && event.target.closest('video')),
 };
@@ -64,20 +63,20 @@ export function PostMedia({
   if (!count) return null;
   return (
     <Carousel
-      className="post-carousel min-w-0"
+      className="post-carousel @container/media min-w-0"
       aria-label={`${title} media`}
       opts={carouselOptions}
     >
-      <CarouselContent className="post-media -ml-[5px] touch-pan-y items-stretch select-none min-[601px]:ml-0 min-[601px]:grid min-[601px]:grid-cols-2 min-[601px]:items-start min-[601px]:gap-[5px]">
+      <CarouselContent className="post-media -ml-[5px] touch-pan-y items-start select-none">
         {items.map((item, index) => (
           <CarouselItem
             key={item.id}
             aria-label={`${String(index + 1)} of ${String(count)}`}
-            className="basis-[88%] pl-[5px] min-[601px]:pl-0 min-[601px]:first:col-span-2"
+            className={`pl-[5px] ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`}
           >
             {item.kind === 'video' ? (
               <div
-                className="media-tile relative aspect-[1.15] min-w-0 overflow-hidden bg-muted"
+                className="media-tile relative min-w-0 overflow-hidden bg-muted"
                 data-feedback-id={`media-${item.id}`}
               >
                 <video
@@ -87,12 +86,12 @@ export function PostMedia({
                   playsInline
                   preload="metadata"
                   aria-label={item.title}
-                  className="size-full object-cover"
+                  className="block h-auto w-full"
                 />
               </div>
             ) : (
               <a
-                className="media-tile relative block aspect-[1.15] min-w-0 overflow-hidden bg-muted"
+                className="media-tile relative block min-w-0 overflow-hidden bg-muted"
                 href={`/media/${item.slug || item.id}`}
                 aria-label={item.title}
                 data-feedback-id={`media-${item.id}`}
@@ -103,7 +102,7 @@ export function PostMedia({
                   alt={item.title}
                   loading="lazy"
                   draggable={false}
-                  className="size-full object-cover"
+                  className="block h-auto w-full"
                 />
               </a>
             )}
@@ -112,7 +111,7 @@ export function PostMedia({
         {design && (
           <CarouselItem
             aria-label={`${String(count)} of ${String(count)}, shop design`}
-            className={`post-design-slide basis-[88%] pl-4 min-[601px]:col-span-2 min-[601px]:px-4 min-[601px]:pb-4 ${items.length ? 'min-[601px]:mt-[11px]' : 'min-[601px]:mt-4'}`}
+            className={`post-design-slide px-4 pb-4 ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`}
           >
             <PostDesign design={design} />
           </CarouselItem>
