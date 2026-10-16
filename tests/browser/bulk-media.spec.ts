@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { z } from 'zod';
+import { readFile } from 'node:fs/promises';
 
 const entry = z.object({
   data: z.object({
@@ -274,4 +275,110 @@ test('batch continues past invalid metadata and revision conflicts, then retries
     expect(stored.item.data.latitude).toBe(0);
     expect(stored.item.data.captured_at).toBe('2099-10-15T01:23:45.678Z');
   }
+});
+
+test('upload exits selection and later metadata saves keep batch publication', async ({
+  page,
+  baseURL,
+}) => {
+  await page.goto('/_emdash/api/setup/dev-bypass?redirect=/owner/media');
+  await page.waitForURL('**/owner/media');
+  const created = await page.request.post('/_emdash/api/content/media_items', {
+    headers: { Origin: baseURL || '', 'X-EmDash-Request': '1' },
+    data: {
+      slug: crypto.randomUUID(),
+      data: {
+        title: 'sample upload anchor',
+        kind: 'photo',
+        categories: [],
+        source_url: '/demo/japan.jpg',
+        demo: true,
+      },
+    },
+  });
+  expect(created.status()).toBe(201);
+  await page.route('**/api/trip/media', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const response = await route.fetch();
+    const body = z
+      .object({
+        items: z.array(
+          z.looseObject({ data: z.looseObject({ title: z.string() }) }),
+        ),
+      })
+      .parse(await response.json());
+    await route.fulfill({
+      response,
+      json: {
+        items: body.items.filter((item) =>
+          item.data.title.startsWith('sample upload'),
+        ),
+      },
+    });
+  });
+  await page.reload();
+  await page.getByRole('button', { name: 'SELECT', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'SELECT ALL DRAFTS', exact: true })
+    .click();
+  const uploaded = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/trip/upload') &&
+      response.request().method() === 'POST',
+  );
+  await page.locator('#upload').setInputFiles({
+    name: 'sample upload photo.jpg',
+    mimeType: 'image/jpeg',
+    buffer: await readFile('public/demo/japan.jpg'),
+  });
+  const response = await uploaded;
+  expect(response.status()).toBe(201);
+  const id = z
+    .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
+    .parse(await response.json()).data.item.id;
+  await expect(page.locator('#upload-status')).toHaveText('uploaded');
+  await expect(
+    page.getByRole('button', { name: 'SELECT', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /^PUBLISH \(/ })).toHaveCount(
+    0,
+  );
+  await expect(page.locator('#metadata')).toBeVisible();
+  await page.getByLabel('captured in japan').fill('2099-10-15T10:23:45.678');
+  await page.getByLabel('latitude', { exact: true }).fill('0');
+  await page.getByLabel('longitude', { exact: true }).fill('139');
+  await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+  await expect(page.locator('#save-status')).toHaveText('saved');
+  await page.getByRole('button', { name: 'SELECT', exact: true }).click();
+  await expect(page.locator('#metadata')).toHaveCount(0);
+  await page
+    .getByRole('button', {
+      name: 'sample upload photo.jpg, draft',
+      exact: true,
+    })
+    .click();
+  await page.getByRole('button', { name: 'PUBLISH (1)', exact: true }).click();
+  await expect(page.locator('#publish-status')).toHaveText('1 published');
+  await page.getByRole('button', { name: 'CANCEL', exact: true }).click();
+  await page
+    .getByRole('button', {
+      name: 'sample upload photo.jpg, published',
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole('checkbox', { name: 'public', exact: true }),
+  ).toBeChecked();
+  await page.getByLabel('place', { exact: true }).fill('sample changed place');
+  await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+  await expect(page.locator('#save-status')).toHaveText('saved');
+  const stored = entry.parse(
+    await (
+      await page.request.get(`/_emdash/api/content/media_items/${id}`)
+    ).json(),
+  ).data.item;
+  expect(stored.status).toBe('published');
+  expect(stored.data.place).toBe('sample changed place');
+  expect(stored.data.latitude).toBe(0);
+  expect(stored.data.captured_at).toBe('2099-10-15T01:23:45.678Z');
 });

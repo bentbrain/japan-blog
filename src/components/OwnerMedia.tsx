@@ -466,6 +466,8 @@ export function OwnerMedia() {
     };
   }, []);
   async function upload(files: File[]) {
+    setSelecting(false);
+    setPublishIds([]);
     setUploading(true);
     try {
       for (const [index, file] of files.entries()) {
@@ -651,7 +653,7 @@ export function OwnerMedia() {
           className="max-h-[min(40rem,calc(100dvh-10rem))] gap-0 overflow-y-auto border-0 border-t py-4 shadow-none min-[601px]:border-t-0 min-[601px]:border-l min-[601px]:py-0"
         >
           <CardContent className="px-0 min-[601px]:pl-6">
-            {selected && (
+            {selected && !selecting && (
               <Metadata
                 key={selected.id}
                 item={selected}
