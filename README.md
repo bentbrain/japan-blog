@@ -35,7 +35,7 @@ pnpm build
 
 - `/owner`: posts and daily beer entries.
 - `/owner/posts/new` and `/owner/posts/:id`: rich text, media selection, optional shop design, drafts and publishing. Existing posts can be unpublished to an editable draft or moved to CMS trash after confirmation. Media and revision history stay in the CMS. Paste a public shop.bent.build product or featured link and choose black or white. The blog and post page show its flat t-shirt image and link to that product with the chosen colour.
-- `/owner/media`: uploads, capture times, coordinates and multiple categories. Missing metadata keeps an upload unpublished.
+- `/owner/media`: uploads, capture times, coordinates and multiple categories. Use SELECT to choose drafts or SELECT ALL DRAFTS, then PUBLISH to publish the selection. Progress and per-item errors appear together; failed drafts stay selected. Missing metadata keeps an upload unpublished.
 - `/categories`: create categories and browse the generated icon library. Categories can also be created from the media page and selected on any media item. The native CMS has separate Categories and Category icons collections; generated icons are registered as image media. New categories reuse a valid icon with a matching name or supported synonym before queuing generation. Missing or corrupt icons generate through the existing bounded job queue. Regeneration retains earlier icons in the library.
 - `/owner/export`: daily media selection, historical beer counts, safe-area preview and PNG/MP4 downloads.
 - `/owner/newsletter`: connect Resend, preview the next digest, send a test to the owner inbox and enable or pause the schedule.
