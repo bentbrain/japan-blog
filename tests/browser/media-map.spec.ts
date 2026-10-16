@@ -197,9 +197,9 @@ test('map previews include Japan while outside media stays in the gallery and po
     const bounds = await map.boundingBox();
     if (!bounds) throw new Error('Map bounds required');
     const session = await page.context().newCDPSession(page);
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.y + bounds.height / 2;
     async function pinch(startSpan: number, endSpan: number) {
-      const x = bounds.x + bounds.width / 2;
-      const y = bounds.y + bounds.height / 2;
       await session.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
         touchPoints: [
