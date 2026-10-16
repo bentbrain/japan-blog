@@ -12,12 +12,16 @@ const geometry = z
 
 type Location = Pick<TripMedia, 'latitude' | 'longitude'>;
 
-// Mercator cannot display the poles. Limit only their display position;
-// keep the original GPS on the media record.
-const displayLatitude = (latitude: number) =>
-  Math.max(-85, Math.min(85, latitude));
+// A nearby buffer around Japan, including Okinawa, Ogasawara,
+// Okinotorishima and Minamitorishima. This is a display region, not a border.
+export function isJapanMapLocation({ latitude, longitude }: Location) {
+  return (
+    latitude >= 19 && latitude <= 47 && longitude >= 121 && longitude <= 155
+  );
+}
 
 export function tripMap(media: Location[]) {
+  const mapMedia = media.filter(isJapanMapLocation);
   const projection = geoMercator().fitExtent(
     [
       [105, 20],
@@ -29,17 +33,16 @@ export function tripMap(media: Location[]) {
         geometry,
         {
           type: 'MultiPoint',
-          coordinates: media.map((item) => [
-            item.longitude,
-            displayLatitude(item.latitude),
-          ]),
+          coordinates: mapMedia.map((item) => [item.longitude, item.latitude]),
         },
       ],
     },
   );
   return {
     projectMedia: (item: Location) =>
-      projection([item.longitude, displayLatitude(item.latitude)]),
+      isJapanMapLocation(item)
+        ? projection([item.longitude, item.latitude])
+        : null,
     land: geoPath(projection)(geometry) || '',
   };
 }
