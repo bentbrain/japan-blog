@@ -382,9 +382,9 @@ test('journal has map first, full text and playable video', async ({
   await expect(page.locator('.map-detail')).toBeVisible();
   expect(
     await page
-      .locator('.map-close')
+      .getByRole('button', { name: 'Close map preview' })
       .evaluate((el) => el.getBoundingClientRect().width),
-  ).toBe(26);
+  ).toBe(44);
   await page.getByRole('button', { name: 'Close map preview' }).click();
   await expect(page.locator('.map-detail')).toBeHidden();
 });

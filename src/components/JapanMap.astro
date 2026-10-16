@@ -6,28 +6,23 @@ interface Props {
 }
 const { media } = Astro.props;
 const { projectMedia, land } = tripMap(media);
-const groups: { x: number; y: number; items: TripMedia[] }[] = [];
-for (const item of media) {
-  const point = projectMedia(item);
-  if (!point) continue;
-  const [x = 0, y = 0] = point;
-  const group = groups.find((g) => Math.hypot(g.x - x, g.y - y) < 25);
-  if (group) group.items.push(item);
-  else groups.push({ x, y, items: [item] });
-}
-
 import { JapanMapView } from './JapanMapView';
-const mapGroups = groups.map((group) => ({
-  x: group.x,
-  y: group.y,
-  items: group.items.map((item) => ({
-    id: item.id,
-    slug: item.slug,
-    title: item.title,
-    place: item.place,
-    src: posterUrl(item),
-  })),
-}));
+const points = media.flatMap((item) => {
+  const point = projectMedia(item);
+  if (!point) return [];
+  const [x = 0, y = 0] = point;
+  return [
+    {
+      x,
+      y,
+      id: item.id,
+      slug: item.slug,
+      title: item.title,
+      place: item.place,
+      src: posterUrl(item),
+    },
+  ];
+});
 ---
 
-<JapanMapView land={land || ''} groups={mapGroups} client:load />
+<JapanMapView land={land || ''} points={points} client:load />

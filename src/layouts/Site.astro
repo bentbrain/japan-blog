@@ -54,7 +54,7 @@ const feedback = feedbackConfiguration(
     <header
       data-feedback-id="site-header"
       class:list={[
-        'site-header flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-[clamp(1rem,4vw,4rem)] py-3 text-[0.7rem] leading-[1.5] font-bold tracking-[0.05em] min-[601px]:py-0 [&_nav]:order-3 [&_nav]:flex [&_nav]:flex-wrap [&_nav]:items-center [&_nav]:w-full [&_nav]:justify-center [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-2 min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline',
+        'site-header sticky top-0 z-40 bg-background flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b px-[clamp(1rem,4vw,4rem)] py-3 text-[0.7rem] leading-[1.5] font-bold tracking-[0.05em] min-[601px]:py-0 [&_nav]:order-3 [&_nav]:flex [&_nav]:flex-wrap [&_nav]:items-center [&_nav]:w-full [&_nav]:justify-center [&_nav]:gap-5 [&_nav]:border-t [&_nav]:pt-2 min-[601px]:[&_nav]:order-none min-[601px]:[&_nav]:w-auto min-[601px]:[&_nav]:border-0 min-[601px]:[&_nav]:p-0 [&_nav_a]:no-underline [&_nav_a[aria-current]]:underline',
         !authenticatedOwner &&
           'min-[360px]:py-0 min-[360px]:[&_nav]:order-none min-[360px]:[&_nav]:w-auto min-[360px]:[&_nav]:border-0 min-[360px]:[&_nav]:p-0',
       ]}
