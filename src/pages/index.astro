@@ -27,11 +27,11 @@ const media = await tripMedia();
     </section>
     {posts.map((post) => (
       <article
-        class="journal-card min-w-0"
+        class="journal-card @container/post min-w-0"
         data-feedback-id={`post-${post.data.id}`}
       >
         <Card className="journal-card-inner overflow-hidden border gap-0 py-0 shadow-none">
-          <CardHeader className="post-heading flex flex-wrap items-center justify-between gap-2.5 p-4 [&_a]:no-underline">
+          <CardHeader className="post-heading flex flex-col items-start justify-between gap-2.5 p-4 @min-[400px]/post:flex-row @min-[400px]/post:items-center [&_a]:no-underline">
             <h1>
               <a href={`/posts/${post.id}`}>{post.data.title}</a>
             </h1>

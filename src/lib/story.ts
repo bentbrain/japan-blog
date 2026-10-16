@@ -37,10 +37,22 @@ export function tileCenters(count: number) {
     y: 850 - spreadY / 2 + (i * spreadY) / steps,
   }));
 }
+export function storyTileSize(
+  width: number,
+  height: number,
+  perspective: Story['perspective'],
+) {
+  // Include the skew in the height limit to keep cards clear of the text.
+  const scale = Math.min(
+    620 / width,
+    580 / (height + (perspective === 'angled' ? width * 0.23 : 0)),
+  );
+  return { width: width * scale, height: height * scale };
+}
 export function drawStory(
   ctx: CanvasRenderingContext2D,
   story: Story,
-  images: CanvasImageSource[],
+  images: (CanvasImageSource & { width: number; height: number })[],
   time = 0,
 ) {
   ctx.fillStyle = '#0647ff';
@@ -67,16 +79,32 @@ export function drawStory(
   images.forEach((image, index) => {
     const center = centers[index];
     if (!center) return;
+    const { width: tileWidth, height: tileHeight } = storyTileSize(
+      image.width,
+      image.height,
+      story.perspective,
+    );
     ctx.save();
     ctx.translate(center.x, center.y + Math.sin(time * 1.5 + index) * 8);
     // Upright panels, drawn from the upper-left back card to the lower-right front.
     if (story.perspective === 'angled') ctx.transform(0.78, -0.23, 0, 1, 0, 0);
     ctx.fillStyle = '#fff';
-    ctx.fillRect(-318, -218, 636, 436);
-    ctx.drawImage(image, -310, -210, 620, 420);
+    ctx.fillRect(
+      -tileWidth / 2 - 8,
+      -tileHeight / 2 - 8,
+      tileWidth + 16,
+      tileHeight + 16,
+    );
+    ctx.drawImage(
+      image,
+      -tileWidth / 2,
+      -tileHeight / 2,
+      tileWidth,
+      tileHeight,
+    );
     ctx.strokeStyle = '#0647ff';
     ctx.lineWidth = 2;
-    ctx.strokeRect(-310, -210, 620, 420);
+    ctx.strokeRect(-tileWidth / 2, -tileHeight / 2, tileWidth, tileHeight);
     ctx.restore();
   });
   if (story.counter !== 'hidden') {

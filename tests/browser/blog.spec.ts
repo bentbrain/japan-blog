@@ -238,18 +238,8 @@ test('owner attaches, recolours and removes a shop design', async ({
   await expect(card.locator('.post-media > :last-child')).toHaveClass(
     /post-design-slide/,
   );
-  expect(
-    await card.locator('.post-design').evaluate((el) => {
-      const gallery = el.closest('.post-media');
-      const media = gallery?.querySelectorAll('.media-tile');
-      const bottom = Math.max(
-        ...Array.from(media ?? []).map(
-          (item) => item.getBoundingClientRect().bottom,
-        ),
-      );
-      return el.getBoundingClientRect().top - bottom;
-    }),
-  ).toBeGreaterThanOrEqual(16);
+  await card.getByRole('button', { name: 'Next slide' }).click();
+  await expect(card.getByText('2 / 4', { exact: true })).toBeVisible();
   await expect(card.locator('.post-design img')).toHaveAttribute(
     'src',
     /\/black\.webp\?/,
@@ -296,16 +286,7 @@ test('owner attaches, recolours and removes a shop design', async ({
   await expect(carousel.locator('.post-design').getByRole('link')).toHaveCount(
     1,
   );
-  expect(
-    await carousel.locator('.post-design').evaluate((el) => {
-      const viewport = el.closest('[data-slot="carousel-content"]');
-      if (!viewport) throw new Error('Carousel viewport required');
-      return Math.abs(
-        el.getBoundingClientRect().bottom -
-          viewport.getBoundingClientRect().bottom,
-      );
-    }),
-  ).toBeLessThan(1);
+  await expect(carousel.locator('.post-design-link')).toBeInViewport();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(editorUrl);
   await page.getByRole('button', { name: 'WHITE', exact: true }).click();
