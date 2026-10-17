@@ -9,6 +9,23 @@ import {
   Quality,
 } from 'mediabunny';
 
+function waitForPreparation<T>(promise: Promise<T>, signal: AbortSignal) {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      reject(
+        signal.reason instanceof Error
+          ? signal.reason
+          : new Error('preparation cancelled'),
+      );
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', abort);
+    });
+  });
+}
+
 function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -21,7 +38,32 @@ function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
     );
   });
 }
-export async function prepareMedia(file: File) {
+export async function prepareMedia(
+  file: File,
+  onProgress?: (stage: string) => void,
+) {
+  const controller = new AbortController();
+  let currentStage = 'preparation';
+  const timeout = setTimeout(() => {
+    controller.abort(new Error(`${currentStage} timed out. retry this file.`));
+  }, 120_000);
+  try {
+    return await prepare(file, controller.signal, (stage) => {
+      if (!controller.signal.aborted) {
+        currentStage = stage;
+        onProgress?.(stage);
+      }
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function prepare(
+  file: File,
+  signal: AbortSignal,
+  progress: (stage: string) => void,
+) {
   const video =
     file.type.startsWith('video/') || /\.(mov|mp4|m4v)$/i.test(file.name);
   const canvas = document.createElement('canvas'),
@@ -33,14 +75,19 @@ export async function prepareMedia(file: File) {
       formats: ALL_FORMATS,
     });
     try {
-      const duration = await input.computeDuration();
-      if (duration > 10.1)
+      progress('reading video');
+      const duration = await waitForPreparation(
+        input.computeDuration(),
+        signal,
+      );
+      if (!Number.isFinite(duration) || duration <= 0 || duration > 10.1)
         throw new Error('Videos must be 10 seconds or shorter');
       const output = new Output({
         format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
         target: new BufferTarget(),
       });
-      const conversion = await Conversion.init({
+      progress('preparing video conversion');
+      const initializing = Conversion.init({
         input,
         output,
         video: {
@@ -51,44 +98,70 @@ export async function prepareMedia(file: File) {
           frameRate: 30,
         },
         audio: { discard: true },
+      }).then((conversion) => {
+        // Initialization can settle after the deadline. Release those codecs too.
+        if (signal.aborted) void conversion.cancel().catch(() => {});
+        return conversion;
       });
-      if (!conversion.isValid)
-        throw new Error(
-          'This browser cannot convert the video. Try Safari or Chrome.',
-        );
-      await conversion.execute();
-      const buffer = output.target.buffer;
-      if (!buffer) throw new Error('Could not prepare video');
-      const display = new File([buffer], 'video.mp4', { type: 'video/mp4' }),
-        element = document.createElement('video'),
-        url = URL.createObjectURL(display);
-      element.muted = true;
-      element.playsInline = true;
-      element.src = url;
+      const conversion = await waitForPreparation(initializing, signal);
       try {
-        await new Promise<void>((resolve, reject) => {
-          element.onloadeddata = () => {
-            resolve();
-          };
-          element.onerror = () => {
-            reject(new Error('Could not read video'));
-          };
-        });
-        canvas.width = 1280;
-        canvas.height = Math.round(
-          (1280 * element.videoHeight) / element.videoWidth,
-        );
-        ctx.drawImage(element, 0, 0, canvas.width, canvas.height);
-        return {
-          display,
-          poster: new File([await canvasBlob(canvas)], 'poster.jpg', {
-            type: 'image/jpeg',
-          }),
+        if (!conversion.isValid)
+          throw new Error(
+            'This browser cannot convert the video. Try Safari or Chrome.',
+          );
+        conversion.onProgress = (value) => {
+          progress(`converting video ${String(Math.round(value * 100))}%`);
         };
+        progress('converting video 0%');
+        await waitForPreparation(conversion.execute(), signal);
+        const buffer = output.target.buffer;
+        if (!buffer) throw new Error('Could not prepare video');
+        const display = new File([buffer], 'video.mp4', { type: 'video/mp4' }),
+          element = document.createElement('video'),
+          url = URL.createObjectURL(display);
+        element.muted = true;
+        element.playsInline = true;
+        element.preload = 'auto';
+        try {
+          progress('making video preview');
+          await waitForPreparation(
+            new Promise<void>((resolve, reject) => {
+              element.onloadeddata = () => {
+                resolve();
+              };
+              element.onerror = () => {
+                reject(new Error('Could not read video'));
+              };
+              element.src = url;
+              element.load();
+            }),
+            signal,
+          );
+          canvas.width = 1280;
+          canvas.height = Math.round(
+            (1280 * element.videoHeight) / element.videoWidth,
+          );
+          ctx.drawImage(element, 0, 0, canvas.width, canvas.height);
+          return {
+            display,
+            poster: new File(
+              [await waitForPreparation(canvasBlob(canvas), signal)],
+              'poster.jpg',
+              {
+                type: 'image/jpeg',
+              },
+            ),
+          };
+        } finally {
+          element.onloadeddata = null;
+          element.onerror = null;
+          URL.revokeObjectURL(url);
+          element.removeAttribute('src');
+          element.load();
+        }
       } finally {
-        URL.revokeObjectURL(url);
-        element.removeAttribute('src');
-        element.load();
+        // Do not let a stalled codec's cleanup block the next file.
+        void conversion.cancel().catch(() => {});
       }
     } finally {
       input.dispose();
@@ -96,17 +169,35 @@ export async function prepareMedia(file: File) {
   }
   let source: Blob = file;
   if (/\.(heic|heif)$/i.test(file.name) || file.type.includes('hei')) {
-    const { heicTo } = await import('heic-to/csp');
-    source = await heicTo({ blob: file, type: 'image/jpeg', quality: 0.92 });
+    progress('converting photo');
+    const { heicTo } = await waitForPreparation(import('heic-to/csp'), signal);
+    source = await waitForPreparation(
+      heicTo({ blob: file, type: 'image/jpeg', quality: 0.92 }),
+      signal,
+    );
   }
-  const bitmap = await createImageBitmap(source);
-  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const display = new File([await canvasBlob(canvas)], 'photo.jpg', {
-    type: 'image/jpeg',
-  });
-  return { display, poster: display };
+  progress('making photo preview');
+  const bitmap = await waitForPreparation(
+    createImageBitmap(source).then((value) => {
+      if (signal.aborted) value.close();
+      return value;
+    }),
+    signal,
+  );
+  try {
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const display = new File(
+      [await waitForPreparation(canvasBlob(canvas), signal)],
+      'photo.jpg',
+      {
+        type: 'image/jpeg',
+      },
+    );
+    return { display, poster: display };
+  } finally {
+    bitmap.close();
+  }
 }
