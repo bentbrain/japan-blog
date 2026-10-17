@@ -1,0 +1,35 @@
+---
+import MediaTile from './MediaTile.astro';
+import { PostDesign } from './PostDesign';
+import type { TripMedia } from '../lib/model';
+import { shopDesignSchema } from '../lib/shop-design';
+interface Props {
+  items: TripMedia[];
+  design?: unknown;
+  title: string;
+}
+const { items, design: value, title } = Astro.props;
+const parsed = shopDesignSchema.safeParse(value);
+const design = parsed.success ? parsed.data : undefined;
+---
+
+{(items.length > 0 || design) && (
+  <section
+    class="post-media grid min-w-0 grid-cols-1 gap-[5px]"
+    aria-label={`${title} media`}
+  >
+    {items.map((item) => (
+      <MediaTile item={item} inline />
+    ))}
+    {design && (
+      <div
+        class:list={[
+          'post-design-slide px-4 pb-4',
+          items.length ? 'mt-[11px]' : 'mt-4',
+        ]}
+      >
+        <PostDesign design={design} />
+      </div>
+    )}
+  </section>
+)}

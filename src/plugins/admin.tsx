@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Checkbox } from '../components/ui/checkbox';
 import { Field, FieldLabel } from '../components/ui/field';
 import {
@@ -11,6 +11,8 @@ import {
 import { Button } from '../components/ui/button';
 import { z } from 'zod';
 import { galleryIds } from '../lib/model';
+import { GalleryOrder } from '../components/GalleryOrder';
+import { captureOrder, selectGalleryItem } from '../lib/gallery-order';
 import { api } from '../lib/api-client';
 import '../styles/globals.css';
 
@@ -19,6 +21,7 @@ const itemSchema = z.object({
   status: z.string(),
   data: z.object({
     title: z.string(),
+    captured_at: z.coerce.date(),
     poster: z.object({ src: z.string().optional() }).nullish(),
     poster_url: z.string().nullish(),
     asset: z.object({ url: z.string().optional() }).nullish(),
@@ -36,7 +39,8 @@ function GalleryField({
 }) {
   const [items, setItems] = useState<z.infer<typeof itemSchema>[]>([]),
     [error, setError] = useState('');
-  const selected = galleryIds(value);
+  const selected = useMemo(() => galleryIds(value), [value]);
+  const preserveOrder = useRef(selected.length > 0);
   useEffect(() => {
     let cancelled = false;
     api('/api/trip/media')
@@ -44,9 +48,10 @@ function GalleryField({
         if (!cancelled)
           setItems(
             z
-              .object({ items: z.array(itemSchema) })
+              .object({ items: z.array(z.looseObject({ status: z.string() })) })
               .parse(data)
-              .items.filter((item) => item.status === 'published'),
+              .items.filter((item) => item.status === 'published')
+              .map((item) => itemSchema.parse(item)),
           );
       })
       .catch(() => {
@@ -70,7 +75,7 @@ function GalleryField({
             <DialogTitle>{label}</DialogTitle>
           </DialogHeader>
           <div className="trip-gallery-options mt-3 grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2">
-            {items.map((item) => (
+            {captureOrder(items).map((item) => (
               <div key={item.id}>
                 <img
                   src={
@@ -88,9 +93,16 @@ function GalleryField({
                     id={`trip-${item.id}`}
                     checked={selected.includes(item.id)}
                     onCheckedChange={(checked) => {
+                      if (!checked && selected.length === 1)
+                        preserveOrder.current = false;
                       onChange(
                         checked
-                          ? [...selected, item.id]
+                          ? selectGalleryItem(
+                              selected,
+                              item.id,
+                              items,
+                              preserveOrder.current,
+                            )
                           : selected.filter((id) => id !== item.id),
                       );
                     }}
@@ -104,6 +116,14 @@ function GalleryField({
           </div>
         </DialogContent>
       </Dialog>
+      <GalleryOrder
+        selected={selected}
+        items={items}
+        onChange={(ids) => {
+          preserveOrder.current = true;
+          onChange(ids);
+        }}
+      />
     </fieldset>
   );
 }

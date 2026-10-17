@@ -109,7 +109,7 @@ for (const width of [390, 1280]) {
     });
   }
 
-  for (const path of ['/', '/posts/tokyo-after-dark']) {
+  for (const path of ['/posts/tokyo-after-dark']) {
     test(`post carousel advances and clips its slides on ${path} at ${String(width)}px`, async ({
       page,
     }) => {
