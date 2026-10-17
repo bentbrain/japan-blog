@@ -37,7 +37,8 @@ test('a stalled MOV times out, later photos upload, and retry sends only the fai
     });
   });
   await page.clock.install();
-  const video = await readFile('public/demo/sample.mp4');
+  // 305 frames at 30fps preserves a complete nominal ten-second capture.
+  const video = await readFile('tests/fixtures/frame-timed-video.mp4');
   const photo = await readFile('public/demo/japan.jpg');
   let libraryLoads = 0;
   let uploads = 0;

@@ -8,6 +8,7 @@ import {
   Conversion,
   Quality,
 } from 'mediabunny';
+import { isShortVideoDuration } from './video-duration';
 
 function waitForPreparation<T>(promise: Promise<T>, signal: AbortSignal) {
   return new Promise<T>((resolve, reject) => {
@@ -80,7 +81,7 @@ async function prepare(
         input.computeDuration(),
         signal,
       );
-      if (!Number.isFinite(duration) || duration <= 0 || duration > 10.1)
+      if (!isShortVideoDuration(duration))
         throw new Error('Videos must be 10 seconds or shorter');
       const output = new Output({
         format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
