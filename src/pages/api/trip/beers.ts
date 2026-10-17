@@ -42,7 +42,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
     });
   } else
     saved = await locals.emdash.handleContentCreate('beers', {
-      slug: day,
+      // Let EmDash generate an available slug, including when a deleted entry
+      // reserves the date. Subsequent saves find this active entry by its day.
       data: { title: day, day, count },
       authorId: locals.user.id,
       actor,

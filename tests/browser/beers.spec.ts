@@ -138,3 +138,103 @@ test('beer saves preserve entries with older non-date slugs and create new days'
     expect(deleted.ok()).toBe(true);
   }
 });
+
+test('owner can save a beer day whose earlier entry is in trash', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL ?? '' };
+  const setup = await page.request.post('/_emdash/api/setup/dev-bypass', {
+    headers,
+    data: {},
+  });
+  expect(setup.ok()).toBe(true);
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+  await page.waitForURL('**/owner');
+  for (const path of ['/api/trip/beers', '/_emdash/api/content/beers']) {
+    expect((await page.request.get(path)).status()).toBeLessThan(500);
+  }
+  const first = await page.request.post('/api/trip/beers', {
+    headers,
+    data: { day: '2099-10-20', count: 1 },
+  });
+  expect(first.ok(), await first.text()).toBe(true);
+  const original = savedBeer.parse(await first.json()).data.item;
+  const deleted = await page.request.delete(
+    `/_emdash/api/content/beers/${original.id}`,
+    { headers },
+  );
+  expect(deleted.ok()).toBe(true);
+  await page.getByLabel('Beer day', { exact: true }).fill('2099-10-20');
+  await page.getByLabel('Daily beers', { exact: true }).fill('3');
+  const saving = page.waitForResponse('**/api/trip/beers');
+  await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+  const saved = await saving;
+  expect(saved.ok(), await saved.text()).toBe(true);
+  await expect(page.getByRole('status')).toHaveText('saved');
+  await page.screenshot({ path: testInfo.outputPath('beer-save-after.png') });
+  const replacement = savedBeer.parse(await saved.json()).data.item;
+  expect(replacement).toMatchObject({
+    status: 'published',
+    data: { day: '2099-10-20', count: 3 },
+  });
+  expect(replacement.id).not.toBe(original.id);
+  try {
+    const repeated = await page.request.post('/api/trip/beers', {
+      headers,
+      data: { day: '2099-10-20', count: 2 },
+    });
+    expect(repeated.ok(), await repeated.text()).toBe(true);
+    expect(savedBeer.parse(await repeated.json()).data.item).toMatchObject({
+      id: replacement.id,
+      status: 'published',
+      data: { day: '2099-10-20', count: 2 },
+    });
+    const trash = await page.request.get('/_emdash/api/content/beers/trash');
+    expect(trash.ok()).toBe(true);
+    const trashed = z
+      .object({
+        data: z.object({
+          items: z.array(
+            z.object({
+              id: z.string(),
+              deletedAt: z.string(),
+              data: z.object({ day: z.string(), count: z.number() }),
+            }),
+          ),
+        }),
+      })
+      .parse(await trash.json());
+    expect(
+      trashed.data.items.find(({ id }) => id === original.id),
+    ).toMatchObject({
+      id: original.id,
+      data: { day: '2099-10-20', count: 1 },
+    });
+    const active = await page.request.get('/_emdash/api/content/beers');
+    const listed = z
+      .object({
+        data: z.object({
+          items: z.array(
+            z.object({
+              id: z.string(),
+              data: z.object({ day: z.string(), count: z.number() }),
+            }),
+          ),
+        }),
+      })
+      .parse(await active.json());
+    expect(
+      listed.data.items.filter(({ data }) => data.day === '2099-10-20'),
+    ).toEqual([{ id: replacement.id, data: { day: '2099-10-20', count: 2 } }]);
+  } finally {
+    expect(
+      (
+        await page.request.delete(
+          `/_emdash/api/content/beers/${replacement.id}`,
+          { headers },
+        )
+      ).ok(),
+    ).toBe(true);
+  }
+});
