@@ -88,13 +88,6 @@ export function drawStory(
     ctx.translate(center.x, center.y + Math.sin(time * 1.5 + index) * 8);
     // Upright panels, drawn from the upper-left back card to the lower-right front.
     if (story.perspective === 'angled') ctx.transform(0.78, -0.23, 0, 1, 0, 0);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(
-      -tileWidth / 2 - 8,
-      -tileHeight / 2 - 8,
-      tileWidth + 16,
-      tileHeight + 16,
-    );
     ctx.drawImage(
       image,
       -tileWidth / 2,
@@ -102,7 +95,7 @@ export function drawStory(
       tileWidth,
       tileHeight,
     );
-    ctx.strokeStyle = '#0647ff';
+    ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.strokeRect(-tileWidth / 2, -tileHeight / 2, tileWidth, tileHeight);
     ctx.restore();
