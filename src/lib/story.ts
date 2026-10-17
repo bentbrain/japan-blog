@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { daySchema } from './model';
+import { numberedTripTitle } from './trip-days';
 export const storySchema = z.object({
   day: daySchema,
   title: z.string(),
@@ -21,12 +22,7 @@ export const storySchema = z.object({
 });
 export type Story = z.infer<typeof storySchema>;
 export function storyTitle(day: string, firstDay: string, place: string) {
-  const number =
-    Math.round(
-      (Date.parse(`${day}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) /
-        86_400_000,
-    ) + 1;
-  return `day ${String(number)}: ${place.toLowerCase() || 'japan'}`;
+  return numberedTripTitle(day, firstDay, place.toLowerCase() || 'japan');
 }
 export function tileCenters(count: number) {
   const steps = Math.max(1, count - 1);

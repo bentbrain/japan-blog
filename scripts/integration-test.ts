@@ -741,6 +741,116 @@ try {
     ).status,
     400,
   );
+  // Exercise the same calendar through real newsletter, public and owner routes.
+  const earlierBeer = item.parse(
+    await (
+      await request('/api/trip/beers', { day: '2099-10-14', count: 1 })
+    ).json(),
+  ).data.item.id;
+  const dayPosts: {
+    id: string;
+    slug: string;
+    title: string;
+    expected: string;
+  }[] = [];
+  const numberingMediaBefore: unknown = await (
+    await request(`/_emdash/api/content/media_items/${id}`)
+  ).json();
+  for (const fixture of [
+    {
+      day: '2099-10-15',
+      title: 'day 2: sample arrival',
+      expected: 'day 1: sample arrival',
+    },
+    {
+      day: '2099-10-17',
+      title: 'day 99: sample later',
+      expected: 'day 3: sample later',
+    },
+  ]) {
+    const slug = `sample-day-numbering-${crypto.randomUUID()}`;
+    const created = item.parse(
+      await (
+        await request('/_emdash/api/content/posts', {
+          slug,
+          data: {
+            title: fixture.title,
+            day: fixture.day,
+            gallery: [],
+            content: [],
+          },
+        })
+      ).json(),
+    ).data.item.id;
+    assert.equal((await publish('posts', created)).status, 200);
+    dayPosts.push({
+      id: created,
+      slug,
+      title: fixture.title,
+      expected: fixture.expected,
+    });
+  }
+  const numberedStory = await request('/api/trip/story', {
+    day: '2099-10-15',
+    ids: [id],
+    counter: 'total',
+  });
+  assert.match(
+    z.object({ title: z.string() }).parse(await numberedStory.json()).title,
+    /^day 1: /,
+  );
+  const numberedHome = await (
+    await request('/', undefined, 'GET', false)
+  ).text();
+  const numberedOwner = await (await request('/owner')).text();
+  const numberedPreview = await request('/api/trip/newsletter-preview');
+  assert.equal(numberedPreview.status, 200);
+  const numberedEmail = await numberedPreview.text();
+  for (const fixture of dayPosts) {
+    assert.ok(numberedHome.includes(fixture.expected));
+    assert.ok(numberedOwner.includes(fixture.expected));
+    assert.ok(numberedEmail.includes(fixture.expected));
+    assert.ok(!numberedEmail.includes(fixture.title));
+    const detail = await (
+      await request(`/posts/${fixture.slug}`, undefined, 'GET', false)
+    ).text();
+    assert.ok(detail.includes(`<h1>${fixture.expected}</h1>`));
+    const editor = z
+      .object({ data: z.object({ title: z.string() }) })
+      .parse(await (await request(`/api/trip/posts?id=${fixture.id}`)).json());
+    assert.equal(editor.data.title, fixture.expected);
+    const stored = item.parse(
+      await (await request(`/_emdash/api/content/posts/${fixture.id}`)).json(),
+    );
+    assert.equal(stored.data.item.data.title, fixture.title);
+    assert.equal(
+      (
+        await request(
+          `/_emdash/api/content/posts/${fixture.id}`,
+          undefined,
+          'DELETE',
+        )
+      ).status,
+      200,
+    );
+  }
+  assert.deepEqual(
+    await (await request(`/_emdash/api/content/media_items/${id}`)).json(),
+    numberingMediaBefore,
+  );
+  assert.equal(
+    (
+      await request(
+        `/_emdash/api/content/beers/${earlierBeer}`,
+        undefined,
+        'DELETE',
+      )
+    ).status,
+    200,
+  );
+  console.log(
+    'Shared day numbering passed across newsletter preview, blog, owner titles and story manifest without changing stored titles or captures.',
+  );
   const post = await request('/_emdash/api/content/posts', {
     slug: `integration-${crypto.randomUUID()}`,
     data: {
