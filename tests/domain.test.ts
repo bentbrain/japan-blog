@@ -100,8 +100,17 @@ void test('short videos are allowed and longer or unmeasured videos are rejected
     validateMedia({ ...photo, kind: 'video', duration: 10 }),
     undefined,
   );
+  assert.equal(
+    validateMedia({ ...photo, kind: 'video', duration: 305 / 30 }),
+    undefined,
+    'a frame-timed ten-second capture must remain usable in full',
+  );
+  assert.equal(
+    validateMedia({ ...photo, kind: 'video', duration: 10.2 }),
+    undefined,
+  );
   assert.match(
-    validateMedia({ ...photo, kind: 'video', duration: 10.2 }) || '',
+    validateMedia({ ...photo, kind: 'video', duration: 10.21 }) || '',
     /10 seconds/,
   );
   assert.match(validateMedia({ ...photo, kind: 'video' }) || '', /10 seconds/);
