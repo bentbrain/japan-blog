@@ -12,6 +12,35 @@ import {
   toEditorDocument,
 } from '../src/lib/editor-conversion';
 
+void test('inline code and code blocks retain formatting, language and whitespace when saved and reopened', () => {
+  const original = [
+    {
+      _type: 'block',
+      _key: 'paragraph',
+      style: 'normal',
+      children: [
+        { _type: 'span', _key: 'plain', text: 'Run ', marks: [] },
+        { _type: 'span', _key: 'inline', text: 'pnpm build', marks: ['code'] },
+      ],
+    },
+    {
+      _type: 'code',
+      _key: 'code-block',
+      language: 'javascript',
+      code: 'const html = "<script>example</script>";\n\n  console.log(html);\n',
+    },
+    { _type: 'code', _key: 'empty-code', code: '' },
+  ];
+  const node = getSchema(editorExtensions).nodeFromJSON(
+    toEditorDocument(original),
+  );
+  node.check();
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  assert.equal(preservesContent(original, contentForSave(document)), true);
+});
+
 void test('blank paragraphs survive saving and reopening through the actual editor schema', () => {
   const original = prosemirrorToPortableText({
     type: 'doc',

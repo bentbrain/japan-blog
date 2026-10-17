@@ -88,7 +88,7 @@ function EditorForm({
     editorProps: {
       attributes: {
         class:
-          'min-h-[360px] p-4 outline-none [&_p]:mb-4 [&_h2]:mb-4 [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_a]:underline [&_img]:my-4 [&_img]:max-w-full [&_video]:my-4 [&_video]:max-w-full',
+          'rich-text min-h-[360px] p-4 outline-none [&_p]:mb-4 [&_h2]:mb-4 [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_a]:underline [&_img]:my-4 [&_img]:max-w-full [&_video]:my-4 [&_video]:max-w-full',
         role: 'textbox',
         'aria-label': 'Post content',
         'aria-multiline': 'true',
