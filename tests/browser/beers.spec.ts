@@ -238,3 +238,84 @@ test('owner can save a beer day whose earlier entry is in trash', async ({
     ).toBe(true);
   }
 });
+
+for (const trashed of [false, true]) {
+  test(`overlapping beer saves keep one active day with trash=${String(trashed)}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const headers = { 'X-EmDash-Request': '1', Origin: baseURL ?? '' };
+    const setup = await page.request.post('/_emdash/api/setup/dev-bypass', {
+      headers,
+      data: {},
+    });
+    expect(setup.ok()).toBe(true);
+    await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+    await page.waitForURL('**/owner');
+    const day = trashed ? '2099-10-22' : '2099-10-21';
+    if (trashed) {
+      const first = await page.request.post('/api/trip/beers', {
+        headers,
+        data: { day, count: 1 },
+      });
+      expect(first.ok(), await first.text()).toBe(true);
+      const id = savedBeer.parse(await first.json()).data.item.id;
+      expect(
+        (
+          await page.request.delete(`/_emdash/api/content/beers/${id}`, {
+            headers,
+          })
+        ).ok(),
+      ).toBe(true);
+    }
+    const saves = await Promise.all(
+      Array.from({ length: 8 }, async (_, index) => {
+        await new Promise((resolve) => setTimeout(resolve, index * 3));
+        return page.request.post('/api/trip/beers', {
+          headers,
+          data: { day, count: 3 },
+        });
+      }),
+    );
+    expect(saves.some((response) => response.ok())).toBe(true);
+    for (const response of saves) {
+      expect([200, 409], await response.text()).toContain(response.status());
+    }
+    const entries = async () => {
+      const response = await page.request.get('/_emdash/api/content/beers');
+      expect(response.ok()).toBe(true);
+      const listed = z
+        .object({
+          data: z.object({
+            items: z.array(
+              z.object({
+                id: z.string(),
+                data: z.object({ day: z.string(), count: z.number() }),
+              }),
+            ),
+          }),
+        })
+        .parse(await response.json());
+      return listed.data.items.filter(({ data }) => data.day === day);
+    };
+    const active = await entries();
+    expect(active).toHaveLength(1);
+    const repeated = await page.request.post('/api/trip/beers', {
+      headers,
+      data: { day, count: 2 },
+    });
+    expect(repeated.ok(), await repeated.text()).toBe(true);
+    expect(await entries()).toEqual([
+      { id: active[0]?.id, data: { day, count: 2 } },
+    ]);
+    for (const { id } of active) {
+      expect(
+        (
+          await page.request.delete(`/_emdash/api/content/beers/${id}`, {
+            headers,
+          })
+        ).ok(),
+      ).toBe(true);
+    }
+  });
+}
