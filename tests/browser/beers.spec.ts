@@ -1,0 +1,140 @@
+import { test, expect } from '@playwright/test';
+import { z } from 'zod';
+
+const savedBeer = z.object({
+  data: z.object({
+    item: z.object({
+      id: z.string(),
+      status: z.string(),
+      data: z.object({ day: z.string(), count: z.number() }),
+    }),
+    _rev: z.string(),
+  }),
+});
+
+test('owner updates the existing beer day when its day field differs from its slug', async ({
+  page,
+  baseURL,
+}) => {
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL ?? '' };
+  const setup = await page.request.post('/_emdash/api/setup/dev-bypass', {
+    headers,
+    data: {},
+  });
+  expect(setup.ok()).toBe(true);
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+  await page.waitForURL('**/owner');
+  const schema = await page.request.put(
+    '/_emdash/api/schema/collections/beers/fields/day',
+    { headers, data: { indexed: true } },
+  );
+  expect(schema.ok()).toBe(true);
+  for (const path of ['/api/trip/beers', '/_emdash/api/content/beers']) {
+    const warmed = await page.request.get(path);
+    expect(warmed.status()).toBeLessThan(500);
+  }
+  const created = await page.request.post('/_emdash/api/content/beers', {
+    headers,
+    timeout: 10000,
+    data: {
+      slug: '2099-10-17',
+      data: { title: 'sample beer day', day: '2099-10-16', count: 1 },
+    },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  const fixture = savedBeer.parse(await created.json()).data;
+  const id = fixture.item.id;
+  const published = await page.request.post(
+    `/_emdash/api/content/beers/${id}/publish`,
+    { headers, data: { _rev: fixture._rev } },
+  );
+  expect(published.ok()).toBe(true);
+  await page.getByLabel('Beer day', { exact: true }).fill('2099-10-17');
+  await page.getByLabel('Daily beers', { exact: true }).fill('2');
+  const saving = page.waitForResponse('**/api/trip/beers');
+  await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+  const saved = await saving;
+  expect(saved.ok(), await saved.text()).toBe(true);
+  await expect(page.getByRole('status')).toHaveText('saved');
+  const stored = await page.request.get(`/_emdash/api/content/beers/${id}`);
+  const updated = savedBeer.parse(await stored.json()).data.item;
+  expect(updated).toMatchObject({
+    id,
+    status: 'published',
+    data: { day: '2099-10-17', count: 2 },
+  });
+
+  // Existing date slugs must also work when the legacy field is not indexed.
+  const unindexed = await page.request.put(
+    '/_emdash/api/schema/collections/beers/fields/day',
+    { headers, data: { indexed: false } },
+  );
+  expect(unindexed.ok()).toBe(true);
+  try {
+    for (const count of [0, 2]) {
+      const saved = await page.request.post('/api/trip/beers', {
+        headers,
+        data: { day: '2099-10-17', count },
+      });
+      expect(saved.ok(), await saved.text()).toBe(true);
+      expect(savedBeer.parse(await saved.json()).data.item).toMatchObject({
+        id,
+        status: 'published',
+        data: { day: '2099-10-17', count },
+      });
+    }
+  } finally {
+    const restored = await page.request.put(
+      '/_emdash/api/schema/collections/beers/fields/day',
+      { headers, data: { indexed: true } },
+    );
+    expect(restored.ok()).toBe(true);
+    const deleted = await page.request.delete(
+      `/_emdash/api/content/beers/${id}`,
+      { headers },
+    );
+    expect(deleted.ok()).toBe(true);
+  }
+});
+
+test('beer saves preserve entries with older non-date slugs and create new days', async ({
+  page,
+  baseURL,
+}) => {
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL ?? '' };
+  await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+  await page.waitForURL('**/owner');
+  const created = await page.request.post('/_emdash/api/content/beers', {
+    headers,
+    data: {
+      slug: 'sample-legacy-beer-day',
+      data: { title: 'sample legacy beer day', day: '2099-10-18', count: 1 },
+    },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  const id = savedBeer.parse(await created.json()).data.item.id;
+  const saved = await page.request.post('/api/trip/beers', {
+    headers,
+    data: { day: '2099-10-18', count: 2 },
+  });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  expect(savedBeer.parse(await saved.json()).data.item).toMatchObject({
+    id,
+    status: 'published',
+    data: { day: '2099-10-18', count: 2 },
+  });
+  const fresh = await page.request.post('/api/trip/beers', {
+    headers,
+    data: { day: '2099-10-19', count: 2 },
+  });
+  expect(fresh.ok(), await fresh.text()).toBe(true);
+  const newId = savedBeer.parse(await fresh.json()).data.item.id;
+  expect(newId).not.toBe(id);
+  for (const entryId of [id, newId]) {
+    const deleted = await page.request.delete(
+      `/_emdash/api/content/beers/${entryId}`,
+      { headers },
+    );
+    expect(deleted.ok()).toBe(true);
+  }
+});
