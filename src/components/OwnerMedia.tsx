@@ -346,6 +346,10 @@ export function OwnerMedia() {
   const [selectedId, setSelectedId] = useState<string>();
   const [status, setStatus] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [uploadErrors, setUploadErrors] = useState<
+    { file: File; message: string; retryable: boolean }[]
+  >([]);
+  const uploadLock = useRef(false);
   const [saving, setSaving] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -527,37 +531,80 @@ export function OwnerMedia() {
     };
   }, []);
   async function upload(files: File[]) {
+    if (uploadLock.current || files.length === 0) return;
+    uploadLock.current = true;
     setSelecting(false);
     setSelectedIds([]);
     setUploading(true);
+    const errors = uploadErrors.filter((error) => !files.includes(error.file));
+    setUploadErrors(errors);
+    let uploaded = 0;
+    let lastId: string | undefined;
     try {
       for (const [index, file] of files.entries()) {
-        setStatus(
-          `${String(index + 1)} / ${String(files.length)} preparing ${file.name}`,
-        );
-        const prepared = await prepareMedia(file),
-          body = new FormData();
-        body.set('original', file);
-        body.set('display', prepared.display);
-        body.set('poster', prepared.poster);
-        setStatus(`${String(index + 1)} / ${String(files.length)} uploading`);
-        const response = await fetch('/api/trip/upload', {
-          method: 'POST',
-          headers: { 'X-EmDash-Request': '1' },
-          body,
-        });
-        if (!response.ok)
-          throw new Error(JSON.stringify(await response.json()));
-        const result = z
-          .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
-          .parse(await response.json());
-        await reload();
-        setSelectedId(result.data.item.id);
+        const prefix = `${String(index + 1)} / ${String(files.length)}`;
+        let prepared;
+        try {
+          setStatus(`${prefix} preparing ${file.name}`);
+          prepared = await prepareMedia(file, (stage) => {
+            setStatus(`${prefix} ${stage}: ${file.name}`);
+          });
+        } catch (error) {
+          errors.push({
+            file,
+            message:
+              error instanceof Error ? error.message : 'could not prepare file',
+            retryable: true,
+          });
+          setUploadErrors([...errors]);
+          continue;
+        }
+        try {
+          const body = new FormData();
+          body.set('original', file);
+          body.set('display', prepared.display);
+          body.set('poster', prepared.poster);
+          setStatus(`${prefix} uploading ${file.name}`);
+          const response = await fetch('/api/trip/upload', {
+            method: 'POST',
+            headers: { 'X-EmDash-Request': '1' },
+            body,
+          });
+          if (!response.ok)
+            throw new Error(JSON.stringify(await response.json()));
+          const result = z
+            .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
+            .parse(await response.json());
+          uploaded++;
+          lastId = result.data.item.id;
+        } catch {
+          // A lost response can follow a saved upload. Do not retry it blindly.
+          errors.push({
+            file,
+            message:
+              'could not confirm upload. check media before uploading this file again.',
+            retryable: false,
+          });
+          setUploadErrors([...errors]);
+        }
       }
-      setStatus('uploaded');
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Upload failed');
+      const failed = errors.filter((error) =>
+        files.includes(error.file),
+      ).length;
+      const summary = failed
+        ? `${String(uploaded)} uploaded; ${String(failed)} failed`
+        : 'uploaded';
+      try {
+        await reload();
+        if (lastId) setSelectedId(lastId);
+        setStatus(summary);
+      } catch {
+        setStatus(
+          `${summary}; could not refresh media. reload the page to check saved uploads.`,
+        );
+      }
     } finally {
+      uploadLock.current = false;
       setUploading(false);
       if (fileInput.current) fileInput.current.value = '';
     }
@@ -614,6 +661,32 @@ export function OwnerMedia() {
       >
         {status}
       </p>
+      {uploadErrors.length > 0 && (
+        <div className="my-3 space-y-2" id="upload-errors">
+          <ul className="space-y-1 text-sm">
+            {uploadErrors.map((error, index) => (
+              <li key={`${String(index)}-${error.file.name}`}>
+                {error.file.name}: {error.message}
+              </li>
+            ))}
+          </ul>
+          {uploadErrors.some((error) => error.retryable) && (
+            <Button
+              variant="outline"
+              disabled={uploading || saving || publishing || editing}
+              onClick={() => {
+                void upload(
+                  uploadErrors
+                    .filter((error) => error.retryable)
+                    .map((error) => error.file),
+                );
+              }}
+            >
+              RETRY FAILED FILES
+            </Button>
+          )}
+        </div>
+      )}
       <CategoryIconProviderStatus />
       {selecting && (
         <div
