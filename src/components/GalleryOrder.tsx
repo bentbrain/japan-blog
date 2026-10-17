@@ -12,6 +12,20 @@ type GalleryItem = {
   };
 };
 
+function scrollableParent(element: HTMLElement | null) {
+  for (
+    let parent = element?.parentElement;
+    parent && parent !== document.scrollingElement;
+    parent = parent.parentElement
+  ) {
+    if (
+      /^(auto|scroll|overlay)$/.test(getComputedStyle(parent).overflowY) &&
+      parent.scrollHeight > parent.clientHeight
+    )
+      return parent;
+  }
+}
+
 export function GalleryOrder({
   selected,
   items,
@@ -31,6 +45,7 @@ export function GalleryOrder({
     x: number;
     y: number;
     active: boolean;
+    scrollElement?: HTMLElement;
     target?: string;
   }>(undefined);
   const frame = useRef<number>(undefined);
@@ -74,13 +89,28 @@ export function GalleryOrder({
   function scrollDrag() {
     const current = drag.current;
     if (!current?.active) return;
+    let top = 0,
+      bottom = innerHeight;
+    if (current.scrollElement) {
+      const bounds = current.scrollElement.getBoundingClientRect();
+      const contentTop = bounds.top + current.scrollElement.clientTop;
+      top = Math.max(0, contentTop);
+      bottom = Math.min(
+        innerHeight,
+        contentTop + current.scrollElement.clientHeight,
+      );
+    }
     const distance =
-      current.y < 48
-        ? current.y - 48
-        : current.y > innerHeight - 48
-          ? current.y - innerHeight + 48
+      current.y < top + 48
+        ? current.y - top - 48
+        : current.y > bottom - 48
+          ? current.y - bottom + 48
           : 0;
-    if (distance) window.scrollBy(0, Math.max(-16, Math.min(16, distance / 3)));
+    if (distance)
+      (current.scrollElement || window).scrollBy(
+        0,
+        Math.max(-16, Math.min(16, distance / 3)),
+      );
     updateTarget();
     frame.current = requestAnimationFrame(scrollDrag);
   }
@@ -95,6 +125,7 @@ export function GalleryOrder({
       x: event.clientX,
       y: event.clientY,
       active: false,
+      scrollElement: scrollableParent(container.current),
     };
   }
   function moveDrag(event: PointerEvent<HTMLButtonElement>) {

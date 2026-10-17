@@ -329,3 +329,196 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
     )
     .toEqual([late.id, middle.id, early.id]);
 });
+
+for (const host of ['native', 'standalone']) {
+  test(`${host} gallery drag scrolls down and up to offscreen targets and stops on cancellation`, async ({
+    page,
+    baseURL,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.route('**/demo/*.jpg', (route) =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="400"><rect width="200" height="400" fill="#dbe8ff"/><circle cx="100" cy="100" r="50" fill="#0647ff"/><text x="10" y="250" fill="#0647ff">synthetic photo</text></svg>',
+      }),
+    );
+    await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+    await page.waitForURL('**/owner');
+    const library = z
+      .object({
+        items: z.array(
+          z.object({
+            id: z.string(),
+            slug: z.string().nullable(),
+            status: z.string(),
+          }),
+        ),
+      })
+      .parse(await (await page.request.get('/api/trip/media')).json());
+    const selected = library.items
+      .filter(
+        (item) =>
+          item.status === 'published' && /^demo-\d$/.test(item.slug || ''),
+      )
+      .map((item) => item.id);
+    expect(selected).toHaveLength(9);
+    const created = await page.request.post('/api/trip/posts', {
+      headers: { 'X-EmDash-Request': '1', Origin: baseURL || '' },
+      data: {
+        title: `Synthetic ${host} autoscroll`,
+        day: '2097-10-15',
+        place: 'synthetic fixture',
+        gallery: selected,
+        document: {
+          type: 'doc',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'Synthetic gallery drag fixture.' },
+              ],
+            },
+          ],
+        },
+        publish: false,
+      },
+    });
+    expect(created.ok()).toBe(true);
+    const post = z
+      .object({ post: editorPostResponse })
+      .parse(await created.json()).post;
+    await page.goto(
+      host === 'native'
+        ? `/_emdash/admin/content/posts/${post.id}`
+        : `/owner/posts/${post.id}`,
+    );
+    if (host === 'native') {
+      await expect(page.locator('main h1')).toHaveText(
+        `Synthetic ${host} autoscroll`,
+      );
+      const welcome = page
+        .getByRole('dialog')
+        .filter({ hasText: 'Welcome to EmDash' });
+      if (await welcome.isVisible())
+        await welcome.getByRole('button', { name: 'Get Started' }).click();
+    }
+    const gallery = page.getByRole('list', { name: 'Post gallery' });
+    const tiles = gallery.locator('[data-gallery-id]');
+    await expect(tiles).toHaveCount(9);
+    await gallery.locator('img').evaluateAll(async (images) =>
+      Promise.all(
+        images.map(async (image) => {
+          if (image instanceof HTMLImageElement) await image.decode();
+        }),
+      ),
+    );
+    const ids = () =>
+      tiles.evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute('data-gallery-id')),
+      );
+    const readScroll = () =>
+      gallery.evaluate(
+        (element) =>
+          element.closest('[data-emdash-editor-canvas]')?.scrollTop ?? scrollY,
+      );
+    const viewport = await gallery.evaluate((element) => {
+      const panel = element.closest('[data-emdash-editor-canvas]');
+      const bounds = panel?.getBoundingClientRect();
+      return {
+        top: bounds?.top ?? 0,
+        bottom: bounds?.bottom ?? innerHeight,
+        panel: Boolean(panel),
+      };
+    });
+    expect(viewport.panel).toBe(host === 'native');
+    const firstId = selected[0],
+      lastId = selected.at(-1);
+    if (!firstId || !lastId)
+      throw new Error('First and last gallery items required');
+    const firstTile = gallery.locator(`[data-gallery-id="${firstId}"]`);
+    const lastTile = gallery.locator(`[data-gallery-id="${lastId}"]`);
+    const firstHandle = firstTile.getByRole('button', { name: /^Drag / });
+    await firstHandle.scrollIntoViewIfNeeded();
+    expect(
+      await lastTile.evaluate((element) => element.getBoundingClientRect().top),
+    ).toBeGreaterThan(viewport.bottom);
+    const downStart = await readScroll();
+    const source = await firstHandle.boundingBox();
+    if (!source) throw new Error('Drag handle bounds required');
+    await page.mouse.move(source.x + 10, source.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(source.x + 10, viewport.bottom - 10, { steps: 8 });
+    await expect.poll(readScroll).toBeGreaterThan(downStart + 100);
+    await expect
+      .poll(() =>
+        lastTile.evaluate((element) => element.getBoundingClientRect().top),
+      )
+      .toBeLessThan(viewport.bottom - 100);
+    const downTarget = await lastTile.locator('img').boundingBox();
+    if (!downTarget) throw new Error('Offscreen target bounds required');
+    await page.mouse.move(
+      downTarget.x + 20,
+      Math.max(
+        viewport.top + 60,
+        Math.min(viewport.bottom - 60, downTarget.y + 30),
+      ),
+    );
+    await page.mouse.up();
+    await expect.poll(ids).toEqual([...selected.slice(1), firstId]);
+    if (host === 'native') expect(await page.evaluate(() => scrollY)).toBe(0);
+
+    const movedHandle = firstTile.getByRole('button', { name: /^Drag / });
+    await movedHandle.scrollIntoViewIfNeeded();
+    const upStart = await readScroll();
+    const upSource = await movedHandle.boundingBox();
+    const topTile = tiles.first();
+    expect(
+      await topTile.evaluate((element) => element.getBoundingClientRect().top),
+    ).toBeLessThan(viewport.top);
+    if (!upSource) throw new Error('Upward drag handle required');
+    await page.mouse.move(upSource.x + 10, upSource.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(upSource.x + 10, viewport.top + 10, { steps: 8 });
+    await expect.poll(readScroll).toBeLessThan(upStart - 100);
+    await expect
+      .poll(() =>
+        topTile.evaluate((element) => element.getBoundingClientRect().top),
+      )
+      .toBeGreaterThan(viewport.top - 20);
+    const upTarget = await topTile.locator('img').boundingBox();
+    if (!upTarget) throw new Error('Upward target required');
+    await page.mouse.move(
+      upTarget.x + 20,
+      Math.max(viewport.top + 60, upTarget.y + 30),
+    );
+    await page.mouse.up();
+    await expect.poll(ids).toEqual(selected);
+
+    await firstHandle.scrollIntoViewIfNeeded();
+    const cancelStart = await readScroll();
+    const cancelSource = await firstHandle.boundingBox();
+    if (!cancelSource) throw new Error('Cancellation handle required');
+    await page.mouse.move(cancelSource.x + 10, cancelSource.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(cancelSource.x + 10, viewport.bottom - 10, {
+      steps: 8,
+    });
+    await expect.poll(readScroll).toBeGreaterThan(cancelStart + 80);
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    const stopped = await readScroll();
+    await page.evaluate(async () => {
+      for (let i = 0; i < 5; i++)
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => {
+            resolve();
+          }),
+        );
+    });
+    expect(await readScroll()).toBe(stopped);
+    expect(await ids()).toEqual(selected);
+    await expect(
+      gallery.locator('[data-dragging="true"], [data-drop-target="true"]'),
+    ).toHaveCount(0);
+  });
+}
