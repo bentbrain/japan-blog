@@ -7,15 +7,24 @@ import ShopAd from '../components/ShopAd.astro';
 import { PostMedia } from '../components/PostMedia';
 import { buttonVariants } from '../components/ui/button';
 import { Card, CardHeader, CardContent } from '../components/ui/card';
-import { tripMedia } from '../lib/content';
+import { tripMedia, tripStartDay } from '../lib/content';
+import { correctTripTitle } from '../lib/trip-days';
 import { formatDay, galleryIds } from '../lib/model';
-const { entries: posts, nextCursor } = await getEmDashCollection('posts', {
+const { entries, nextCursor } = await getEmDashCollection('posts', {
   status: 'published',
   limit: 24,
   cursor: Astro.url.searchParams.get('cursor') || undefined,
   orderBy: { day: 'desc' },
 });
 const media = await tripMedia();
+const firstDay = await tripStartDay(media);
+const posts = entries.map((post) => ({
+  ...post,
+  data: {
+    ...post.data,
+    title: correctTripTitle(post.data.day, firstDay, post.data.title),
+  },
+}));
 ---
 
 <Site>

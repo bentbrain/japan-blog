@@ -300,30 +300,81 @@ for (const width of [390, 1280]) {
 
 test('story day numbering starts with the first photo capture day, not earlier posts or beers', async ({
   page,
+  baseURL,
 }) => {
   await openSampleExport(page);
-  const response = page.waitForResponse(
-    (response) => response.url().endsWith('/api/trip/story') && response.ok(),
-  );
-  await page.getByRole('combobox', { name: 'day', exact: true }).click();
-  await page.getByRole('option', { name: '2026-10-14', exact: true }).click();
-  const manifest = z
-    .object({ day: z.string(), title: z.string() })
-    .parse(await (await response).json());
-  expect(manifest.day).toBe('2026-10-14');
-  expect(manifest.title).toBe('day 1: kyoto');
-  await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
-  const nextResponse = page.waitForResponse(
-    (response) => response.url().endsWith('/api/trip/story') && response.ok(),
-  );
-  await page.clock.setFixedTime(new Date('2030-01-01T12:00:00Z'));
-  await page.getByRole('combobox', { name: 'day', exact: true }).click();
-  await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
-  const next = z
-    .object({ day: z.string(), title: z.string() })
-    .parse(await (await nextResponse).json());
-  expect(next.day).toBe('2026-10-15');
-  expect(next.title).toMatch(/^day 2: /);
+  // Other browser files can publish uploads. Give this test its own real capture
+  // anchor so older sample photos do not define the production trip timeline.
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL || '' };
+  const file = {
+    name: 'synthetic-day-anchor.jpg',
+    mimeType: 'image/jpeg',
+    buffer: await readFile('public/demo/japan.jpg'),
+  };
+  const created = await page.request.post('/api/trip/upload', {
+    headers,
+    multipart: { original: file, display: file, poster: file },
+  });
+  expect(created.status()).toBe(201);
+  const { item, _rev } = z
+    .object({
+      data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
+    })
+    .parse(await created.json()).data;
+  try {
+    const published = await page.request.patch('/api/trip/media', {
+      headers,
+      data: {
+        id: item.id,
+        revision: _rev,
+        publish: true,
+        metadata: {
+          title: 'Synthetic day numbering anchor',
+          captured_at: '2026-10-14T15:00:00+09:00',
+          latitude: 35.68,
+          longitude: 139.76,
+          place: 'synthetic',
+          categories: [],
+        },
+      },
+    });
+    expect(published.status(), await published.text()).toBe(200);
+    const response = page.waitForResponse(
+      (response) => response.url().endsWith('/api/trip/story') && response.ok(),
+    );
+    await page.getByRole('combobox', { name: 'day', exact: true }).click();
+    await page.getByRole('option', { name: '2026-10-14', exact: true }).click();
+    const manifest = z
+      .object({ day: z.string(), title: z.string() })
+      .parse(await (await response).json());
+    expect(manifest.day).toBe('2026-10-14');
+    expect(manifest.title).toBe('day 1: kyoto');
+    await expect(
+      page.getByRole('button', { name: 'EXPORT PNG' }),
+    ).toBeEnabled();
+    const nextResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/api/trip/story') && response.ok(),
+    );
+    await page.clock.setFixedTime(new Date('2030-01-01T12:00:00Z'));
+    await page.getByRole('combobox', { name: 'day', exact: true }).click();
+    await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
+    const next = z
+      .object({ day: z.string(), title: z.string() })
+      .parse(await (await nextResponse).json());
+    expect(next.day).toBe('2026-10-15');
+    expect(next.title).toMatch(/^day 2: /);
+  } finally {
+    expect(
+      (
+        await page.request.delete(
+          `/_emdash/api/content/media_items/${item.id}`,
+          {
+            headers,
+          },
+        )
+      ).ok(),
+    ).toBe(true);
+  }
 });
 
 for (const width of [390, 1280]) {

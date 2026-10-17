@@ -1,6 +1,7 @@
 import { getEmDashCollection } from 'emdash';
 import { mediaSchema, tokyoDay, type TripMedia } from './model';
 import { z } from 'zod';
+import { readTripStartDay } from './trip-days';
 
 export async function tripMedia() {
   const items: TripMedia[] = [];
@@ -23,7 +24,23 @@ export async function tripMedia() {
   return items;
 }
 export function tripStartDay(media: TripMedia[]) {
-  return media.map((item) => tokyoDay(item.captured_at)).sort()[0];
+  return readTripStartDay(async (collection, cursor) => {
+    if (collection === 'media_items')
+      return { items: media.map((data) => ({ status: 'published', data })) };
+    const page = await getEmDashCollection('posts', {
+      status: 'published',
+      limit: 100,
+      cursor,
+      orderBy: { day: 'asc' },
+    });
+    return {
+      items: page.entries.map((entry) => ({
+        status: entry.data.status,
+        data: entry.data,
+      })),
+      nextCursor: page.nextCursor ?? undefined,
+    };
+  });
 }
 const beerSchema = z.object({
   day: z.string(),
