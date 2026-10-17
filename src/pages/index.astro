@@ -4,7 +4,7 @@ import TripContent from '../components/TripContent.astro';
 import Site from '../layouts/Site.astro';
 import JapanMap from '../components/JapanMap.astro';
 import ShopAd from '../components/ShopAd.astro';
-import PostGallery from '../components/PostGallery.astro';
+import { PostMedia } from '../components/PostMedia';
 import { buttonVariants } from '../components/ui/button';
 import { Card, CardHeader, CardContent } from '../components/ui/card';
 import { tripMedia, tripStartDay } from '../lib/content';
@@ -51,7 +51,9 @@ const posts = entries.map((post) => ({
           <CardContent className="post-body prose px-4 pb-0.5 [&_p]:mb-[17px] [&_h2]:mb-[15px] [&_h3]:mb-[15px] [&_a]:underline [&_img]:h-auto [&_img]:w-full [&_ul]:list-disc [&_ul]:pl-[23px] [&_ol]:list-decimal [&_ol]:pl-[23px] [&_ul]:pl-[23px] [&_ol]:pl-[23px]">
             <TripContent value={post.data.content} media={media} />
           </CardContent>
-          <PostGallery
+          <PostMedia
+            client:load
+            layout="responsive-gallery"
             title={post.data.title}
             design={post.data.shop_design}
             items={galleryIds(post.data.gallery).flatMap((id) => {

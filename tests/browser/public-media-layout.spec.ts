@@ -6,14 +6,14 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 
 function photoBounds(png: Uint8Array) {
-  const { width, height, data } = decode(png);
+  const { width, height, data, channels } = decode(png);
   let left = width,
     right = 0,
     top = height,
     bottom = 0;
   for (let y = 0; y < height; y++)
     for (let x = 0; x < width; x++) {
-      const offset = (y * width + x) * 4;
+      const offset = (y * width + x) * channels;
       if ((data[offset] || 0) > 200 && (data[offset + 1] || 0) < 80) {
         left = Math.min(left, x);
         right = Math.max(right, x);
@@ -78,6 +78,40 @@ for (const width of [390, 1280]) {
     }) => {
       await page.setViewportSize({ width, height: 844 });
       await page.goto(path);
+      await expect(
+        page.locator('astro-island[component-export="PostMedia"][ssr]'),
+      ).toHaveCount(0);
+      if (path === '/' && width === 390) {
+        for (const card of await page.locator('article').all()) {
+          const slides = card.locator('[data-slot="carousel-item"]');
+          for (let index = 0; index < (await slides.count()); index++) {
+            const photo = slides.nth(index).locator('.media-tile img');
+            if (await photo.count()) {
+              await photo.evaluate(async (image) => {
+                if (image instanceof HTMLImageElement) {
+                  image.loading = 'eager';
+                  await image.decode();
+                }
+              });
+              const natural = await photo.evaluate((image) =>
+                image instanceof HTMLImageElement
+                  ? image.naturalWidth / image.naturalHeight
+                  : 0,
+              );
+              const paint = photoBounds(
+                await photo.screenshot({ caret: 'initial' }),
+              );
+              expect(paint.width / paint.height).toBeCloseTo(natural, 2);
+            }
+            if (index < (await slides.count()) - 1)
+              await card.getByRole('button', { name: 'Next slide' }).click();
+          }
+        }
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth),
+        ).toBe(width);
+        return;
+      }
       const images = page.locator('.media-tile img');
       expect(await images.count()).toBeGreaterThan(1);
       const ratios = await images.evaluateAll(async (images) =>

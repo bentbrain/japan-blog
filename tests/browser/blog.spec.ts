@@ -389,7 +389,7 @@ test('journal has map first, full text and playable video', async ({
   await page.getByRole('button', { name: 'Close map preview' }).click();
   await expect(page.locator('.map-detail')).toBeHidden();
 });
-test('mobile galleries use one column without horizontal overflow', async ({
+test('mobile galleries keep bounded horizontal post media without page overflow', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -406,7 +406,13 @@ test('mobile galleries use one column without horizontal overflow', async ({
       .locator('.post-media')
       .first()
       .evaluate((el) => el.scrollWidth > el.clientWidth),
-  ).toBe(false);
+  ).toBe(true);
+  expect(
+    await page
+      .locator('.post-media')
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(320);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,

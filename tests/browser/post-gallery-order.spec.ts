@@ -30,7 +30,7 @@ test.beforeAll(async ({ request, baseURL }) => {
   });
 });
 
-for (const width of [390, 1280]) {
+for (const width of [601, 1280]) {
   test(`home post gallery stacks equal-width photos vertically at ${String(width)}px`, async ({
     page,
   }) => {
