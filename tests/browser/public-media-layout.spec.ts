@@ -95,7 +95,7 @@ for (const width of [390, 1280]) {
       await expect(
         page.locator('astro-island[component-export="PostMedia"][ssr]'),
       ).toHaveCount(0);
-      if (path === '/' && width === 390) {
+      if (path === '/') {
         for (const card of await page.locator('article').all()) {
           const slides = card.locator('[data-slot="carousel-item"]');
           for (let index = 0; index < (await slides.count()); index++) {

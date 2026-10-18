@@ -352,12 +352,6 @@ for (const width of [390, 1280]) {
       await expect(videos).toHaveCount(3);
       await videos.first().scrollIntoViewIfNeeded();
       await moving(videos.first());
-      if (path === '/' && width >= 601) {
-        // Desktop feed stacks both media. Each follows its own viewport intersection.
-        await videos.nth(1).scrollIntoViewIfNeeded();
-        await moving(videos.nth(1));
-        continue;
-      }
       await stopped(videos.nth(1));
       await carousel.getByRole('button', { name: 'Next slide' }).click();
       await videos.nth(1).scrollIntoViewIfNeeded();

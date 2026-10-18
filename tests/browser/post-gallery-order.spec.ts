@@ -31,28 +31,36 @@ test.beforeAll(async ({ request, baseURL }) => {
 });
 
 for (const width of [601, 1280]) {
-  test(`home post gallery stacks equal-width photos vertically at ${String(width)}px`, async ({
+  test(`home post carousel advances photos at ${String(width)}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/');
-    const gallery = page.locator('article .post-media').first();
-    const boxes = await gallery.locator('.media-tile').evaluateAll((tiles) =>
-      tiles.map((tile) => {
-        const box = tile.getBoundingClientRect();
-        return { x: box.x, y: box.y, width: box.width, bottom: box.bottom };
-      }),
-    );
-    expect(boxes.length).toBeGreaterThan(1);
-    for (const [index, box] of boxes.entries()) {
-      expect(box.width).toBeCloseTo(boxes[0]?.width || 0, 0);
-      expect(box.x).toBeCloseTo(boxes[0]?.x || 0, 0);
-      if (index)
-        expect(box.y).toBeGreaterThanOrEqual(boxes[index - 1]?.bottom || 0);
-    }
     await expect(
-      gallery.getByRole('button', { name: 'Next slide' }),
+      page.locator('astro-island[component-export="PostMedia"][ssr]'),
     ).toHaveCount(0);
+    const card = page.locator('article').first();
+    const first = card.locator('[data-slot="carousel-item"]').first();
+    const before = await first.evaluate(
+      (element) => element.getBoundingClientRect().left,
+    );
+    await card.getByRole('button', { name: 'Next slide' }).click();
+    await expect
+      .poll(
+        async () =>
+          before -
+          (await first.evaluate(
+            (element) => element.getBoundingClientRect().left,
+          )),
+      )
+      .toBeGreaterThan(100);
+    await expect(first).toHaveAttribute('data-video-active', 'false');
+    await card.getByRole('button', { name: 'Previous slide' }).click();
+    await expect
+      .poll(() =>
+        first.evaluate((element) => element.getBoundingClientRect().left),
+      )
+      .toBeCloseTo(before, 0);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBe(width);
