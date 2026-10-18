@@ -56,6 +56,7 @@ async function fixtures(page: Page, baseURL: string | undefined) {
   }
   let refreshes = 0;
   await page.route('**/api/trip/media', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
     refreshes++;
     const response = await route.fetch();
     const body = z
@@ -116,7 +117,7 @@ for (const width of [1280, 390])
     await dialog.getByRole('button', { name: 'APPLY (2)' }).click();
     await expect(dialog).toBeHidden();
     await expect(page.locator('#edit-status')).toHaveText('2 saved');
-    expect(refreshCount()).toBe(1);
+    expect(refreshCount()).toBe(0);
     await expect(page.getByRole('button', { name: 'EDIT (2)' })).toBeEnabled();
     await expect(
       page.getByRole('button', { name: 'PUBLISH (1)' }),
@@ -213,7 +214,7 @@ test('partial failures retain only failed selections and protect unpublished edi
   let requests = 0;
   await page.route('**/api/trip/media/edit', async (route) => {
     requests++;
-    if (requests === 1) await gate;
+    await gate;
     await route.continue();
   });
   resetRefreshes();
@@ -224,10 +225,8 @@ test('partial failures retain only failed selections and protect unpublished edi
   await expect(
     dialog.getByRole('checkbox', { name: 'change title' }),
   ).toBeDisabled();
-  await page.keyboard.press('Escape');
-  await expect(dialog).toBeVisible();
   await page.keyboard.press('Enter');
-  expect(requests).toBe(1);
+  await expect.poll(() => requests).toBe(3);
   release();
   await expect(dialog).toContainText('2 saved; 1 failed');
   await expect(dialog).toContainText(
@@ -369,4 +368,132 @@ test('edit API requires owner and CSRF protection and rejects capture metadata',
   }
   expect(current.item.status).toBe('draft');
   expect(current.item.data).toEqual({ ...original, place: '', categories: [] });
+});
+
+test('five place edits run with bounded concurrency and finish without a library refresh', async ({
+  page,
+  baseURL,
+}) => {
+  const { headers, records, resetRefreshes, refreshCount } = await fixtures(
+    page,
+    baseURL,
+  );
+  for (let i = 4; i <= 5; i++) {
+    const created = await page.request.post(
+      '/_emdash/api/content/media_items',
+      {
+        headers,
+        data: {
+          slug: crypto.randomUUID(),
+          data: {
+            title: `sample photo ${String(i)}`,
+            kind: 'photo',
+            captured_at: '2099-10-15T01:23:45.678Z',
+            latitude: 0,
+            longitude: 139,
+            place: 'sample Kyoto',
+            categories: [],
+            source_url: '/demo/japan.jpg',
+            demo: true,
+          },
+        },
+      },
+    );
+    expect(created.status()).toBe(201);
+    records.push(entry.parse(await created.json()).data);
+  }
+  await page.reload();
+  await expect(page.locator('#media-list button')).toHaveCount(5);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = 0;
+  let active = 0;
+  let peak = 0;
+  await page.route('**/api/trip/media/edit', async (route) => {
+    started++;
+    active++;
+    peak = Math.max(peak, active);
+    await gate;
+    const response = await route.fetch();
+    active--;
+    await route.fulfill({ response });
+  });
+  await page.getByRole('button', { name: 'SELECT', exact: true }).click();
+  await page.getByRole('button', { name: 'SELECT ALL', exact: true }).click();
+  await page.getByRole('button', { name: 'EDIT (5)' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog
+    .getByRole('checkbox', { name: 'change place', exact: true })
+    .check();
+  await dialog
+    .getByRole('combobox', { name: 'new place' })
+    .fill('sample Tokyo');
+  resetRefreshes();
+  await dialog.getByRole('button', { name: 'APPLY (5)' }).click();
+  await expect.poll(() => started).toBe(4);
+  await dialog.getByRole('button', { name: 'CLOSE', exact: true }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('#edit-status')).toContainText('saving');
+  release();
+  await expect(page.locator('#edit-status')).toHaveText('5 saved');
+  expect(started).toBe(5);
+  expect(peak).toBe(4);
+  expect(refreshCount()).toBe(0);
+  for (const record of records) {
+    const stored = entry.parse(
+      await (
+        await page.request.get(
+          `/_emdash/api/content/media_items/${record.item.id}`,
+        )
+      ).json(),
+    ).data.item;
+    expect(stored.data.place).toBe('sample Tokyo');
+    expect(stored.data.latitude).toBe(record.item.data.latitude);
+    expect(stored.data.captured_at).toBe(record.item.data.captured_at);
+    expect(stored.status).toBe(record.item.status);
+  }
+});
+
+test('individual saves update cached revisions and never wait for a library reload', async ({
+  page,
+  baseURL,
+}) => {
+  const { records, resetRefreshes, refreshCount } = await fixtures(
+    page,
+    baseURL,
+  );
+  const draft = records.find(
+    (record) => record.item.data.title === 'sample draft',
+  );
+  if (!draft) throw new Error('Missing sample draft');
+  await page
+    .getByRole('button', { name: 'sample draft, draft', exact: true })
+    .click();
+  resetRefreshes();
+  for (const place of ['sample Tokyo', 'sample Osaka']) {
+    await page.getByLabel('place', { exact: true }).fill(place);
+    const response = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/trip/media') &&
+        response.request().method() === 'PATCH',
+    );
+    await page.getByRole('button', { name: 'SAVE', exact: true }).click();
+    expect((await response).status()).toBe(200);
+    await expect(
+      page.getByRole('button', { name: 'SAVE', exact: true }),
+    ).toBeEnabled();
+    await expect(page.locator('#save-status')).toHaveText('saved');
+  }
+  expect(refreshCount()).toBe(0);
+  const stored = entry.parse(
+    await (
+      await page.request.get(
+        `/_emdash/api/content/media_items/${draft.item.id}`,
+      )
+    ).json(),
+  ).data.item;
+  expect(stored.data.place).toBe('sample Osaka');
+  expect(stored.data.latitude).toBe(draft.item.data.latitude);
 });

@@ -28,8 +28,22 @@ async function openSampleExport(page: Page) {
   await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/export');
   await page.waitForURL('**/owner/export');
   await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
-  await page.getByRole('combobox', { name: 'day', exact: true }).click();
-  await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
+  const day = page.getByRole('combobox', { name: 'day', exact: true });
+  if ((await day.innerText()).trim() !== '2026-10-15') {
+    const changed = page.waitForResponse((response) => {
+      if (!response.url().endsWith('/api/trip/story') || !response.ok())
+        return false;
+      const body = z
+        .object({ day: z.string() })
+        .safeParse(response.request().postDataJSON());
+      return body.success && body.data.day === '2026-10-15';
+    });
+    await day.click();
+    await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
+    await changed;
+  }
+  // The previous day's enabled export button can survive until React's next
+  // effect. Wait for the selected day's response before measuring drag bounds.
   await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
 }
 

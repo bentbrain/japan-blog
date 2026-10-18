@@ -3,6 +3,9 @@ import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { editorExtensions } from '../lib/editor-extensions';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { OwnerQueryProvider } from './OwnerQueryProvider';
+import { ownerMediaQuery } from '../lib/owner-queries';
 import { editorPostSchema, type EditorPost } from '../lib/editor-model';
 import { Button, buttonVariants } from './ui/button';
 import { Input } from './ui/input';
@@ -53,7 +56,6 @@ const mediaSchema = z.object({
     poster_url: z.string().nullish(),
   }),
 });
-type Media = z.infer<typeof mediaSchema>;
 
 function EditorForm({
   post,
@@ -62,7 +64,20 @@ function EditorForm({
   post: EditorPost;
   onSaved: (post: EditorPost) => void;
 }) {
-  const [items, setItems] = useState<Media[]>([]);
+  const savePost = useMutation({
+    mutationFn: (input: unknown) => api('/api/trip/posts', input),
+  });
+  const lifecycle = useMutation({
+    mutationFn: ({
+      path,
+      body,
+      method,
+    }: {
+      path: string;
+      body?: unknown;
+      method?: string;
+    }) => api(path, body, method),
+  });
   const [gallery, setGallery] = useState(post.data.gallery);
   const preserveGalleryOrder = useRef(post.data.gallery.length > 0);
   const [shopDesign, setShopDesign] = useState(post.data.shop_design ?? null);
@@ -82,6 +97,15 @@ function EditorForm({
     setStatus('');
   }
   const [pickerOpen, setPickerOpen] = useState(false);
+  const media = useQuery({
+    ...ownerMediaQuery,
+    select: (items) =>
+      items
+        .filter((item) => item.status === 'published')
+        .map((item) => mediaSchema.parse(item)),
+    enabled: pickerOpen || gallery.length > 0,
+  });
+  const items = media.data ?? [];
   const [linkOpen, setLinkOpen] = useState(false);
   const [href, setHref] = useState('');
   const [linkError, setLinkError] = useState('');
@@ -109,29 +133,6 @@ function EditorForm({
       italic: current?.isActive('italic') || false,
     }),
   });
-  useEffect(() => {
-    let cancelled = false;
-    api('/api/trip/media')
-      .then((data) => {
-        if (!cancelled)
-          setItems(
-            z
-              .object({ items: z.array(z.looseObject({ status: z.string() })) })
-              .parse(data)
-              .items.filter((item) => item.status === 'published')
-              .map((item) => mediaSchema.parse(item)),
-          );
-      })
-      .catch((error: unknown) => {
-        if (!cancelled)
-          setStatus(
-            error instanceof Error ? error.message : 'Could not load media',
-          );
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
   useEffect(() => {
     const leave = (event: BeforeUnloadEvent) => {
       if (dirty && !deleted.current) event.preventDefault();
@@ -163,7 +164,7 @@ function EditorForm({
           publicationError: z.string().optional(),
         })
         .parse(
-          await api('/api/trip/posts', {
+          await savePost.mutateAsync({
             id: post.id || undefined,
             revision: post.revision || undefined,
             title: values.get('title'),
@@ -211,7 +212,12 @@ function EditorForm({
               item: z.object({ status: z.string() }),
             }),
           })
-          .parse(await api(`${path}/unpublish`, { _rev: post.revision }));
+          .parse(
+            await lifecycle.mutateAsync({
+              path: `${path}/unpublish`,
+              body: { _rev: post.revision },
+            }),
+          );
         onSaved({
           ...post,
           revision: result.data._rev,
@@ -226,7 +232,7 @@ function EditorForm({
           ].join('\n'),
         );
       } else {
-        await api(path, undefined, 'DELETE');
+        await lifecycle.mutateAsync({ path, method: 'DELETE' });
         deleted.current = true;
         window.location.assign('/owner');
       }
@@ -396,6 +402,11 @@ function EditorForm({
                     <a href="/owner/media" className="underline">
                       UPLOAD / EDIT MEDIA →
                     </a>
+                    <p role="status" className="empty:hidden">
+                      {media.isFetching && !media.data
+                        ? 'loading media'
+                        : media.error?.message}
+                    </p>
                     <div className="trip-gallery-field">
                       <div className="trip-gallery-options grid grid-cols-2 gap-3 sm:grid-cols-3">
                         {captureOrder(items).map((item) => (
@@ -598,53 +609,60 @@ function EditorForm({
             </>
           )}
           <p className="whitespace-pre-wrap empty:hidden" role="status">
-            {status}
+            {status || media.error?.message}
           </p>
         </FieldGroup>
       </div>
     </form>
   );
 }
-export function OwnerEditor({ id, day }: { id?: string; day: string }) {
-  const [post, setPost] = useState<EditorPost>();
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let cancelled = false;
-    if (!id) {
-      setPost({
-        id: '',
-        revision: '',
-        status: 'draft',
-        data: {
-          title: '',
-          day,
-          place: '',
-          gallery: [],
-          document: { type: 'doc', content: [{ type: 'paragraph' }] },
-        },
-      });
-      return;
-    }
-    api(`/api/trip/posts?id=${encodeURIComponent(id)}`)
-      .then((data) => {
-        if (!cancelled) setPost(editorPostSchema.parse(data));
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled)
-          setError(
-            reason instanceof Error ? reason.message : 'Could not load post',
-          );
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, day]);
-  return post ? (
-    <EditorForm post={post} onSaved={setPost} />
+export function OwnerEditor(props: { id?: string; day: string }) {
+  return (
+    <OwnerQueryProvider>
+      <PostEditor {...props} />
+    </OwnerQueryProvider>
+  );
+}
+function PostEditor({ id, day }: { id?: string; day: string }) {
+  const client = useQueryClient();
+  const queryKey = ['owner', 'post', id || 'new', day];
+  const query = useQuery({
+    queryKey,
+    queryFn: async ({ signal }) =>
+      id
+        ? editorPostSchema.parse(
+            await api(
+              `/api/trip/posts?id=${encodeURIComponent(id)}`,
+              undefined,
+              'GET',
+              signal,
+            ),
+          )
+        : editorPostSchema.parse({
+            id: '',
+            revision: '',
+            status: 'draft',
+            data: {
+              title: '',
+              day,
+              place: '',
+              gallery: [],
+              document: { type: 'doc', content: [{ type: 'paragraph' }] },
+            },
+          }),
+    staleTime: Infinity,
+  });
+  return query.data ? (
+    <EditorForm
+      post={query.data}
+      onSaved={(post) => {
+        client.setQueryData(queryKey, post);
+      }}
+    />
   ) : (
     <div className="space-y-3">
-      <p role="status">{error || 'loading'}</p>
-      {error && id && (
+      <p role="status">{query.error?.message || 'loading'}</p>
+      {query.isError && id && (
         <a
           className={buttonVariants()}
           href={`/_emdash/admin/content/posts/${encodeURIComponent(id)}`}

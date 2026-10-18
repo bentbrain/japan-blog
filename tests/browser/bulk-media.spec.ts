@@ -200,7 +200,7 @@ test('batch continues past invalid metadata and revision conflicts, then retries
   const requested: string[] = [];
   await page.route('**/media_items/*/publish', async (route) => {
     requested.push(route.request().url());
-    if (requested.length === 1) await gate;
+    await gate;
     await route.continue();
   });
   // Count only batch refreshes. A prior page mount can overlap the reload.
@@ -208,7 +208,7 @@ test('batch continues past invalid metadata and revision conflicts, then retries
   const firstRequest = page.waitForRequest('**/media_items/*/publish');
   await page.getByRole('button', { name: 'PUBLISH (3)', exact: true }).click();
   await firstRequest;
-  await expect(page.locator('#publish-status')).toHaveText('publishing 1 / 3');
+  await expect(page.locator('#publish-status')).toHaveText('publishing 3 / 3');
   await expect(
     page.getByRole('button', { name: 'PUBLISHING', exact: true }),
   ).toBeDisabled();
@@ -219,7 +219,7 @@ test('batch continues past invalid metadata and revision conflicts, then retries
     page.getByRole('button', { name: 'UPLOAD', exact: true }),
   ).toBeDisabled();
   await page.keyboard.press('Enter');
-  expect(requested).toHaveLength(1);
+  await expect.poll(() => requested.length).toBe(3);
   release();
   await expect(page.locator('#publish-status')).toHaveText(
     '1 published; 2 failed',

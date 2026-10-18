@@ -11,11 +11,15 @@ import {
 } from '../../../lib/editor-conversion';
 import { publishItem, savedItemSchema } from '../../../lib/publish';
 import { shopDesignSchema } from '../../../lib/shop-design';
-import { tripMedia, tripStartDay } from '../../../lib/content';
+import { tripStartDayFromContent } from '../../../lib/content';
 import { correctTripTitle, isNumberedTripTitle } from '../../../lib/trip-days';
-async function editorTitle(day: string, title: string) {
+async function editorTitle(
+  cms: App.Locals['emdash'],
+  day: string,
+  title: string,
+) {
   if (!isNumberedTripTitle(title)) return title;
-  return correctTripTitle(day, await tripStartDay(await tripMedia()), title);
+  return correctTripTitle(day, await tripStartDayFromContent(cms), title);
 }
 const portableBlocks = z.array(
   z.looseObject({ _type: z.string(), _key: z.string() }),
@@ -63,7 +67,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
     revision: result.data._rev,
     status: result.data.item.status,
     data: {
-      title: await editorTitle(data.day, data.title),
+      title: await editorTitle(locals.emdash, data.day, data.title),
       day: data.day,
       place: data.place || '',
       gallery: data.gallery || [],
@@ -123,7 +127,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
       status: current.data.item.status,
       data: {
         ...fields,
-        title: await editorTitle(fields.day, fields.title),
+        title: await editorTitle(locals.emdash, fields.day, fields.title),
         document,
       },
     },

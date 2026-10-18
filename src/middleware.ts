@@ -1,8 +1,8 @@
 import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
-import { z } from 'zod';
 import { getRequestContext } from 'emdash';
 import { ensureLocalIconSchema } from './lib/category-icon-dev';
+import { publishedMediaAccess } from './lib/published-media-access';
 
 export const onRequest = defineMiddleware(async (context, next) => {
   if (import.meta.env.DEV) await ensureLocalIconSchema(env.DB);
@@ -73,52 +73,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
     context.cache.set(false);
     if (!owner) {
       const key = mediaFile[2] || '';
-      const assetId =
-        mediaFile[1] === 'asset'
-          ? key.split('/')[0]
-          : (
-              await context.locals.emdash.db
-                .selectFrom('media')
-                .select('id')
-                .where('storage_key', '=', key)
-                .executeTakeFirst()
-            )?.id;
-      if (!assetId)
-        return new Response('Not found', {
-          status: 404,
-          headers: { 'Cache-Control': 'private, no-store' },
-        });
-      let allowed = false;
-      let cursor: string | undefined;
-      do {
-        const result = await context.locals.emdash.handleContentList(
-          'media_items',
-          {
-            status: 'published',
-            limit: 100,
-            cursor,
-          },
-        );
-        if (!result.success) break;
-        const page = z
-          .object({
-            items: z.array(
-              z.object({
-                data: z.object({
-                  asset: z.object({ id: z.string() }).nullish(),
-                  poster: z.object({ id: z.string() }).nullish(),
-                }),
-              }),
-            ),
-            nextCursor: z.string().nullish(),
-          })
-          .parse(result.data);
-        allowed = page.items.some(
-          ({ data }) =>
-            data.asset?.id === assetId || data.poster?.id === assetId,
-        );
-        cursor = page.nextCursor ?? undefined;
-      } while (!allowed && cursor);
+      const allowed = await publishedMediaAccess(
+        env.DB,
+        mediaFile[1] === 'asset' ? 'asset' : 'file',
+        mediaFile[1] === 'asset' ? key.split('/')[0] || '' : key,
+      );
       if (!allowed)
         return new Response('Not found', {
           status: 404,

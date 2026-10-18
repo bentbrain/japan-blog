@@ -127,3 +127,96 @@ test('category tools require the owner and reject forged creation requests', asy
   });
   expect(invalid.status()).toBe(400);
 });
+
+for (const path of ['/categories', '/owner/media']) {
+  test(`failed category creation recovers a cancelled initial query on ${path}`, async ({
+    page,
+    baseURL,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner');
+    await page.waitForURL('**/owner');
+    if (path === '/owner/media') {
+      const created = await page.request.post(
+        '/_emdash/api/content/media_items',
+        {
+          headers: { Origin: baseURL || '', 'X-EmDash-Request': '1' },
+          data: {
+            slug: crypto.randomUUID(),
+            data: {
+              title: 'sample category recovery photo',
+              kind: 'photo',
+              categories: [],
+              source_url: '/demo/japan.jpg',
+              captured_at: '2099-10-15T01:23:45.678Z',
+              latitude: 0,
+              longitude: 139,
+              demo: true,
+            },
+          },
+        },
+      );
+      expect(created.status()).toBe(201);
+    }
+    let loads = 0;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route('**/api/trip/categories', async (route) => {
+      if (route.request().method() === 'POST')
+        return route.fulfill({
+          status: 503,
+          json: { error: 'sample category creation failed' },
+        });
+      const requestNumber = ++loads;
+      const response = await route.fetch();
+      if (requestNumber === 1) await gate;
+      try {
+        await route.fulfill({ response });
+      } catch (error) {
+        if (!route.request().failure()) throw error;
+      }
+    });
+    try {
+      await page.goto(path);
+      await expect.poll(() => loads).toBe(1);
+      await page
+        .getByRole('button', { name: 'NEW CATEGORY', exact: true })
+        .click();
+      const dialog = page.getByRole('dialog');
+      await dialog
+        .getByLabel('name', { exact: true })
+        .fill('sample failed category');
+      await dialog.getByRole('button', { name: 'CREATE', exact: true }).click();
+      await expect(dialog.getByRole('status')).toHaveText(
+        'sample category creation failed',
+      );
+      release();
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      await expect.poll(() => loads).toBe(2);
+      if (path === '/categories') {
+        await expect(
+          page.getByText('loading categories', { exact: true }),
+        ).toHaveCount(0);
+        await expect(page.getByLabel('Saved categories')).toContainText('food');
+        await page.screenshot({
+          path: '/tmp/japan-pr57-category-loading-recovered.png',
+        });
+      } else {
+        await page
+          .getByRole('button', {
+            name: 'sample category recovery photo, draft',
+            exact: true,
+          })
+          .click();
+        await expect(
+          page.getByRole('checkbox', { name: 'food', exact: true }),
+        ).toBeVisible();
+      }
+    } finally {
+      release();
+    }
+  });
+}
