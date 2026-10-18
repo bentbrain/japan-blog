@@ -33,6 +33,9 @@ const previous = media[(index - 1 + media.length) % media.length],
     </div>
     {item.kind === 'video' ? (
       <video
+        data-visibility-video
+        muted
+        loop
         src={mediaUrl(item)}
         controls
         playsinline

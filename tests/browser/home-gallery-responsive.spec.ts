@@ -464,6 +464,9 @@ for (const scheme of ['light', 'dark']) {
         throw new Error('Video fixture required');
       element.muted = true;
     });
+    await expect.poll(async () => !(await videoState()).paused).toBe(true);
+    await video.press('Space');
+    await expect.poll(async () => (await videoState()).paused).toBe(true);
     await video.press('Space');
     await expect.poll(async () => !(await videoState()).paused).toBe(true);
     const videoSwipeBounds = await frame.boundingBox();
