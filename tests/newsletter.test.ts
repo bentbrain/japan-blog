@@ -428,6 +428,40 @@ void test('only public live entries are compiled, including late older days, wit
     '',
   );
 });
+void test('long stories stay complete in previews, owner tests and subscriber emails', async () => {
+  const f = fixture();
+  await due(f);
+  const story = post('long-story');
+  const paragraphs = [
+    'A complete first paragraph. '.repeat(30).trim(),
+    'A complete second paragraph. '.repeat(30).trim(),
+    'The final paragraph must reach the reader.',
+  ];
+  story.data.content = paragraphs.map((text) => ({
+    _type: 'block',
+    children: [{ _type: 'span', text }],
+  }));
+  f.posts.push(story);
+
+  const posts = await pendingDigestPosts(f.ctx);
+  assert.equal(posts[0]?.excerpt, paragraphs.join('\n\n'));
+  const preview = await digestEmail(posts, 'https://jp.bent.build', true);
+  await configureNewsletter(f.ctx, { action: 'test' }, 'owner@example.com');
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  const emailSchema = z.object({ html: z.string(), text: z.string() });
+  const ownerEmail = emailSchema.parse(
+    f.calls.find((call) => call.path === '/emails')?.body,
+  );
+  const subscriberEmail = emailSchema.parse(
+    f.calls.find((call) => call.path === '/broadcasts')?.body,
+  );
+  for (const email of [preview, ownerEmail, subscriberEmail]) {
+    for (const paragraph of paragraphs) {
+      assert.ok(email.html.includes(paragraph));
+      assert.ok(email.text.includes(paragraph));
+    }
+  }
+});
 void test('concurrent schedules create and send one broadcast to the dedicated segment', async () => {
   const f = fixture();
   await due(f);
