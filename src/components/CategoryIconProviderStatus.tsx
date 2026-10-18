@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from './ui/button';
 
 const providerSchema = z.object({
@@ -8,47 +9,41 @@ const providerSchema = z.object({
   canResume: z.boolean(),
 });
 export function CategoryIconProviderStatus() {
-  const [provider, setProvider] = useState<z.infer<typeof providerSchema>>();
+  const client = useQueryClient();
+  const query = useQuery({
+    queryKey: ['owner', 'icon-provider'],
+    queryFn: async ({ signal }) =>
+      providerSchema.parse(
+        await api(
+          '/api/trip/category-icons/provider',
+          undefined,
+          'GET',
+          signal,
+        ),
+      ),
+    refetchInterval: 15_000,
+  });
+  const provider = query.data;
+  const mutation = useMutation({
+    mutationFn: () =>
+      api('/api/trip/category-icons/provider', { action: 'resume' }),
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   useEffect(() => {
-    let active = true;
-    const load = async () => {
-      try {
-        const next = providerSchema.parse(
-          await api('/api/trip/category-icons/provider'),
-        );
-        if (active) {
-          setProvider(next);
-          setError('');
-          if (next.paused) setNotice('');
-        }
-      } catch {
-        if (active) setError('could not load icon service status');
-      }
-    };
-    void load();
-    const timer = setInterval(() => {
-      void load();
-    }, 15_000);
     const refresh = () => {
-      void load();
+      void client.invalidateQueries({ queryKey: ['owner', 'icon-provider'] });
     };
     window.addEventListener('category-icons:changed', refresh);
     return () => {
-      active = false;
-      clearInterval(timer);
       window.removeEventListener('category-icons:changed', refresh);
     };
-  }, []);
+  }, [client]);
   async function resume() {
     setBusy(true);
     try {
-      await api('/api/trip/category-icons/provider', { action: 'resume' });
-      setProvider(
-        providerSchema.parse(await api('/api/trip/category-icons/provider')),
-      );
+      await mutation.mutateAsync();
       setError('');
       setNotice('icon generation resumed');
       window.dispatchEvent(new Event('category-icons:changed'));
@@ -62,7 +57,7 @@ export function CategoryIconProviderStatus() {
       setBusy(false);
     }
   }
-  if (!provider?.paused && !error && !notice) return null;
+  if (!provider?.paused && !error && !query.isError && !notice) return null;
   return (
     <section
       aria-label="Icon generation service"
@@ -82,7 +77,7 @@ export function CategoryIconProviderStatus() {
             type="button"
             variant="outline"
             size="sm"
-            disabled={busy || !provider.canResume}
+            disabled={busy || query.isFetching || !provider.canResume}
             onClick={() => {
               void resume();
             }}
@@ -92,7 +87,9 @@ export function CategoryIconProviderStatus() {
         </>
       )}
       <p role="status" className="empty:hidden">
-        {error || notice}
+        {error ||
+          (query.isError ? 'could not load icon service status' : '') ||
+          notice}
       </p>
     </section>
   );

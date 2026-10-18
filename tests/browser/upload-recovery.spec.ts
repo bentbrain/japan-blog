@@ -9,6 +9,17 @@ test('a stalled MOV times out, later photos upload, and retry sends only the fai
   await expect(
     page.getByRole('button', { name: 'UPLOAD', exact: true }),
   ).toBeEnabled();
+  expect(
+    await page.evaluate(() =>
+      performance
+        .getEntriesByType('resource')
+        .some((entry) => entry.name.includes('/deps/mediabunny.js')),
+    ),
+  ).toBe(false);
+  // Load the optional upload code explicitly for this fault-injection test.
+  await page.evaluate(async (path) => {
+    await import(path);
+  }, '/src/lib/prepare-media.ts');
   await page.evaluate(async () => {
     const resource = performance
       .getEntriesByType('resource')

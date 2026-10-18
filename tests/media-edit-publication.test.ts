@@ -10,6 +10,7 @@ import { sqlite } from 'emdash/db';
 import { createDialect } from 'emdash/db/sqlite';
 import { z } from 'zod';
 import { saveMediaEdit } from '../src/lib/save-media-edit';
+import { ownerMedia } from '../src/lib/owner-media';
 
 // Real native revisions/publication, with only Vite's build-time config supplied.
 const hooks = registerHooks({
@@ -280,4 +281,76 @@ void test('native publication preconditions protect a private save after the upd
   } finally {
     cms.handleContentPublish = publish;
   }
+});
+
+void test('loading the owner library only rereads pending drafts and preserves native revision tokens', async () => {
+  for (let i = 0; i < 110; i++) {
+    result.parse(
+      await cms.handleContentCreate('media_items', {
+        data: {
+          title: `sample library ${String(i)}`,
+          place: 'sample Kyoto',
+          categories: [],
+        },
+      }),
+    );
+  }
+  let pending = 0;
+  let cursor: string | undefined;
+  do {
+    const listed = await cms.handleContentList('media_items', {
+      limit: 100,
+      cursor,
+    });
+    assert.ok(listed.success && listed.data);
+    pending += listed.data.items.filter((item) => item.draftRevisionId).length;
+    cursor = listed.data.nextCursor ?? undefined;
+  } while (cursor);
+  const get = cms.handleContentGet.bind(cms);
+  let reads = 0;
+  cms.handleContentGet = (...args) => {
+    reads++;
+    return get(...args);
+  };
+  let library;
+  try {
+    library = await ownerMedia(cms);
+    assert.equal(
+      reads,
+      pending,
+      'ordinary rows already exist in the list response',
+    );
+  } finally {
+    cms.handleContentGet = get;
+  }
+  for (const item of library.items) {
+    const native = result.parse(await get('media_items', item.id)).data;
+    assert.equal(item._rev, native._rev);
+    assert.deepEqual(item.data, native.item.data);
+    assert.equal(item.status, native.item.status);
+  }
+  const draft = library.items.find(
+    (item) => item.data.title === 'sample library 0',
+  );
+  assert.ok(draft);
+  assert.equal(
+    (
+      await saveMediaEdit(cms, actor, {
+        id: draft.id,
+        revision: draft._rev,
+        changes: { place: 'sample Tokyo' },
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await saveMediaEdit(cms, actor, {
+        id: draft.id,
+        revision: draft._rev,
+        changes: { place: 'sample stale place' },
+      })
+    ).status,
+    409,
+  );
 });
