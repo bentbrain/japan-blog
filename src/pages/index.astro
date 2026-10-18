@@ -53,7 +53,6 @@ const posts = entries.map((post) => ({
           </CardContent>
           <PostMedia
             client:load
-            layout="responsive-gallery"
             title={post.data.title}
             design={post.data.shop_design}
             items={galleryIds(post.data.gallery).flatMap((id) => {

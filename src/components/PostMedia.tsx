@@ -48,12 +48,6 @@ function CarouselControls({ count }: { count: number }) {
 const carouselOptions: CarouselOptions = {
   align: 'start',
   containScroll: 'trimSnaps',
-  watchDrag: (_api, event) =>
-    !(event.target instanceof Element && event.target.closest('video')),
-};
-
-const galleryOptions: CarouselOptions = {
-  ...carouselOptions,
   breakpoints: {
     '(prefers-reduced-motion: reduce)': { duration: 0 },
   },
@@ -74,45 +68,32 @@ export function PostMedia({
   items,
   design: value,
   title,
-  layout = 'carousel',
 }: {
   items: TripMedia[];
   design?: unknown;
   title: string;
-  layout?: 'carousel' | 'responsive-gallery';
 }) {
-  const boundedGallery = layout === 'responsive-gallery';
   const parsed = shopDesignSchema.safeParse(value);
   const design = parsed.success ? parsed.data : undefined;
   const count = items.length + (design ? 1 : 0);
   if (!count) return null;
   return (
     <Carousel
-      className={`post-carousel @container/media min-w-0 ${boundedGallery ? 'feed-gallery' : ''}`}
+      className="post-carousel min-w-0"
       aria-label={`${title} media`}
-      opts={boundedGallery ? galleryOptions : carouselOptions}
+      opts={carouselOptions}
     >
-      <CarouselContent
-        className={
-          boundedGallery
-            ? 'post-media ml-0 h-[min(320px,50svh)] touch-pan-y items-start select-none'
-            : 'post-media -ml-[5px] touch-pan-y items-start select-none'
-        }
-      >
+      <CarouselContent className="post-media ml-0 h-[min(320px,50svh)] touch-pan-y items-start select-none">
         {items.map((item, index) => (
           <CarouselItem
             key={item.id}
             aria-label={`${String(index + 1)} of ${String(count)}`}
             data-video-active={index === 0 ? 'true' : 'false'}
-            className={
-              boundedGallery
-                ? 'h-full basis-full pl-0'
-                : `pl-[5px] ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`
-            }
+            className="h-full basis-full pl-0"
           >
             {item.kind === 'video' ? (
               <div
-                className={`media-tile relative min-w-0 overflow-hidden bg-muted ${boundedGallery ? 'h-full' : ''}`}
+                className="media-tile relative h-full min-w-0 overflow-hidden bg-muted"
                 data-feedback-id={`media-${item.id}`}
               >
                 <video
@@ -125,16 +106,12 @@ export function PostMedia({
                   playsInline
                   preload="metadata"
                   aria-label={item.title}
-                  className={
-                    boundedGallery
-                      ? 'block size-full object-contain'
-                      : 'block h-auto w-full'
-                  }
+                  className="block size-full object-contain"
                 />
               </div>
             ) : (
               <a
-                className={`media-tile relative block min-w-0 overflow-hidden bg-muted ${boundedGallery ? 'h-full' : ''}`}
+                className="media-tile relative block h-full min-w-0 overflow-hidden bg-muted"
                 href={`/media/${item.slug || item.id}`}
                 aria-label={item.title}
                 data-feedback-id={`media-${item.id}`}
@@ -145,11 +122,7 @@ export function PostMedia({
                   alt={item.title}
                   loading="lazy"
                   draggable={false}
-                  className={
-                    boundedGallery
-                      ? 'block size-full object-contain'
-                      : 'block h-auto w-full'
-                  }
+                  className="block size-full object-contain"
                 />
               </a>
             )}
@@ -158,11 +131,7 @@ export function PostMedia({
         {design && (
           <CarouselItem
             aria-label={`${String(count)} of ${String(count)}, shop design`}
-            className={
-              boundedGallery
-                ? 'post-design-slide h-full basis-full px-4 pb-4 [&_.post-design]:h-full [&_.post-design_img]:h-full'
-                : `post-design-slide px-4 pb-4 ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`
-            }
+            className="post-design-slide h-full basis-full px-4 pb-4 [&_.post-design]:h-full [&_.post-design_img]:h-full"
           >
             <PostDesign design={design} />
           </CarouselItem>
