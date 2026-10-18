@@ -256,7 +256,11 @@ test('owner attaches, recolours and removes a shop design', async ({
   await expect(card.locator('.post-media > :last-child')).toHaveClass(
     /post-design-slide/,
   );
-  await expect(card.getByRole('button', { name: 'Next slide' })).toHaveCount(0);
+  await expect(card.getByRole('button', { name: 'Next slide' })).toBeEnabled();
+  for (let index = 0; index < 3; index++)
+    await card.getByRole('button', { name: 'Next slide' }).click();
+  await expect(card.getByText('4 / 4', { exact: true })).toBeVisible();
+  await expect(card.locator('.post-design-link')).toBeInViewport();
   await expect(card.locator('.post-design img')).toHaveAttribute(
     'src',
     /\/black\.webp\?/,

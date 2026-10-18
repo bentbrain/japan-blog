@@ -12,13 +12,7 @@ import {
   type CarouselOptions,
 } from './ui/carousel';
 
-function CarouselControls({
-  count,
-  stackedDesktop,
-}: {
-  count: number;
-  stackedDesktop: boolean;
-}) {
+function CarouselControls({ count }: { count: number }) {
   const { api } = useCarousel();
   const [current, setCurrent] = useState(1);
   useEffect(() => {
@@ -26,27 +20,20 @@ function CarouselControls({
     const update = () => {
       const selected = api.selectedScrollSnap();
       setCurrent(selected + 1);
-      const stacked =
-        stackedDesktop && matchMedia('(min-width: 601px)').matches;
       api.slideNodes().forEach((slide, index) => {
-        slide.dataset.videoActive = String(stacked || index === selected);
+        slide.dataset.videoActive = String(index === selected);
       });
     };
     update();
-    const breakpoint = matchMedia('(min-width: 601px)');
-    breakpoint.addEventListener('change', update);
     api.on('select', update);
     api.on('reInit', update);
     return () => {
-      breakpoint.removeEventListener('change', update);
       api.off('select', update);
       api.off('reInit', update);
     };
-  }, [api, stackedDesktop]);
+  }, [api]);
   return count > 1 ? (
-    <div
-      className={`flex items-center justify-between gap-3 px-4 py-3 ${stackedDesktop ? 'min-[601px]:hidden' : ''}`}
-    >
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
       <span aria-live="polite" aria-atomic="true">
         {current} / {count}
       </span>
@@ -69,7 +56,6 @@ const galleryOptions: CarouselOptions = {
   ...carouselOptions,
   breakpoints: {
     '(prefers-reduced-motion: reduce)': { duration: 0 },
-    '(min-width: 601px)': { active: false },
   },
   watchDrag: (_api, event) => {
     const video =
@@ -95,21 +81,21 @@ export function PostMedia({
   title: string;
   layout?: 'carousel' | 'responsive-gallery';
 }) {
-  const stackedDesktop = layout === 'responsive-gallery';
+  const boundedGallery = layout === 'responsive-gallery';
   const parsed = shopDesignSchema.safeParse(value);
   const design = parsed.success ? parsed.data : undefined;
   const count = items.length + (design ? 1 : 0);
   if (!count) return null;
   return (
     <Carousel
-      className={`post-carousel @container/media min-w-0 ${stackedDesktop ? 'feed-gallery' : ''}`}
+      className={`post-carousel @container/media min-w-0 ${boundedGallery ? 'feed-gallery' : ''}`}
       aria-label={`${title} media`}
-      opts={stackedDesktop ? galleryOptions : carouselOptions}
+      opts={boundedGallery ? galleryOptions : carouselOptions}
     >
       <CarouselContent
         className={
-          stackedDesktop
-            ? 'post-media ml-0 h-[min(320px,50svh)] touch-pan-y items-start select-none min-[601px]:grid min-[601px]:h-auto min-[601px]:grid-cols-1 min-[601px]:gap-[5px]'
+          boundedGallery
+            ? 'post-media ml-0 h-[min(320px,50svh)] touch-pan-y items-start select-none'
             : 'post-media -ml-[5px] touch-pan-y items-start select-none'
         }
       >
@@ -119,14 +105,14 @@ export function PostMedia({
             aria-label={`${String(index + 1)} of ${String(count)}`}
             data-video-active={index === 0 ? 'true' : 'false'}
             className={
-              stackedDesktop
-                ? 'h-full basis-full pl-0 min-[601px]:h-auto'
+              boundedGallery
+                ? 'h-full basis-full pl-0'
                 : `pl-[5px] ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`
             }
           >
             {item.kind === 'video' ? (
               <div
-                className={`media-tile relative min-w-0 overflow-hidden bg-muted ${stackedDesktop ? 'h-full min-[601px]:h-auto' : ''}`}
+                className={`media-tile relative min-w-0 overflow-hidden bg-muted ${boundedGallery ? 'h-full' : ''}`}
                 data-feedback-id={`media-${item.id}`}
               >
                 <video
@@ -140,15 +126,15 @@ export function PostMedia({
                   preload="metadata"
                   aria-label={item.title}
                   className={
-                    stackedDesktop
-                      ? 'block size-full object-contain min-[601px]:h-auto'
+                    boundedGallery
+                      ? 'block size-full object-contain'
                       : 'block h-auto w-full'
                   }
                 />
               </div>
             ) : (
               <a
-                className={`media-tile relative block min-w-0 overflow-hidden bg-muted ${stackedDesktop ? 'h-full min-[601px]:h-auto' : ''}`}
+                className={`media-tile relative block min-w-0 overflow-hidden bg-muted ${boundedGallery ? 'h-full' : ''}`}
                 href={`/media/${item.slug || item.id}`}
                 aria-label={item.title}
                 data-feedback-id={`media-${item.id}`}
@@ -160,8 +146,8 @@ export function PostMedia({
                   loading="lazy"
                   draggable={false}
                   className={
-                    stackedDesktop
-                      ? 'block size-full object-contain min-[601px]:h-auto'
+                    boundedGallery
+                      ? 'block size-full object-contain'
                       : 'block h-auto w-full'
                   }
                 />
@@ -173,8 +159,8 @@ export function PostMedia({
           <CarouselItem
             aria-label={`${String(count)} of ${String(count)}, shop design`}
             className={
-              stackedDesktop
-                ? `post-design-slide h-full basis-full px-4 pb-4 [&_.post-design]:h-full [&_.post-design_img]:h-full min-[601px]:h-auto min-[601px]:[&_.post-design]:h-auto min-[601px]:[&_.post-design_img]:h-auto ${items.length ? 'min-[601px]:mt-[11px]' : 'min-[601px]:mt-4'}`
+              boundedGallery
+                ? 'post-design-slide h-full basis-full px-4 pb-4 [&_.post-design]:h-full [&_.post-design_img]:h-full'
                 : `post-design-slide px-4 pb-4 ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`
             }
           >
@@ -182,7 +168,7 @@ export function PostMedia({
           </CarouselItem>
         )}
       </CarouselContent>
-      <CarouselControls count={count} stackedDesktop={stackedDesktop} />
+      <CarouselControls count={count} />
     </Carousel>
   );
 }

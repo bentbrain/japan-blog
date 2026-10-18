@@ -221,6 +221,9 @@ async function openGallery(page: Page) {
   await expect(
     card.locator('astro-island[component-export="PostMedia"][ssr]'),
   ).toHaveCount(0);
+  // Astro removes its SSR marker before React commits. Wait for Embla before
+  // changing lazy-loading attributes for deterministic synthetic screenshots.
+  await expect(card.getByRole('button', { name: 'Next slide' })).toBeEnabled();
   await card.locator('img').evaluateAll(async (images) =>
     Promise.all(
       images.map(async (image) => {
@@ -285,11 +288,16 @@ async function swipe(
   await cdp.detach();
 }
 
-for (const scheme of ['light', 'dark']) {
-  test(`mobile home gallery stays bounded, uncropped and scrollable in ${scheme}`, async ({
+for (const { width, scheme } of [
+  { width: 390, scheme: 'light' },
+  { width: 390, scheme: 'dark' },
+  { width: 1280, scheme: 'light' },
+  { width: 1280, scheme: 'dark' },
+]) {
+  test(`home gallery stays bounded and uncropped at ${String(width)}px in ${scheme}`, async ({
     page,
   }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width, height: 844 });
     await page.emulateMedia({
       colorScheme: scheme === 'dark' ? 'dark' : 'light',
       reducedMotion: 'reduce',
@@ -298,7 +306,7 @@ for (const scheme of ['light', 'dark']) {
     if (process.env.HOME_GALLERY_EVIDENCE)
       await page.screenshot({
         caret: 'initial',
-        path: `${process.env.HOME_GALLERY_EVIDENCE}/mobile-${scheme}.png`,
+        path: `${process.env.HOME_GALLERY_EVIDENCE}/${String(width)}-${scheme}.png`,
       });
     const content = card.locator('.post-media');
     expect(
@@ -373,7 +381,7 @@ for (const scheme of ['light', 'dark']) {
         if (process.env.HOME_GALLERY_EVIDENCE && (i === 1 || i === 2))
           await page.screenshot({
             caret: 'initial',
-            path: `${process.env.HOME_GALLERY_EVIDENCE}/mobile-${scheme}-${i === 1 ? 'portrait' : 'landscape'}-video.png`,
+            path: `${process.env.HOME_GALLERY_EVIDENCE}/${String(width)}-${scheme}-${i === 1 ? 'portrait' : 'landscape'}-video.png`,
           });
       } else {
         await expect(slide.locator('.post-design-link')).toBeInViewport();
@@ -416,9 +424,10 @@ for (const scheme of ['light', 'dark']) {
       await card.getByRole('button', { name: 'Previous slide' }).click();
     if (process.env.HOME_GALLERY_EVIDENCE)
       await writeFile(
-        `${process.env.HOME_GALLERY_EVIDENCE}/mobile-${scheme}-dimensions.json`,
+        `${process.env.HOME_GALLERY_EVIDENCE}/${String(width)}-${scheme}-dimensions.json`,
         JSON.stringify(metrics, null, 2),
       );
+    if (width !== 390) return;
     const photoBounds = await frame.boundingBox();
     if (!photoBounds) throw new Error('Photo gesture bounds required');
     const photoScroll = await page.evaluate(() => scrollY);
@@ -523,7 +532,10 @@ for (const scheme of ['light', 'dark']) {
         x: playingBounds.x + playingBounds.width / 2,
         y: playingBounds.y + initialHeight - 65,
       },
-      { x: playingBounds.x + playingBounds.width / 2, y: playingBounds.y + 30 },
+      {
+        x: playingBounds.x + playingBounds.width / 2,
+        y: playingBounds.y + 30,
+      },
     );
     await expect
       .poll(() => page.evaluate(() => scrollY))
@@ -534,56 +546,85 @@ for (const scheme of ['light', 'dark']) {
   });
 }
 
-test('desktop feed keeps equal-width natural-height vertical media', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 844 });
-  const card = await openGallery(page);
-  if (process.env.HOME_GALLERY_EVIDENCE)
-    await page.screenshot({
-      caret: 'initial',
-      path: `${process.env.HOME_GALLERY_EVIDENCE}/desktop.png`,
-    });
-  const boxes = await card.locator('.media-tile').evaluateAll((tiles) =>
-    tiles.map((element) => {
-      const b = element.getBoundingClientRect();
-      return {
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
-        bottom: b.bottom,
-      };
-    }),
-  );
-  expect(boxes).toHaveLength(4);
-  for (const [i, box] of boxes.entries()) {
-    expect(box.width).toBeCloseTo(boxes[0]?.width || 0, 0);
-    expect(box.x).toBeCloseTo(boxes[0]?.x || 0, 0);
-    if (i) expect(box.y).toBeGreaterThanOrEqual(boxes[i - 1]?.bottom || 0);
-    expect(box.width / box.height).toBeCloseTo(i < 2 ? 2 / 3 : 2, 2);
-  }
-  await expect(card.getByRole('button', { name: 'Next slide' })).toBeHidden();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    1280,
-  );
-});
+for (const width of [601, 1280]) {
+  test(`home carousel navigates every slide at ${String(width)}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const card = await openGallery(page);
+    const frame = card.locator('[data-slot="carousel-content"]');
+    const slides = card.locator('[data-slot="carousel-item"]');
+    await expect(
+      card.getByRole('button', { name: 'Next slide' }),
+    ).toBeVisible();
+    await expect(frame).toHaveCSS('overflow-x', 'hidden');
+    for (let index = 0; index < 5; index++) {
+      await expect(
+        card.getByText(`${String(index + 1)} / 5`, { exact: true }),
+      ).toBeVisible();
+      await expect(slides.nth(index)).toHaveAttribute(
+        'data-video-active',
+        'true',
+      );
+      // Embla rounds translations to device pixels at fractional card widths.
+      await expect(slides.nth(index)).toBeInViewport({ ratio: 0.99 });
+      const offset = await slides
+        .nth(index)
+        .evaluate((element) => element.getBoundingClientRect().left);
+      const left = await frame.evaluate(
+        (element) => element.getBoundingClientRect().left,
+      );
+      expect(Math.abs(offset - left)).toBeLessThanOrEqual(1);
+      expect(
+        await frame.evaluate(
+          (element) => element.getBoundingClientRect().height,
+        ),
+      ).toBeLessThanOrEqual(320);
+      if (index < 4)
+        await card.getByRole('button', { name: 'Next slide' }).click();
+    }
+    await expect(
+      card.getByRole('button', { name: 'Next slide' }),
+    ).toBeDisabled();
+    await expect(slides.last().locator('.post-design-link')).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(width);
+  });
+}
 
-test('feed reactivates its mobile carousel across the 601px breakpoint and bounds short viewports', async ({
+test('feed carousel survives desktop-mobile-desktop resizing and bounds short viewports', async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 600, height: 500 });
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const card = await openGallery(page);
-  const content = card.locator('.post-media');
-  await expect(content).toHaveCSS('height', '250px');
-  await expect(card.getByRole('button', { name: 'Next slide' })).toBeVisible();
-  await page.setViewportSize({ width: 601, height: 500 });
-  await expect(content).toHaveCSS('display', 'grid');
-  await expect(
-    card.getByRole('button', { name: 'Next slide', includeHidden: true }),
-  ).toBeHidden();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(content).toHaveCSS('height', '320px');
-  await card.getByRole('button', { name: 'Next slide' }).click();
-  await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
+  for (const width of [1280, 600, 601, 390, 1280]) {
+    await page.setViewportSize({ width, height: 500 });
+    await card.evaluate((element) => {
+      scrollTo(0, scrollY + element.getBoundingClientRect().top - 80);
+    });
+    await expect(card.locator('.post-media')).toHaveCSS('height', '250px');
+    await card.getByRole('button', { name: 'Next slide' }).click();
+    await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
+    await expect(
+      card.locator('[data-slot="carousel-item"]').nth(1),
+    ).toBeInViewport({ ratio: 0.99 });
+    const delta = await card
+      .locator('[data-slot="carousel-item"]')
+      .nth(1)
+      .evaluate(
+        (element) =>
+          element.getBoundingClientRect().left -
+          (element.closest('.post-carousel')?.getBoundingClientRect().left ??
+            0),
+      );
+    expect(Math.abs(delta)).toBeLessThanOrEqual(1);
+    await card.getByRole('button', { name: 'Previous slide' }).click();
+    await expect(card.getByText('1 / 5', { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(width);
+  }
 });
