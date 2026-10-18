@@ -20,7 +20,9 @@ type MapItem = MapPoint & {
   slug: string | null;
   title: string;
   place: string;
+  kind: 'photo' | 'video';
   src: string;
+  poster: string;
 };
 const controlClass =
   'size-11 bg-background p-0 text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground';
@@ -286,16 +288,29 @@ export function JapanMapView({
                     ×
                   </Button>
                 </div>
-                <img
-                  src={selected.src}
-                  alt={selected.title}
-                  className="block h-auto max-h-[55dvh] w-auto max-w-full self-center object-contain"
-                />
+                {selected.kind === 'video' ? (
+                  <video
+                    key={selected.id}
+                    src={selected.src}
+                    poster={selected.poster}
+                    aria-label={selected.title}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
+                  />
+                ) : (
+                  <img
+                    src={selected.poster}
+                    alt={selected.title}
+                    className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
+                  />
+                )}
                 <div className="flex items-center justify-between gap-3">
                   <Button
                     className={controlClass}
                     disabled={group.items.length < 2}
-                    aria-label="Previous photo at this location"
+                    aria-label="Previous media at this location"
                     onClick={() => {
                       setActive(
                         group.items[
@@ -318,7 +333,7 @@ export function JapanMapView({
                   <Button
                     className={controlClass}
                     disabled={group.items.length < 2}
-                    aria-label="Next photo at this location"
+                    aria-label="Next media at this location"
                     onClick={() => {
                       setActive(
                         group.items[(index + 1) % group.items.length]?.id ??
