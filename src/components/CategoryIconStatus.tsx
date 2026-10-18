@@ -24,9 +24,13 @@ function statusLabel(icon: Status) {
 }
 export function CategoryIconStatus({ names }: { names: string[] }) {
   const client = useQueryClient();
-  const queryKey = ['owner', 'category-icons'];
+  const identity = categoryNames(names)
+    .map((name) => name.normalized)
+    .sort();
+  const queryKey = ['owner', 'category-icons', identity];
   const query = useQuery({
     queryKey,
+    enabled: identity.length > 0,
     queryFn: async ({ signal }) =>
       responseSchema.parse(
         await api('/api/trip/category-icons', undefined, 'GET', signal),

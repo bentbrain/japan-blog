@@ -35,6 +35,13 @@ export function CreateCategory({
     onSuccess: (collection) => {
       client.setQueryData(ownerCategoriesQuery.queryKey, collection);
     },
+    onError: () => {
+      // Cancellation can leave the first load pending with no data or error.
+      // Recover the active query even when category creation was rejected.
+      void client.invalidateQueries({
+        queryKey: ownerCategoriesQuery.queryKey,
+      });
+    },
   });
   const id = useId();
   const [ready, setReady] = useState(false);
