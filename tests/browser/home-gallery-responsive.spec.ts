@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { decode } from 'fast-png';
 import { z } from 'zod';
@@ -80,6 +80,20 @@ test.beforeAll(async ({ request, baseURL }) => {
     place: 'synthetic fixture',
     gallery: mediaIds,
     demo: true,
+    content: Array.from({ length: 6 }, (_, index) => ({
+      _type: 'block',
+      _key: `synthetic-paragraph-${String(index)}`,
+      style: 'normal',
+      markDefs: [],
+      children: [
+        {
+          _type: 'span',
+          _key: `synthetic-text-${String(index)}`,
+          text: 'Synthetic post content for testing page scrolling over photos and native video controls.',
+          marks: [],
+        },
+      ],
+    })),
     shop_design: {
       productUrl:
         'https://shop.bent.build/featured/3d8ed467-55d4-45ed-ba9d-1eeb687fa5bc',
@@ -214,8 +228,12 @@ function paintedBounds(png: Uint8Array) {
   return { width: right - left + 1, height: bottom - top + 1 };
 }
 
-async function openGallery(page: Page) {
-  await page.goto('/');
+async function openGallery(page: Page, route = 'home') {
+  await page.goto(
+    route === 'home'
+      ? '/'
+      : `/posts/synthetic-responsive-gallery-${fixtureRun}`,
+  );
   const card = page.locator('article').filter({ hasText: title });
   await expect(card).toBeVisible();
   await expect(
@@ -247,7 +265,14 @@ async function openGallery(page: Page) {
     )
     .toBe(true);
   await card.evaluate((element) => {
-    window.scrollTo(0, scrollY + element.getBoundingClientRect().top - 80);
+    window.scrollTo(
+      0,
+      scrollY +
+        (
+          element.querySelector('.post-carousel') ?? element
+        ).getBoundingClientRect().top -
+        80,
+    );
   });
   await page.evaluate(() => document.fonts.ready);
   return card;
@@ -288,427 +313,440 @@ async function swipe(
   await cdp.detach();
 }
 
-for (const { width, scheme } of [
-  { width: 390, scheme: 'light' },
-  { width: 390, scheme: 'dark' },
-  { width: 1280, scheme: 'light' },
-  { width: 1280, scheme: 'dark' },
-]) {
-  test(`home gallery stays bounded and uncropped at ${String(width)}px in ${scheme}`, async ({
+async function scrollOverMedia(page: Page, frame: Locator, route: string) {
+  const bounds = await frame.boundingBox();
+  if (!bounds) throw new Error('Media gesture bounds required');
+  const before = await page.evaluate(() => scrollY);
+  const top = { x: bounds.x + bounds.width / 2, y: bounds.y + 30 };
+  const bottom = {
+    x: top.x,
+    y: bounds.y + bounds.height - 65,
+  };
+  // The feed has more posts below. A post ends with its gallery, so scroll
+  // back toward its text to exercise vertical gestures without hitting bottom.
+  await swipe(
     page,
-  }) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.emulateMedia({
-      colorScheme: scheme === 'dark' ? 'dark' : 'light',
-      reducedMotion: 'reduce',
-    });
-    const card = await openGallery(page);
-    if (process.env.HOME_GALLERY_EVIDENCE)
-      await page.screenshot({
-        caret: 'initial',
-        path: `${process.env.HOME_GALLERY_EVIDENCE}/${String(width)}-${scheme}.png`,
+    route === 'post' ? top : bottom,
+    route === 'post' ? bottom : top,
+  );
+  await expect
+    .poll(async () => {
+      const delta = (await page.evaluate(() => scrollY)) - before;
+      return route === 'post' ? -delta : delta;
+    })
+    .toBeGreaterThan(80);
+}
+
+for (const route of ['home', 'post']) {
+  for (const { width, scheme } of [
+    { width: 390, scheme: 'light' },
+    { width: 390, scheme: 'dark' },
+    { width: 1280, scheme: 'light' },
+    { width: 1280, scheme: 'dark' },
+  ]) {
+    test(`${route} gallery stays bounded and uncropped at ${String(width)}px in ${scheme}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({
+        colorScheme: scheme === 'dark' ? 'dark' : 'light',
+        reducedMotion: 'reduce',
       });
-    const content = card.locator('.post-media');
-    expect(
-      await content.evaluate(
-        (element) => element.getBoundingClientRect().height,
-      ),
-    ).toBeLessThanOrEqual(321);
-    const frame = card.locator('[data-slot="carousel-content"]');
-    const initialHeight = await frame.evaluate(
-      (element) => element.getBoundingClientRect().height,
-    );
-    expect(initialHeight).toBeGreaterThan(200);
-    const metrics: {
-      slide: number;
-      naturalWidth: number;
-      naturalHeight: number;
-      paint: { width: number; height: number };
-      frameHeight: number;
-    }[] = [];
-    for (let i = 0; i < 5; i++) {
-      const slide = card.locator('[data-slot="carousel-item"]').nth(i);
-      const media = slide.locator('.media-tile img, video');
-      if (i < 4) {
-        await expect(media).toHaveCSS('object-fit', 'contain');
-        const dimensions = await media.evaluate((element) => ({
-          width:
-            element instanceof HTMLVideoElement
-              ? element.videoWidth
-              : element instanceof HTMLImageElement
-                ? element.naturalWidth
-                : 0,
-          height:
-            element instanceof HTMLVideoElement
-              ? element.videoHeight
-              : element instanceof HTMLImageElement
-                ? element.naturalHeight
-                : 0,
-        }));
-        expect(dimensions.width / dimensions.height).toBeCloseTo(
-          i < 2 ? 2 / 3 : 2,
-          2,
-        );
-        if (i === 1 || i === 2)
-          await media.evaluate(async (element) => {
-            if (!(element instanceof HTMLVideoElement))
-              throw new Error('Video fixture required');
-            element.muted = true;
-            await element.play();
-            element.pause();
-            element.controls = false;
-          });
-        let paint;
-        try {
-          paint = paintedBounds(await media.screenshot({ caret: 'initial' }));
-        } finally {
-          if (i === 1 || i === 2)
-            await media.evaluate((element) => {
-              if (element instanceof HTMLVideoElement) element.controls = true;
-            });
-        }
-        expect(paint.width / paint.height).toBeCloseTo(
-          dimensions.width / dimensions.height,
-          2,
-        );
-        metrics.push({
-          slide: i + 1,
-          naturalWidth: dimensions.width,
-          naturalHeight: dimensions.height,
-          paint,
-          frameHeight: initialHeight,
+      const card = await openGallery(page, route);
+      if (process.env.HOME_GALLERY_EVIDENCE)
+        await page.screenshot({
+          caret: 'initial',
+          path: `${process.env.HOME_GALLERY_EVIDENCE}/${route}-${String(width)}-${scheme}.png`,
         });
-        if (process.env.HOME_GALLERY_EVIDENCE && (i === 1 || i === 2))
-          await page.screenshot({
-            caret: 'initial',
-            path: `${process.env.HOME_GALLERY_EVIDENCE}/${String(width)}-${scheme}-${i === 1 ? 'portrait' : 'landscape'}-video.png`,
-          });
-      } else {
-        await expect(slide.locator('.post-design-link')).toBeInViewport();
-      }
+      const content = card.locator('.post-media');
       expect(
-        await frame.evaluate(
+        await content.evaluate(
           (element) => element.getBoundingClientRect().height,
         ),
-      ).toBeCloseTo(initialHeight, 0);
-      if (i < 4) {
-        await card.getByRole('button', { name: 'Next slide' }).click();
-        if (i === 0) {
-          await page.evaluate(
-            () =>
-              new Promise<void>((resolve) =>
-                requestAnimationFrame(() =>
-                  requestAnimationFrame(() => {
-                    resolve();
-                  }),
-                ),
-              ),
+      ).toBeLessThanOrEqual(321);
+      const frame = card.locator('[data-slot="carousel-content"]');
+      const initialHeight = await frame.evaluate(
+        (element) => element.getBoundingClientRect().height,
+      );
+      expect(initialHeight).toBeGreaterThan(200);
+      const metrics: {
+        slide: number;
+        naturalWidth: number;
+        naturalHeight: number;
+        paint: { width: number; height: number };
+        frameHeight: number;
+      }[] = [];
+      for (let i = 0; i < 5; i++) {
+        const slide = card.locator('[data-slot="carousel-item"]').nth(i);
+        const media = slide.locator('.media-tile img, video');
+        if (i < 4) {
+          await expect(media).toHaveCSS('object-fit', 'contain');
+          const dimensions = await media.evaluate((element) => ({
+            width:
+              element instanceof HTMLVideoElement
+                ? element.videoWidth
+                : element instanceof HTMLImageElement
+                  ? element.naturalWidth
+                  : 0,
+            height:
+              element instanceof HTMLVideoElement
+                ? element.videoHeight
+                : element instanceof HTMLImageElement
+                  ? element.naturalHeight
+                  : 0,
+          }));
+          expect(dimensions.width / dimensions.height).toBeCloseTo(
+            i < 2 ? 2 / 3 : 2,
+            2,
           );
-          const expected = await frame.evaluate((element) => {
-            const box = element.getBoundingClientRect();
-            return box.left - box.width;
+          if (i === 1 || i === 2)
+            await media.evaluate(async (element) => {
+              if (!(element instanceof HTMLVideoElement))
+                throw new Error('Video fixture required');
+              element.muted = true;
+              await element.play();
+              element.pause();
+              element.controls = false;
+            });
+          let paint;
+          try {
+            paint = paintedBounds(await media.screenshot({ caret: 'initial' }));
+          } finally {
+            if (i === 1 || i === 2)
+              await media.evaluate((element) => {
+                if (element instanceof HTMLVideoElement)
+                  element.controls = true;
+              });
+          }
+          expect(paint.width / paint.height).toBeCloseTo(
+            dimensions.width / dimensions.height,
+            2,
+          );
+          metrics.push({
+            slide: i + 1,
+            naturalWidth: dimensions.width,
+            naturalHeight: dimensions.height,
+            paint,
+            frameHeight: initialHeight,
           });
-          expect(
-            await card
-              .locator('[data-slot="carousel-item"]')
-              .first()
-              .evaluate((element) => element.getBoundingClientRect().left),
-          ).toBeCloseTo(expected, 0);
+          if (process.env.HOME_GALLERY_EVIDENCE && (i === 1 || i === 2))
+            await page.screenshot({
+              caret: 'initial',
+              path: `${process.env.HOME_GALLERY_EVIDENCE}/${route}-${String(width)}-${scheme}-${i === 1 ? 'portrait' : 'landscape'}-video.png`,
+            });
+        } else {
+          await expect(slide.locator('.post-design-link')).toBeInViewport();
+        }
+        expect(
+          await frame.evaluate(
+            (element) => element.getBoundingClientRect().height,
+          ),
+        ).toBeCloseTo(initialHeight, 0);
+        if (i < 4) {
+          await card.getByRole('button', { name: 'Next slide' }).click();
+          if (i === 0) {
+            await page.evaluate(
+              () =>
+                new Promise<void>((resolve) =>
+                  requestAnimationFrame(() =>
+                    requestAnimationFrame(() => {
+                      resolve();
+                    }),
+                  ),
+                ),
+            );
+            const expected = await frame.evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              return box.left - box.width;
+            });
+            expect(
+              await card
+                .locator('[data-slot="carousel-item"]')
+                .first()
+                .evaluate((element) => element.getBoundingClientRect().left),
+            ).toBeCloseTo(expected, 0);
+          }
         }
       }
-    }
-    await expect(
-      card.getByRole('button', { name: 'Next slide' }),
-    ).toBeDisabled();
-    for (let i = 0; i < 4; i++)
-      await card.getByRole('button', { name: 'Previous slide' }).click();
-    if (process.env.HOME_GALLERY_EVIDENCE)
-      await writeFile(
-        `${process.env.HOME_GALLERY_EVIDENCE}/${String(width)}-${scheme}-dimensions.json`,
-        JSON.stringify(metrics, null, 2),
+      await expect(
+        card.getByRole('button', { name: 'Next slide' }),
+      ).toBeDisabled();
+      for (let i = 0; i < 4; i++)
+        await card.getByRole('button', { name: 'Previous slide' }).click();
+      if (process.env.HOME_GALLERY_EVIDENCE)
+        await writeFile(
+          `${process.env.HOME_GALLERY_EVIDENCE}/${route}-${String(width)}-${scheme}-dimensions.json`,
+          JSON.stringify(metrics, null, 2),
+        );
+      if (width !== 390) return;
+      await scrollOverMedia(page, frame, route);
+      await card.evaluate((element) => {
+        window.scrollTo(
+          0,
+          scrollY +
+            (
+              element.querySelector('.post-carousel') ?? element
+            ).getBoundingClientRect().top -
+            80,
+        );
+      });
+      const bounds = await frame.boundingBox();
+      if (!bounds) throw new Error('Gallery bounds required');
+      const before = await page.evaluate(() => scrollY);
+      await swipe(
+        page,
+        { x: bounds.x + bounds.width - 35, y: bounds.y + 100 },
+        { x: bounds.x + 35, y: bounds.y + 100 },
       );
-    if (width !== 390) return;
-    const photoBounds = await frame.boundingBox();
-    if (!photoBounds) throw new Error('Photo gesture bounds required');
-    const photoScroll = await page.evaluate(() => scrollY);
-    await swipe(
-      page,
-      {
-        x: photoBounds.x + photoBounds.width / 2,
-        y: photoBounds.y + initialHeight - 65,
-      },
-      { x: photoBounds.x + photoBounds.width / 2, y: photoBounds.y + 30 },
-    );
-    await expect
-      .poll(() => page.evaluate(() => scrollY))
-      .toBeGreaterThan(photoScroll + 80);
-    await card.evaluate((element) => {
-      window.scrollTo(0, scrollY + element.getBoundingClientRect().top - 80);
+      await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => scrollY)).toBeCloseTo(before, 0);
+      const video = card.locator('video').first();
+      const videoState = () =>
+        video.evaluate((element) => {
+          if (!(element instanceof HTMLVideoElement))
+            throw new Error('Video fixture required');
+          return {
+            paused: element.paused,
+            seeking: element.seeking,
+            currentTime: element.currentTime,
+          };
+        });
+      await expect(video).toHaveAttribute('controls', '');
+      await expect(video).toHaveAttribute('playsinline', '');
+      await video.evaluate((element) => {
+        if (!(element instanceof HTMLVideoElement))
+          throw new Error('Video fixture required');
+        element.muted = true;
+      });
+      await expect.poll(async () => !(await videoState()).paused).toBe(true);
+      await video.press('Space');
+      await expect.poll(async () => (await videoState()).paused).toBe(true);
+      await video.press('Space');
+      await expect.poll(async () => !(await videoState()).paused).toBe(true);
+      const videoSwipeBounds = await frame.boundingBox();
+      if (!videoSwipeBounds) throw new Error('Video swipe bounds required');
+      await swipe(
+        page,
+        {
+          x: videoSwipeBounds.x + videoSwipeBounds.width - 35,
+          y: videoSwipeBounds.y + 100,
+        },
+        { x: videoSwipeBounds.x + 35, y: videoSwipeBounds.y + 100 },
+      );
+      await expect(card.getByText('3 / 5', { exact: true })).toBeVisible();
+      await card.getByRole('button', { name: 'Previous slide' }).click();
+      await expect(video).toBeInViewport({ ratio: 1 });
+      await video.hover();
+      await video.focus();
+      await video.evaluate((element) => {
+        if (!(element instanceof HTMLVideoElement))
+          throw new Error('Video fixture required');
+        element.pause();
+      });
+      const controlBounds = await video.boundingBox();
+      if (!controlBounds) throw new Error('Native video controls required');
+      await video.evaluate((element) => {
+        if (!(element instanceof HTMLVideoElement))
+          throw new Error('Video fixture required');
+        element.currentTime = 0;
+      });
+      await expect.poll(async () => (await videoState()).seeking).toBe(false);
+      await page.mouse.click(
+        controlBounds.x + controlBounds.width * 0.65,
+        controlBounds.y + controlBounds.height - 20,
+      );
+      await expect
+        .poll(async () => (await videoState()).currentTime)
+        .toBeGreaterThan(0.4);
+      expect((await videoState()).paused).toBe(true);
+      await video.evaluate((element) => {
+        if (!(element instanceof HTMLVideoElement))
+          throw new Error('Video fixture required');
+        element.currentTime = 0;
+      });
+      await page.mouse.click(
+        controlBounds.x + 18,
+        controlBounds.y + controlBounds.height - 48,
+      );
+      await expect.poll(async () => !(await videoState()).paused).toBe(true);
+      await scrollOverMedia(page, frame, route);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(390);
     });
+  }
+
+  for (const width of [601, 1280]) {
+    test(`${route} carousel navigates every slide at ${String(width)}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      const card = await openGallery(page, route);
+      const frame = card.locator('[data-slot="carousel-content"]');
+      const slides = card.locator('[data-slot="carousel-item"]');
+      await expect(
+        card.getByRole('button', { name: 'Next slide' }),
+      ).toBeVisible();
+      await expect(frame).toHaveCSS('overflow-x', 'hidden');
+      for (let index = 0; index < 5; index++) {
+        await expect(
+          card.getByText(`${String(index + 1)} / 5`, { exact: true }),
+        ).toBeVisible();
+        await expect(slides.nth(index)).toHaveAttribute(
+          'data-video-active',
+          'true',
+        );
+        // Embla rounds translations to device pixels at fractional card widths.
+        await expect(slides.nth(index)).toBeInViewport({ ratio: 0.99 });
+        const offset = await slides
+          .nth(index)
+          .evaluate((element) => element.getBoundingClientRect().left);
+        const left = await frame.evaluate(
+          (element) => element.getBoundingClientRect().left,
+        );
+        expect(Math.abs(offset - left)).toBeLessThanOrEqual(1);
+        expect(
+          await frame.evaluate(
+            (element) => element.getBoundingClientRect().height,
+          ),
+        ).toBeLessThanOrEqual(320);
+        if (index < 4)
+          await card.getByRole('button', { name: 'Next slide' }).click();
+      }
+      await expect(
+        card.getByRole('button', { name: 'Next slide' }),
+      ).toBeDisabled();
+      await expect(slides.last().locator('.post-design-link')).toBeVisible();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(width);
+    });
+  }
+
+  test(`${route} carousel survives desktop-mobile-desktop resizing and bounds short viewports`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 500 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const card = await openGallery(page, route);
+    for (const width of [1280, 600, 601, 390, 1280]) {
+      await page.setViewportSize({ width, height: 500 });
+      await card.evaluate((element) => {
+        scrollTo(
+          0,
+          scrollY +
+            (
+              element.querySelector('.post-carousel') ?? element
+            ).getBoundingClientRect().top -
+            80,
+        );
+      });
+      await expect(card.locator('.post-media')).toHaveCSS('height', '250px');
+      await card.getByRole('button', { name: 'Next slide' }).click();
+      await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
+      await expect(
+        card.locator('[data-slot="carousel-item"]').nth(1),
+      ).toBeInViewport({ ratio: 0.99 });
+      const delta = await card
+        .locator('[data-slot="carousel-item"]')
+        .nth(1)
+        .evaluate(
+          (element) =>
+            element.getBoundingClientRect().left -
+            (element.closest('.post-carousel')?.getBoundingClientRect().left ??
+              0),
+        );
+      expect(Math.abs(delta)).toBeLessThanOrEqual(1);
+      await card.getByRole('button', { name: 'Previous slide' }).click();
+      await expect(card.getByText('1 / 5', { exact: true })).toBeVisible();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(width);
+    }
+  });
+
+  test(`${route} native Space resume survives carousel updates before its play notification`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Pin the observed ordering: a carousel update can run before the controller
+    // receives a queued play notification. Keyboard handling stays native.
+    await page.addInitScript(() => {
+      const add: unknown = Object.getOwnPropertyDescriptor(
+        EventTarget.prototype,
+        'addEventListener',
+      )?.value;
+      if (typeof add !== 'function')
+        throw new Error('Native event registration required');
+      EventTarget.prototype.addEventListener = function (
+        type,
+        listener,
+        options,
+      ) {
+        if (
+          type === 'play' &&
+          this instanceof HTMLBodyElement &&
+          typeof listener === 'function'
+        ) {
+          Reflect.apply(add, this, [
+            type,
+            (event: Event) => {
+              setTimeout(() => {
+                listener.call(this, event);
+              }, 100);
+            },
+            options,
+          ]);
+        } else {
+          Reflect.apply(add, this, [type, listener, options]);
+        }
+      };
+    });
+    const card = await openGallery(page, route);
+    const frame = card.locator('[data-slot="carousel-content"]');
     const bounds = await frame.boundingBox();
     if (!bounds) throw new Error('Gallery bounds required');
-    const before = await page.evaluate(() => scrollY);
     await swipe(
       page,
       { x: bounds.x + bounds.width - 35, y: bounds.y + 100 },
       { x: bounds.x + 35, y: bounds.y + 100 },
     );
     await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
-    expect(await page.evaluate(() => scrollY)).toBeCloseTo(before, 0);
     const video = card.locator('video').first();
-    const videoState = () =>
+    const state = () =>
       video.evaluate((element) => {
         if (!(element instanceof HTMLVideoElement))
           throw new Error('Video fixture required');
         return {
           paused: element.paused,
-          seeking: element.seeking,
-          currentTime: element.currentTime,
+          time: element.currentTime,
+          muted: element.muted,
+          loop: element.loop,
         };
       });
-    await expect(video).toHaveAttribute('controls', '');
-    await expect(video).toHaveAttribute('playsinline', '');
+    await expect.poll(async () => (await state()).paused).toBe(false);
     await video.evaluate((element) => {
-      if (!(element instanceof HTMLVideoElement))
-        throw new Error('Video fixture required');
-      element.muted = true;
+      element.addEventListener(
+        'pause',
+        () => {
+          element.setAttribute('data-native-pause', 'true');
+        },
+        { once: true },
+      );
     });
-    await expect.poll(async () => !(await videoState()).paused).toBe(true);
     await video.press('Space');
-    await expect.poll(async () => (await videoState()).paused).toBe(true);
+    await expect(video).toHaveAttribute('data-native-pause', 'true');
+    await expect.poll(async () => (await state()).paused).toBe(true);
     await video.press('Space');
-    await expect.poll(async () => !(await videoState()).paused).toBe(true);
-    const videoSwipeBounds = await frame.boundingBox();
-    if (!videoSwipeBounds) throw new Error('Video swipe bounds required');
-    await swipe(
-      page,
-      {
-        x: videoSwipeBounds.x + videoSwipeBounds.width - 35,
-        y: videoSwipeBounds.y + 100,
-      },
-      { x: videoSwipeBounds.x + 35, y: videoSwipeBounds.y + 100 },
-    );
-    await expect(card.getByText('3 / 5', { exact: true })).toBeVisible();
-    await card.getByRole('button', { name: 'Previous slide' }).click();
-    await expect(video).toBeInViewport({ ratio: 1 });
-    await video.hover();
-    await video.focus();
-    await video.evaluate((element) => {
-      if (!(element instanceof HTMLVideoElement))
-        throw new Error('Video fixture required');
-      element.pause();
-    });
-    const controlBounds = await video.boundingBox();
-    if (!controlBounds) throw new Error('Native video controls required');
-    await video.evaluate((element) => {
-      if (!(element instanceof HTMLVideoElement))
-        throw new Error('Video fixture required');
-      element.currentTime = 0;
-    });
-    await expect.poll(async () => (await videoState()).seeking).toBe(false);
-    await page.mouse.click(
-      controlBounds.x + controlBounds.width * 0.65,
-      controlBounds.y + controlBounds.height - 20,
-    );
-    await expect
-      .poll(async () => (await videoState()).currentTime)
-      .toBeGreaterThan(0.4);
-    expect((await videoState()).paused).toBe(true);
-    await video.evaluate((element) => {
-      if (!(element instanceof HTMLVideoElement))
-        throw new Error('Video fixture required');
-      element.currentTime = 0;
-    });
-    await page.mouse.click(
-      controlBounds.x + 18,
-      controlBounds.y + controlBounds.height - 48,
-    );
-    await expect.poll(async () => !(await videoState()).paused).toBe(true);
-    const playingBounds = await frame.boundingBox();
-    if (!playingBounds) throw new Error('Video bounds required');
-    await swipe(
-      page,
-      {
-        x: playingBounds.x + playingBounds.width / 2,
-        y: playingBounds.y + initialHeight - 65,
-      },
-      {
-        x: playingBounds.x + playingBounds.width / 2,
-        y: playingBounds.y + 30,
-      },
-    );
-    await expect
-      .poll(() => page.evaluate(() => scrollY))
-      .toBeGreaterThan(before + 80);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(390);
+    await expect.poll(async () => (await state()).paused).toBe(false);
+    // Observe beyond the queued notification and carousel frame. A transient
+    // paused=false property does not prove that resumed playback survives.
+    await page.waitForTimeout(350);
+    expect((await state()).paused).toBe(false);
+    const resumed = await state();
+    expect(resumed.muted).toBe(true);
+    expect(resumed.loop).toBe(true);
+    await expect.poll(async () => (await state()).time).not.toBe(resumed.time);
   });
 }
-
-for (const width of [601, 1280]) {
-  test(`home carousel navigates every slide at ${String(width)}px`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 844 });
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    const card = await openGallery(page);
-    const frame = card.locator('[data-slot="carousel-content"]');
-    const slides = card.locator('[data-slot="carousel-item"]');
-    await expect(
-      card.getByRole('button', { name: 'Next slide' }),
-    ).toBeVisible();
-    await expect(frame).toHaveCSS('overflow-x', 'hidden');
-    for (let index = 0; index < 5; index++) {
-      await expect(
-        card.getByText(`${String(index + 1)} / 5`, { exact: true }),
-      ).toBeVisible();
-      await expect(slides.nth(index)).toHaveAttribute(
-        'data-video-active',
-        'true',
-      );
-      // Embla rounds translations to device pixels at fractional card widths.
-      await expect(slides.nth(index)).toBeInViewport({ ratio: 0.99 });
-      const offset = await slides
-        .nth(index)
-        .evaluate((element) => element.getBoundingClientRect().left);
-      const left = await frame.evaluate(
-        (element) => element.getBoundingClientRect().left,
-      );
-      expect(Math.abs(offset - left)).toBeLessThanOrEqual(1);
-      expect(
-        await frame.evaluate(
-          (element) => element.getBoundingClientRect().height,
-        ),
-      ).toBeLessThanOrEqual(320);
-      if (index < 4)
-        await card.getByRole('button', { name: 'Next slide' }).click();
-    }
-    await expect(
-      card.getByRole('button', { name: 'Next slide' }),
-    ).toBeDisabled();
-    await expect(slides.last().locator('.post-design-link')).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(width);
-  });
-}
-
-test('feed carousel survives desktop-mobile-desktop resizing and bounds short viewports', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 500 });
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  const card = await openGallery(page);
-  for (const width of [1280, 600, 601, 390, 1280]) {
-    await page.setViewportSize({ width, height: 500 });
-    await card.evaluate((element) => {
-      scrollTo(0, scrollY + element.getBoundingClientRect().top - 80);
-    });
-    await expect(card.locator('.post-media')).toHaveCSS('height', '250px');
-    await card.getByRole('button', { name: 'Next slide' }).click();
-    await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
-    await expect(
-      card.locator('[data-slot="carousel-item"]').nth(1),
-    ).toBeInViewport({ ratio: 0.99 });
-    const delta = await card
-      .locator('[data-slot="carousel-item"]')
-      .nth(1)
-      .evaluate(
-        (element) =>
-          element.getBoundingClientRect().left -
-          (element.closest('.post-carousel')?.getBoundingClientRect().left ??
-            0),
-      );
-    expect(Math.abs(delta)).toBeLessThanOrEqual(1);
-    await card.getByRole('button', { name: 'Previous slide' }).click();
-    await expect(card.getByText('1 / 5', { exact: true })).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(width);
-  }
-});
-
-test('native Space resume survives carousel updates before its play notification', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  // Pin the observed ordering: a carousel update can run before the controller
-  // receives a queued play notification. Keyboard handling stays native.
-  await page.addInitScript(() => {
-    const add: unknown = Object.getOwnPropertyDescriptor(
-      EventTarget.prototype,
-      'addEventListener',
-    )?.value;
-    if (typeof add !== 'function')
-      throw new Error('Native event registration required');
-    EventTarget.prototype.addEventListener = function (
-      type,
-      listener,
-      options,
-    ) {
-      if (
-        type === 'play' &&
-        this instanceof HTMLBodyElement &&
-        typeof listener === 'function'
-      ) {
-        Reflect.apply(add, this, [
-          type,
-          (event: Event) => {
-            setTimeout(() => {
-              listener.call(this, event);
-            }, 100);
-          },
-          options,
-        ]);
-      } else {
-        Reflect.apply(add, this, [type, listener, options]);
-      }
-    };
-  });
-  const card = await openGallery(page);
-  const frame = card.locator('[data-slot="carousel-content"]');
-  const bounds = await frame.boundingBox();
-  if (!bounds) throw new Error('Gallery bounds required');
-  await swipe(
-    page,
-    { x: bounds.x + bounds.width - 35, y: bounds.y + 100 },
-    { x: bounds.x + 35, y: bounds.y + 100 },
-  );
-  await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
-  const video = card.locator('video').first();
-  const state = () =>
-    video.evaluate((element) => {
-      if (!(element instanceof HTMLVideoElement))
-        throw new Error('Video fixture required');
-      return {
-        paused: element.paused,
-        time: element.currentTime,
-        muted: element.muted,
-        loop: element.loop,
-      };
-    });
-  await expect.poll(async () => (await state()).paused).toBe(false);
-  await video.evaluate((element) => {
-    element.addEventListener(
-      'pause',
-      () => {
-        element.setAttribute('data-native-pause', 'true');
-      },
-      { once: true },
-    );
-  });
-  await video.press('Space');
-  await expect(video).toHaveAttribute('data-native-pause', 'true');
-  await expect.poll(async () => (await state()).paused).toBe(true);
-  await video.press('Space');
-  await expect.poll(async () => (await state()).paused).toBe(false);
-  // Observe beyond the queued notification and carousel frame. A transient
-  // paused=false property does not prove that resumed playback survives.
-  await page.waitForTimeout(350);
-  expect((await state()).paused).toBe(false);
-  const resumed = await state();
-  expect(resumed.muted).toBe(true);
-  expect(resumed.loop).toBe(true);
-  await expect.poll(async () => (await state()).time).not.toBe(resumed.time);
-});

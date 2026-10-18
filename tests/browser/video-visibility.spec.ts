@@ -499,7 +499,7 @@ test('pending automatic play cannot restart an offscreen or removed video', asyn
   await pending.dispose();
 });
 
-test('a natural-height tall portrait fills the desktop viewport and plays below 50% video-area visibility', async ({
+test('a tall portrait stays bounded in the post carousel and plays without cropping', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 700 });
@@ -518,12 +518,12 @@ test('a natural-height tall portrait fills the desktop viewport and plays below 
       height: box.height,
       viewport: innerHeight,
       ratio: element.videoWidth / element.videoHeight,
-      cssRatio: box.width / box.height,
     };
   });
-  expect(dimensions.height).toBeGreaterThan(dimensions.viewport * 2);
+  expect(dimensions.height).toBeLessThanOrEqual(320);
+  expect(dimensions.height).toBeLessThanOrEqual(dimensions.viewport / 2);
   expect(dimensions.ratio).toBeCloseTo(1 / 3, 2);
-  expect(dimensions.cssRatio).toBeCloseTo(dimensions.ratio, 2);
+  await expect(video).toHaveCSS('object-fit', 'contain');
   expect((await state(video)).muted).toBe(true);
 });
 

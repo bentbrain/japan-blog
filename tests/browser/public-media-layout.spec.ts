@@ -91,16 +91,19 @@ for (const width of [390, 1280]) {
       page,
     }) => {
       await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(path);
       await expect(
         page.locator('astro-island[component-export="PostMedia"][ssr]'),
       ).toHaveCount(0);
-      if (path === '/') {
+      if (path !== '/gallery') {
         for (const card of await page.locator('article').all()) {
           const slides = card.locator('[data-slot="carousel-item"]');
           for (let index = 0; index < (await slides.count()); index++) {
             const photo = slides.nth(index).locator('.media-tile img');
             if (await photo.count()) {
+              await photo.scrollIntoViewIfNeeded();
+              await expect(slides.nth(index)).toBeInViewport({ ratio: 0.99 });
               await photo.evaluate(async (image) => {
                 if (image instanceof HTMLImageElement) {
                   image.loading = 'eager';
@@ -202,7 +205,8 @@ test('post layout responds to its container without changing the viewport', asyn
       element.getBoundingClientRect().width /
       (element.closest('.post-carousel')?.getBoundingClientRect().width || 1),
   );
-  expect(wide).toBeCloseTo(0.7, 1);
+  expect(wide).toBeCloseTo(1, 2);
+  await expect(article.locator('.post-media')).toHaveCSS('height', '320px');
   await article.evaluate((element) => {
     element.style.width = '320px';
   });
@@ -212,7 +216,8 @@ test('post layout responds to its container without changing the viewport', asyn
       element.getBoundingClientRect().width /
       (element.closest('.post-carousel')?.getBoundingClientRect().width || 1),
   );
-  expect(narrow).toBeCloseTo(0.88, 1);
+  expect(narrow).toBeCloseTo(1, 2);
+  await expect(article.locator('.post-media')).toHaveCSS('height', '320px');
 });
 
 for (const { title, ratio, shape } of [
