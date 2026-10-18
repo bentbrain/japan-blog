@@ -290,6 +290,9 @@ export function JapanMapView({
                 </div>
                 {selected.kind === 'video' ? (
                   <video
+                    data-visibility-video
+                    muted
+                    loop
                     key={selected.id}
                     src={selected.src}
                     poster={selected.poster}

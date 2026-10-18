@@ -184,6 +184,22 @@ test('carousel preserves video playback and keyboard controls', async ({
   await next.click();
   await next.click();
   const video = carousel.locator('video').first();
+  await video.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() =>
+      video.evaluate(
+        (element) => element instanceof HTMLVideoElement && !element.paused,
+      ),
+    )
+    .toBe(true);
+  await video.press('Space');
+  await expect
+    .poll(() =>
+      video.evaluate(
+        (element) => element instanceof HTMLVideoElement && element.paused,
+      ),
+    )
+    .toBe(true);
   await video.press('Space');
   await expect
     .poll(async () =>

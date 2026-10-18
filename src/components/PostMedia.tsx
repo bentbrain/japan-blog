@@ -24,16 +24,25 @@ function CarouselControls({
   useEffect(() => {
     if (!api) return;
     const update = () => {
-      setCurrent(api.selectedScrollSnap() + 1);
+      const selected = api.selectedScrollSnap();
+      setCurrent(selected + 1);
+      const stacked =
+        stackedDesktop && matchMedia('(min-width: 601px)').matches;
+      api.slideNodes().forEach((slide, index) => {
+        slide.dataset.videoActive = String(stacked || index === selected);
+      });
     };
     update();
+    const breakpoint = matchMedia('(min-width: 601px)');
+    breakpoint.addEventListener('change', update);
     api.on('select', update);
     api.on('reInit', update);
     return () => {
+      breakpoint.removeEventListener('change', update);
       api.off('select', update);
       api.off('reInit', update);
     };
-  }, [api]);
+  }, [api, stackedDesktop]);
   return count > 1 ? (
     <div
       className={`flex items-center justify-between gap-3 px-4 py-3 ${stackedDesktop ? 'min-[601px]:hidden' : ''}`}
@@ -108,6 +117,7 @@ export function PostMedia({
           <CarouselItem
             key={item.id}
             aria-label={`${String(index + 1)} of ${String(count)}`}
+            data-video-active={index === 0 ? 'true' : 'false'}
             className={
               stackedDesktop
                 ? 'h-full basis-full pl-0 min-[601px]:h-auto'
@@ -120,6 +130,9 @@ export function PostMedia({
                 data-feedback-id={`media-${item.id}`}
               >
                 <video
+                  data-visibility-video
+                  muted
+                  loop
                   src={mediaUrl(item)}
                   poster={posterUrl(item)}
                   controls

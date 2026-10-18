@@ -48,6 +48,7 @@ const feedback = feedbackConfiguration(
     {privateContent && <meta name="robots" content="noindex" />}
   </head>
   <body
+    data-public-video-playback={!privateContent ? true : undefined}
     class="flex min-h-dvh flex-col"
     data-feedback-redact={privateContent ? true : undefined}
   >
@@ -129,3 +130,10 @@ const feedback = feedbackConfiguration(
     )}
   </body>
 </html>
+
+<script>
+  import { startPublicVideoPlayback } from '../lib/public-video-playback';
+  if (document.body.hasAttribute('data-public-video-playback')) {
+    startPublicVideoPlayback(document.body);
+  }
+</script>

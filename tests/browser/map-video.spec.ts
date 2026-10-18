@@ -150,8 +150,11 @@ for (const width of [390, 1792]) {
             height: element.videoHeight,
           };
         });
-      expect((await state()).paused).toBe(true);
-      expect((await state()).muted).toBe(false);
+      await expect.poll(async () => (await state()).paused).toBe(false);
+      await expect.poll(async () => (await state()).time).toBeGreaterThan(0.2);
+      expect((await state()).muted).toBe(true);
+      await video.press('Space');
+      await expect.poll(async () => (await state()).paused).toBe(true);
       expect((await state()).volume).toBe(1);
       expect((await state()).error).toBeNull();
       const bounds = await video.boundingBox();
@@ -248,10 +251,9 @@ for (const width of [390, 1792]) {
         )
         .toBe(true);
       await expect(video).toHaveCount(1);
-      expect((await state()).paused).toBe(true);
-      expect((await state()).time).toBe(0);
+      await expect.poll(async () => (await state()).paused).toBe(false);
+      expect((await state()).muted).toBe(true);
       await video.focus();
-      await video.press('Space');
       await expect.poll(async () => (await state()).time).toBeGreaterThan(0.2);
       const closingVideo = await video.elementHandle();
       await video.press('Escape');
