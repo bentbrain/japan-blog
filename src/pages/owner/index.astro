@@ -2,7 +2,7 @@
 import Site from '../../layouts/Site.astro';
 import { OwnerPosts } from '../../components/OwnerPosts';
 import { tokyoDay } from '../../lib/model';
-import { beerCounts, tripMedia, tripStartDay } from '../../lib/content';
+import { beerCounts, tripStartDayFromContent } from '../../lib/content';
 import { correctTripTitle } from '../../lib/trip-days';
 import { z } from 'zod';
 const rowSchema = z.object({
@@ -33,7 +33,7 @@ do {
   );
   cursor = page.nextCursor;
 } while (cursor);
-const firstDay = await tripStartDay(await tripMedia());
+const firstDay = await tripStartDayFromContent(Astro.locals.emdash);
 const displayPosts = posts.map((post) => ({
   ...post,
   title: correctTripTitle(post.day, firstDay, post.title),

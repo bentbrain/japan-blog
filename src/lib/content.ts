@@ -3,6 +3,8 @@ import { mediaSchema, tokyoDay, type TripMedia } from './model';
 import { z } from 'zod';
 import { readTripStartDay } from './trip-days';
 
+const tripMediaDataSchema = mediaSchema.omit({ id: true, slug: true });
+
 export async function tripMedia() {
   const items: TripMedia[] = [];
   let cursor: string | undefined;
@@ -38,6 +40,42 @@ export function tripStartDay(media: TripMedia[]) {
         status: entry.data.status,
         data: entry.data,
       })),
+      nextCursor: page.nextCursor ?? undefined,
+    };
+  });
+}
+// Owner lists and numbered-title saves need capture dates, not hydrated image
+// references for every photo. Keep the same real/sample day-numbering rules.
+export function tripStartDayFromContent(cms: {
+  handleContentList(
+    ...args: Parameters<App.Locals['emdash']['handleContentList']>
+  ): Promise<{ success: boolean; data?: unknown }>;
+}) {
+  return readTripStartDay(async (collection, cursor) => {
+    const result = await cms.handleContentList(collection, {
+      status: 'published',
+      limit: 100,
+      cursor,
+    });
+    if (!result.success) throw new Error('Could not load trip days');
+    const page = z
+      .object({
+        items: z.array(
+          z.object({
+            status: z.string(),
+            data: z.record(z.string(), z.unknown()),
+          }),
+        ),
+        nextCursor: z.string().nullish(),
+      })
+      .parse(result.data);
+    return {
+      items:
+        collection === 'media_items'
+          ? page.items.filter(
+              (item) => tripMediaDataSchema.safeParse(item.data).success,
+            )
+          : page.items,
       nextCursor: page.nextCursor ?? undefined,
     };
   });
