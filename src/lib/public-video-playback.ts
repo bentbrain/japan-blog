@@ -23,14 +23,27 @@ export function startPublicVideoPlayback(root: HTMLElement) {
   let suspended = false;
   let disposed = false;
 
+  function rendered(video: HTMLVideoElement) {
+    if (typeof video.checkVisibility === 'function') {
+      return video.checkVisibility({ visibilityProperty: true });
+    }
+    return (
+      getComputedStyle(video).visibility === 'visible' &&
+      video.getClientRects().length > 0
+    );
+  }
+
   function eligible(video: HTMLVideoElement, state: Playback) {
     return (
       !disposed &&
       !suspended &&
       !document.hidden &&
       video.isConnected &&
+      root.contains(video) &&
+      videos.get(video) === state &&
       state.visible &&
-      !state.manualPause
+      !state.manualPause &&
+      rendered(video)
     );
   }
 
@@ -47,7 +60,8 @@ export function startPublicVideoPlayback(root: HTMLElement) {
     const active = !video.closest('[data-video-active="false"]');
     // Ratios use the area that can fit in the viewport, so a tall portrait
     // can qualify. Hysteresis avoids toggling at the visibility boundary.
-    const visible = active && state.ratio >= (state.visible ? 0.2 : 0.6);
+    const visible =
+      active && rendered(video) && state.ratio >= (state.visible ? 0.2 : 0.6);
     if (!visible) {
       state.manualPause = false;
       state.attempted = false;
@@ -67,11 +81,20 @@ export function startPublicVideoPlayback(root: HTMLElement) {
     void video
       .play()
       .then(() => {
-        if (generation === state.generation) state.pending = false;
-        if (!eligible(video, state)) pause(video, state);
+        const current = videos.get(video);
+        if (current === state && generation === state.generation)
+          state.pending = false;
+        // A retired request may finish after the same element has registered
+        // again. Apply current ownership without pausing valid new playback.
+        if (current) {
+          if (!eligible(video, current)) update(video, current);
+        } else {
+          pause(video, state);
+        }
       })
       .catch(() => {
-        if (generation === state.generation) state.pending = false;
+        if (videos.get(video) === state && generation === state.generation)
+          state.pending = false;
         // Blocked autoplay leaves native controls available, without retry loops.
       });
   }
@@ -123,7 +146,12 @@ export function startPublicVideoPlayback(root: HTMLElement) {
   const sizes = new ResizeObserver(scheduleIntersection);
 
   function register(element: Element) {
-    if (!(element instanceof HTMLVideoElement) || videos.has(element)) return;
+    if (
+      !(element instanceof HTMLVideoElement) ||
+      !root.contains(element) ||
+      videos.has(element)
+    )
+      return;
     element.autoplay = false;
     element.muted = true;
     element.loop = true;
@@ -144,23 +172,44 @@ export function startPublicVideoPlayback(root: HTMLElement) {
     if (element.matches(selector)) register(element);
     element.querySelectorAll(selector).forEach(register);
   }
+  const visibilityUpdates = new Set<HTMLVideoElement>();
+  let visibilityFrame: number | undefined;
+  function flushVisibility() {
+    visibilityFrame = undefined;
+    for (const video of visibilityUpdates) {
+      const state = videos.get(video);
+      if (state) update(video, state);
+    }
+    visibilityUpdates.clear();
+  }
+  function queueVisibility(element: Element) {
+    if (element instanceof HTMLVideoElement && videos.has(element))
+      visibilityUpdates.add(element);
+    for (const video of element.querySelectorAll('video')) {
+      if (video instanceof HTMLVideoElement && videos.has(video))
+        visibilityUpdates.add(video);
+    }
+    // Class/style churn, including carousel transforms, is scoped to affected
+    // players and coalesced once per frame. Playback writes no class/style.
+    if (visibilityUpdates.size && visibilityFrame === undefined) {
+      visibilityFrame = requestAnimationFrame(flushVisibility);
+    }
+  }
   const mutations = new MutationObserver((records) => {
     for (const record of records) {
       for (const node of record.addedNodes)
         if (node instanceof Element) add(node);
       if (record.type === 'attributes' && record.target instanceof Element) {
-        for (const video of record.target.querySelectorAll(selector)) {
-          if (!(video instanceof HTMLVideoElement)) continue;
-          const state = videos.get(video);
-          if (state) update(video, state);
-        }
+        queueVisibility(record.target);
       }
     }
     for (const [video, state] of videos) {
       if (video.isConnected && root.contains(video)) continue;
+      state.visible = false;
       pause(video, state);
       intersection?.unobserve(video);
       sizes.unobserve(video);
+      visibilityUpdates.delete(video);
       videos.delete(video);
     }
   });
@@ -207,6 +256,8 @@ export function startPublicVideoPlayback(root: HTMLElement) {
     sizes.disconnect();
     if (frame !== undefined) cancelAnimationFrame(frame);
     mutations.disconnect();
+    if (visibilityFrame !== undefined) cancelAnimationFrame(visibilityFrame);
+    visibilityUpdates.clear();
     for (const [video, state] of videos) pause(video, state);
     videos.clear();
     root.removeEventListener('play', onPlay, true);
@@ -227,8 +278,19 @@ export function startPublicVideoPlayback(root: HTMLElement) {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['data-video-active'],
+    attributeFilter: ['data-video-active', 'class', 'style', 'hidden'],
   });
+  // Inherited visibility may change above the controlled root as well.
+  for (
+    let ancestor = root.parentElement;
+    ancestor;
+    ancestor = ancestor.parentElement
+  ) {
+    mutations.observe(ancestor, {
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden'],
+    });
+  }
   add(root);
   controllers.set(root, cleanup);
   return cleanup;

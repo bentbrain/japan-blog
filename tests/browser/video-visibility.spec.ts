@@ -566,3 +566,200 @@ test('native rich-text public video joins the shared controller without a second
   expect((await state(video)).muted).toBe(true);
   expect((await state(video)).loop).toBe(true);
 });
+
+for (const target of ['video', 'ancestor']) {
+  test(`CSS visibility on ${target} stops previously unmuted playback and returns silently`, async ({
+    page,
+  }) => {
+    const item = media[0];
+    if (!item) throw new Error('Fixture required');
+    await page.goto(`/media/${item.slug}`);
+    const video = page.locator('.viewer video');
+    await moving(video);
+    await video.evaluate((element) => {
+      if (element instanceof HTMLVideoElement) element.muted = false;
+    });
+    await video.evaluate((element, target) => {
+      const hidden = target === 'video' ? element : element.closest('.viewer');
+      if (!(hidden instanceof HTMLElement))
+        throw new Error('Visibility target required');
+      hidden.style.visibility = 'hidden';
+    }, target);
+    expect(
+      await video.evaluate((element) => getComputedStyle(element).visibility),
+    ).toBe('hidden');
+    await stopped(video);
+    await video.evaluate((element, target) => {
+      const hidden = target === 'video' ? element : element.closest('.viewer');
+      if (hidden instanceof HTMLElement) hidden.style.visibility = '';
+    }, target);
+    await moving(video);
+    expect((await state(video)).muted).toBe(true);
+  });
+}
+
+async function delayFirstPlay(page: import('@playwright/test').Page) {
+  await page.addInitScript(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      HTMLMediaElement.prototype,
+      'play',
+    );
+    if (!descriptor) throw new Error('Native play descriptor required');
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      Object.defineProperty(HTMLMediaElement.prototype, 'play', descriptor);
+      this.setAttribute('data-pending-review-play', 'true');
+      return new Promise<void>((resolve, reject) => {
+        setTimeout(() => {
+          void this.play().then(resolve, reject);
+        }, 300);
+      });
+    };
+  });
+}
+
+test('pending playback moved outside the controlled root stays paused while still connected', async ({
+  page,
+}) => {
+  await delayFirstPlay(page);
+  const item = media[0];
+  if (!item) throw new Error('Fixture required');
+  await page.goto(`/media/${item.slug}`);
+  const video = page.locator('.viewer video');
+  await expect(video).toHaveAttribute('data-pending-review-play', 'true');
+  const handle = await video.elementHandle();
+  await video.evaluate((element) => {
+    document.documentElement.append(element);
+  });
+  await page.waitForTimeout(650);
+  expect(
+    await handle.evaluate(
+      (element) => element.isConnected && !document.body.contains(element),
+    ),
+  ).toBe(true);
+  expect(
+    await handle.evaluate(
+      (element) => element instanceof HTMLVideoElement && element.paused,
+    ),
+  ).toBe(true);
+  const time = await handle.evaluate((element) =>
+    element instanceof HTMLVideoElement ? element.currentTime : -1,
+  );
+  await page.waitForTimeout(350);
+  expect(
+    await handle.evaluate((element) =>
+      element instanceof HTMLVideoElement ? element.currentTime : -1,
+    ),
+  ).toBeCloseTo(time, 2);
+  await handle.dispose();
+});
+
+test('CSS class and root-ancestor visibility honor an explicitly visible child', async ({
+  page,
+}) => {
+  const item = media[0];
+  if (!item) throw new Error('Fixture required');
+  await page.goto(`/media/${item.slug}`);
+  const video = page.locator('.viewer video');
+  await moving(video);
+  await page.addStyleTag({
+    content: '.synthetic-hidden-video { visibility:hidden }',
+  });
+  await page.locator('.viewer').evaluate((element) => {
+    element.classList.add('synthetic-hidden-video');
+  });
+  await stopped(video);
+  await page.locator('.viewer').evaluate((element) => {
+    element.classList.remove('synthetic-hidden-video');
+  });
+  await moving(video);
+  expect((await state(video)).muted).toBe(true);
+  await video.evaluate((element) => {
+    if (!(element instanceof HTMLVideoElement))
+      throw new Error('Video required');
+    element.muted = false;
+    element.style.visibility = 'visible';
+    element.closest('.viewer')?.classList.add('synthetic-hidden-video');
+  });
+  expect(
+    await video.evaluate((element) => getComputedStyle(element).visibility),
+  ).toBe('visible');
+  await moving(video);
+  expect((await state(video)).muted).toBe(false);
+  await video.evaluate((element) => {
+    if (element instanceof HTMLElement) element.style.visibility = '';
+  });
+  await stopped(video);
+  await page.locator('.viewer').evaluate((element) => {
+    element.classList.remove('synthetic-hidden-video');
+  });
+  await moving(video);
+  await page.evaluate(() => {
+    document.documentElement.style.visibility = 'hidden';
+  });
+  await stopped(video);
+  await page.evaluate(() => {
+    document.documentElement.style.visibility = '';
+  });
+  await moving(video);
+  expect((await state(video)).muted).toBe(true);
+});
+
+test('same-root movement and replacement registration survive a retired pending play', async ({
+  page,
+}) => {
+  const item = media[0];
+  if (!item) throw new Error('Fixture required');
+  await page.goto(`/media/${item.slug}`);
+  const video = page.locator('.viewer video');
+  await moving(video);
+  await video.evaluate((element) => {
+    if (!(element instanceof HTMLVideoElement))
+      throw new Error('Video required');
+    element.muted = false;
+    const parent = element.parentElement;
+    if (!parent) throw new Error('Parent required');
+    const wrapper = document.createElement('div');
+    parent.prepend(wrapper);
+    wrapper.append(element);
+  });
+  await moving(video);
+  expect((await state(video)).muted).toBe(false);
+  const removed = await video.elementHandle();
+  await video.evaluate((element) => {
+    element.remove();
+  });
+  await expect
+    .poll(() =>
+      removed.evaluate(
+        (element) => element instanceof HTMLVideoElement && element.paused,
+      ),
+    )
+    .toBe(true);
+  await removed.evaluate((element) => {
+    document.querySelector('.viewer')?.append(element);
+  });
+  await moving(video);
+  expect((await state(video)).muted).toBe(true);
+  await removed.dispose();
+
+  await delayFirstPlay(page);
+  await page.goto(`/media/${item.slug}`);
+  await expect(video).toHaveAttribute('data-pending-review-play', 'true');
+  const pending = await video.elementHandle();
+  await video.evaluate((element) => {
+    document.documentElement.append(element);
+  });
+  await page.waitForTimeout(50);
+  await pending.evaluate((element) => {
+    document.querySelector('.viewer')?.append(element);
+  });
+  await moving(video);
+  await page.waitForTimeout(400);
+  await moving(video);
+  expect((await state(video)).muted).toBe(true);
+  await video.press('Space');
+  await stopped(video);
+  await video.press('Space');
+  await moving(video);
+  await pending.dispose();
+});

@@ -64,6 +64,12 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
   browser,
   baseURL,
 }) => {
+  await page.route('**/demo/japan.jpg', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="#dbe8ff"/><circle cx="100" cy="100" r="50" fill="#0647ff"/></svg>',
+    }),
+  );
   await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
   await page.waitForURL('**/owner/posts/new');
   await expect(page.getByLabel('title', { exact: true })).toBeVisible();
@@ -151,6 +157,8 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
     picker.getByRole('img', { name: 'Synthetic incomplete draft' }),
   ).toHaveCount(0);
   await page.keyboard.press('Escape');
+  // Raw pointer coordinates must target the editor after the modal unmounts.
+  await expect(picker).toHaveCount(0);
   const gallery = page.getByRole('list', { name: 'Post gallery' });
   const tiles = gallery.locator('[data-gallery-id]');
   const ids = () =>
@@ -163,8 +171,16 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
   if (!late || !early || !middle)
     throw new Error('Three gallery fixtures required');
   await expect.poll(ids).toEqual([early.id, middle.id, late.id]);
+  await gallery.locator('img').evaluateAll(async (images) =>
+    Promise.all(
+      images.map(async (image) => {
+        if (image instanceof HTMLImageElement) await image.decode();
+      }),
+    ),
+  );
 
   // Pointer drag commits on drop and can be cancelled without changing order.
+  const viewportHeight = await page.evaluate(() => innerHeight);
   const handle = gallery.getByRole('button', {
     name: `Drag ${late.title} to reorder`,
   });
@@ -178,17 +194,33 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
   await page.mouse.down();
   await page.mouse.move(
     target.x + target.width / 2,
-    target.y + target.height / 2,
+    Math.min(target.y + target.height / 2, viewportHeight - 60),
     { steps: 8 },
   );
+  // A cancelled drag may legitimately scroll before Escape stops it.
+  // Exercise that state before starting another real pointer interaction.
+  const cancelScroll = await page.evaluate(() => scrollY);
+  await page.mouse.move(source.x + 10, viewportHeight - 10, { steps: 8 });
+  await expect
+    .poll(() => page.evaluate(() => scrollY))
+    .toBeGreaterThan(cancelScroll + 80);
   await page.keyboard.press('Escape');
   await page.mouse.up();
   expect(await ids()).toEqual([early.id, middle.id, late.id]);
-  await page.mouse.move(source.x + 10, source.y + 10);
+  // Cancellation stops scrolling; it does not restore the old page position.
+  // Measure the next interaction from the current editor geometry.
+  await handle.scrollIntoViewIfNeeded();
+  const nextSource = await handle.boundingBox();
+  const nextTarget = await gallery
+    .locator(`[data-gallery-id="${early.id}"] img`)
+    .boundingBox();
+  if (!nextSource || !nextTarget)
+    throw new Error('Current drag bounds required');
+  await page.mouse.move(nextSource.x + 10, nextSource.y + 10);
   await page.mouse.down();
   await page.mouse.move(
-    target.x + target.width / 2,
-    target.y + target.height / 2,
+    nextTarget.x + nextTarget.width / 2,
+    nextTarget.y + nextTarget.height / 2,
     { steps: 8 },
   );
   await page.mouse.up();
