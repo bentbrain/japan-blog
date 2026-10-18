@@ -628,3 +628,87 @@ test('feed carousel survives desktop-mobile-desktop resizing and bounds short vi
     ).toBe(width);
   }
 });
+
+test('native Space resume survives carousel updates before its play notification', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Pin the observed ordering: a carousel update can run before the controller
+  // receives a queued play notification. Keyboard handling stays native.
+  await page.addInitScript(() => {
+    const add: unknown = Object.getOwnPropertyDescriptor(
+      EventTarget.prototype,
+      'addEventListener',
+    )?.value;
+    if (typeof add !== 'function')
+      throw new Error('Native event registration required');
+    EventTarget.prototype.addEventListener = function (
+      type,
+      listener,
+      options,
+    ) {
+      if (
+        type === 'play' &&
+        this instanceof HTMLBodyElement &&
+        typeof listener === 'function'
+      ) {
+        Reflect.apply(add, this, [
+          type,
+          (event: Event) => {
+            setTimeout(() => {
+              listener.call(this, event);
+            }, 100);
+          },
+          options,
+        ]);
+      } else {
+        Reflect.apply(add, this, [type, listener, options]);
+      }
+    };
+  });
+  const card = await openGallery(page);
+  const frame = card.locator('[data-slot="carousel-content"]');
+  const bounds = await frame.boundingBox();
+  if (!bounds) throw new Error('Gallery bounds required');
+  await swipe(
+    page,
+    { x: bounds.x + bounds.width - 35, y: bounds.y + 100 },
+    { x: bounds.x + 35, y: bounds.y + 100 },
+  );
+  await expect(card.getByText('2 / 5', { exact: true })).toBeVisible();
+  const video = card.locator('video').first();
+  const state = () =>
+    video.evaluate((element) => {
+      if (!(element instanceof HTMLVideoElement))
+        throw new Error('Video fixture required');
+      return {
+        paused: element.paused,
+        time: element.currentTime,
+        muted: element.muted,
+        loop: element.loop,
+      };
+    });
+  await expect.poll(async () => (await state()).paused).toBe(false);
+  await video.evaluate((element) => {
+    element.addEventListener(
+      'pause',
+      () => {
+        element.setAttribute('data-native-pause', 'true');
+      },
+      { once: true },
+    );
+  });
+  await video.press('Space');
+  await expect(video).toHaveAttribute('data-native-pause', 'true');
+  await expect.poll(async () => (await state()).paused).toBe(true);
+  await video.press('Space');
+  await expect.poll(async () => (await state()).paused).toBe(false);
+  // Observe beyond the queued notification and carousel frame. A transient
+  // paused=false property does not prove that resumed playback survives.
+  await page.waitForTimeout(350);
+  expect((await state()).paused).toBe(false);
+  const resumed = await state();
+  expect(resumed.muted).toBe(true);
+  expect(resumed.loop).toBe(true);
+  await expect.poll(async () => (await state()).time).not.toBe(resumed.time);
+});

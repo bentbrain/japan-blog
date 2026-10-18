@@ -42,7 +42,6 @@ export function startPublicVideoPlayback(root: HTMLElement) {
       root.contains(video) &&
       videos.get(video) === state &&
       state.visible &&
-      !state.manualPause &&
       rendered(video)
     );
   }
@@ -71,7 +70,10 @@ export function startPublicVideoPlayback(root: HTMLElement) {
       pause(video, state);
       return;
     }
-    if (!video.paused || state.pending || state.attempted) return;
+    // Native controls change paused before their queued play event arrives.
+    // A manual pause blocks automatic starts, not an already resumed player.
+    if (state.manualPause || !video.paused || state.pending || state.attempted)
+      return;
     state.attempted = true;
     state.pending = true;
     const generation = ++state.generation;
