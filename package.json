@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.3.1",
-    "@astrojs/react": "^6.0.5",
+    "@astrojs/react": "^7.0.1",
     "@base-ui/react": "^1.9.0",
     "@emdash-cms/cloudflare": "^1.0.1",
     "@fontsource/geist-mono": "^5.3.0",
