@@ -6,7 +6,7 @@ Public blog, categorised gallery, geolocated media map and beer counter. The own
 
 The application uses Tailwind utilities and shadcn components on Base UI. Theme tokens and the official shadcn state utilities live in `src/styles/globals.css`.
 
-Post media uses the shadcn carousel with Embla below 601px, with mouse dragging, touch swiping, keyboard arrows and navigation buttons. An attached shop design is its final slide. Wider layouts show the media grid followed by the design with a 16px gap. Video controls retain their native interaction.
+Blog cards use a bounded horizontal carousel below 601px, with photos and videos fitted without cropping. Swipe horizontally or use the navigation buttons; vertical touch gestures scroll the page. Native video controls remain available. At wider widths, cards stack media vertically at equal widths and natural heights, followed by any attached shop design. Individual post pages retain their existing carousel. New gallery selections start in capture-time order, oldest first. Drag the gallery handles or use the earlier/later buttons in either owner editor to arrange them. Dragging scrolls the editor panel or page to reach offscreen media. Saved gallery order is preserved, including when more media is added.
 
 ## Development
 

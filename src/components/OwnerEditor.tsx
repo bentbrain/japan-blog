@@ -26,6 +26,8 @@ import {
   AlertDialogTrigger,
 } from './ui/alert-dialog';
 import { Checkbox } from './ui/checkbox';
+import { GalleryOrder } from './GalleryOrder';
+import { captureOrder, selectGalleryItem } from '../lib/gallery-order';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { ShopDesignField } from './ShopDesignField';
@@ -43,6 +45,7 @@ const mediaSchema = z.object({
   status: z.string(),
   data: z.object({
     title: z.string(),
+    captured_at: z.coerce.date(),
     kind: z.enum(['photo', 'video']),
     asset: z.object({ id: z.string(), url: z.string().optional() }).nullish(),
     poster: z.object({ src: z.string().optional() }).nullish(),
@@ -61,6 +64,7 @@ function EditorForm({
 }) {
   const [items, setItems] = useState<Media[]>([]);
   const [gallery, setGallery] = useState(post.data.gallery);
+  const preserveGalleryOrder = useRef(post.data.gallery.length > 0);
   const [shopDesign, setShopDesign] = useState(post.data.shop_design ?? null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
@@ -112,9 +116,10 @@ function EditorForm({
         if (!cancelled)
           setItems(
             z
-              .object({ items: z.array(mediaSchema) })
+              .object({ items: z.array(z.looseObject({ status: z.string() })) })
               .parse(data)
-              .items.filter((item) => item.status === 'published'),
+              .items.filter((item) => item.status === 'published')
+              .map((item) => mediaSchema.parse(item)),
           );
       })
       .catch((error: unknown) => {
@@ -393,7 +398,7 @@ function EditorForm({
                     </a>
                     <div className="trip-gallery-field">
                       <div className="trip-gallery-options grid grid-cols-2 gap-3 sm:grid-cols-3">
-                        {items.map((item) => (
+                        {captureOrder(items).map((item) => (
                           <div key={item.id} className="space-y-2">
                             <img
                               src={
@@ -413,9 +418,16 @@ function EditorForm({
                                 onCheckedChange={(checked) => {
                                   setGallery((current) =>
                                     checked
-                                      ? [...current, item.id]
+                                      ? selectGalleryItem(
+                                          current,
+                                          item.id,
+                                          items,
+                                          preserveGalleryOrder.current,
+                                        )
                                       : current.filter((id) => id !== item.id),
                                   );
+                                  if (!checked && gallery.length === 1)
+                                    preserveGalleryOrder.current = false;
                                   markDirty();
                                 }}
                               />
@@ -465,26 +477,15 @@ function EditorForm({
             </TooltipProvider>
             <EditorContent editor={editor} />
           </div>
-          {gallery.length > 0 && (
-            <div className="grid grid-cols-3 gap-2" aria-label="Post gallery">
-              {items
-                .filter((item) => gallery.includes(item.id))
-                .map((item) => (
-                  <img
-                    key={item.id}
-                    src={
-                      item.data.poster?.src ||
-                      item.data.poster_url ||
-                      item.data.asset?.url ||
-                      item.data.source_url ||
-                      ''
-                    }
-                    alt={item.data.title}
-                    className="aspect-[1.15] w-full object-cover"
-                  />
-                ))}
-            </div>
-          )}
+          <GalleryOrder
+            selected={gallery}
+            items={items}
+            onChange={(ids) => {
+              preserveGalleryOrder.current = true;
+              setGallery(ids);
+              markDirty();
+            }}
+          />
         </div>
         <FieldGroup className="gap-4">
           <Field>

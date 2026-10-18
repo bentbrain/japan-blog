@@ -145,9 +145,11 @@ test('shared layout installs the toolbar once and keeps owner content private', 
     ),
   ).toBe(true);
 });
-test('mouse dragging advances the mobile post carousel', async ({ page }) => {
+test('mouse dragging advances the individual post carousel', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
+  await page.goto('/posts/tokyo-after-dark');
   const gallery = page.locator('.post-media').first();
   await expect(
     page
@@ -176,7 +178,7 @@ test('carousel preserves video playback and keyboard controls', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
+  await page.goto('/posts/tokyo-after-dark');
   const carousel = page.locator('.post-carousel').first();
   const next = carousel.getByRole('button', { name: 'Next slide' });
   await next.click();
@@ -234,12 +236,11 @@ test('owner attaches, recolours and removes a shop design', async ({
   ).toHaveAttribute('aria-pressed', 'true');
   await page.goto('/');
   const card = page.locator('article').filter({ hasText: 'Shop design post' });
-  await expect(card.locator('[data-slot="carousel-item"]')).toHaveCount(4);
+  await expect(card.locator('.post-media > *')).toHaveCount(4);
   await expect(card.locator('.post-media > :last-child')).toHaveClass(
     /post-design-slide/,
   );
-  await card.getByRole('button', { name: 'Next slide' }).click();
-  await expect(card.getByText('2 / 4', { exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Next slide' })).toHaveCount(0);
   await expect(card.locator('.post-design img')).toHaveAttribute(
     'src',
     /\/black\.webp\?/,
@@ -388,7 +389,7 @@ test('journal has map first, full text and playable video', async ({
   await page.getByRole('button', { name: 'Close map preview' }).click();
   await expect(page.locator('.map-detail')).toBeHidden();
 });
-test('mobile gallery uses one column and post media scrolls', async ({
+test('mobile galleries keep bounded horizontal post media without page overflow', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -406,6 +407,12 @@ test('mobile gallery uses one column and post media scrolls', async ({
       .first()
       .evaluate((el) => el.scrollWidth > el.clientWidth),
   ).toBe(true);
+  expect(
+    await page
+      .locator('.post-media')
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(320);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
