@@ -453,9 +453,16 @@ test('pending automatic play cannot restart an offscreen or removed video', asyn
       Object.defineProperty(HTMLMediaElement.prototype, 'play', descriptor);
       this.setAttribute('data-pending-play', 'true');
       return new Promise<void>((resolve, reject) => {
-        setTimeout(() => {
-          void this.play().then(resolve, reject);
-        }, 250);
+        this.addEventListener(
+          'release-pending-play',
+          () => {
+            void this.play().then(() => {
+              this.setAttribute('data-pending-play', 'settled');
+              resolve();
+            }, reject);
+          },
+          { once: true },
+        );
       });
     };
   });
@@ -463,12 +470,22 @@ test('pending automatic play cannot restart an offscreen or removed video', asyn
   if (!item) throw new Error('Fixture required');
   await page.goto(`/media/${item.slug}`);
   const video = page.locator('.viewer video');
+  await expect(video).toHaveAttribute('data-pending-play', 'true');
   await page.locator('.viewer').evaluate((element) => {
     if (element instanceof HTMLElement) element.style.marginBottom = '1600px';
   });
   await page.evaluate(() => {
     scrollTo(0, document.body.scrollHeight);
   });
+  await expect
+    .poll(() =>
+      video.evaluate((element) => element.getBoundingClientRect().bottom),
+    )
+    .toBeLessThanOrEqual(0);
+  // Settle the pending request before measuring the completed pause. The
+  // initial paused flag is also true while that request has not started yet.
+  await video.dispatchEvent('release-pending-play');
+  await expect(video).toHaveAttribute('data-pending-play', 'settled');
   await stopped(video);
   await video.scrollIntoViewIfNeeded();
   await moving(video);
@@ -490,12 +507,37 @@ test('pending automatic play cannot restart an offscreen or removed video', asyn
   await video.evaluate((element) => {
     element.remove();
   });
+  await pending.evaluate((element) => {
+    element.dispatchEvent(new Event('release-pending-play'));
+  });
+  await expect
+    .poll(() => pending.getAttribute('data-pending-play'))
+    .toBe('settled');
+  await expect
+    .poll(() =>
+      pending.evaluate(
+        (element) => element instanceof HTMLVideoElement && element.paused,
+      ),
+    )
+    .toBe(true);
+  const time = await pending.evaluate((element) => {
+    if (!(element instanceof HTMLVideoElement))
+      throw new Error('Video required');
+    return element.currentTime;
+  });
   await page.waitForTimeout(400);
   expect(
     await pending.evaluate(
       (element) => element instanceof HTMLVideoElement && element.paused,
     ),
   ).toBe(true);
+  expect(
+    await pending.evaluate((element) => {
+      if (!(element instanceof HTMLVideoElement))
+        throw new Error('Video required');
+      return element.currentTime;
+    }),
+  ).toBeCloseTo(time, 2);
   await pending.dispose();
 });
 
