@@ -23,6 +23,7 @@ type MapItem = MapPoint & {
   kind: 'photo' | 'video';
   src: string;
   poster: string;
+  photo?: { src: string; srcSet?: string; sizes?: string };
 };
 const controlClass =
   'size-11 bg-background p-0 text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground';
@@ -304,7 +305,7 @@ export function JapanMapView({
                   />
                 ) : (
                   <img
-                    src={selected.poster}
+                    {...(selected.photo || { src: selected.poster })}
                     alt={selected.title}
                     className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
                   />

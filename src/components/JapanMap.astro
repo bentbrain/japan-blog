@@ -1,4 +1,5 @@
 ---
+import { responsiveImage } from '../lib/responsive-image';
 import { tripMap } from '../lib/map';
 import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
 interface Props {
@@ -22,6 +23,13 @@ const points = media.flatMap((item) => {
       kind: item.kind,
       src: mediaUrl(item),
       poster: posterUrl(item),
+      photo:
+        Astro.locals.privateMediaRender || item.kind === 'video'
+          ? { src: posterUrl(item) }
+          : responsiveImage(
+              posterUrl(item),
+              '(min-width: 672px) 614px, calc(100vw - 58px)',
+            ),
     },
   ];
 });
