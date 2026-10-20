@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 const fixtureIds: string[] = [];
 const result = z.object({
@@ -771,16 +772,55 @@ test('a 600-photo published library retains the last native photo and its first 
   expect(display.ok()).toBe(true);
   const bytes = await display.body();
   await sourcePage.close();
-  const baseURL = 'http://127.0.0.1:4393';
+  const reservation = createServer();
+  reservation.listen(0, '127.0.0.1');
+  await once(reservation, 'listening');
+  const address = reservation.address();
+  if (!address || typeof address === 'string')
+    throw new Error('Fixture port required');
+  const port = String(address.port);
+  await new Promise<void>((resolve, reject) =>
+    reservation.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    }),
+  );
+  const baseURL = `http://127.0.0.1:${port}`;
   const server = spawn(
-    'pnpm',
-    ['dev', '--host', '127.0.0.1', '--port', '4393', '--ignore-lock'],
+    process.execPath,
+    [
+      fileURLToPath(
+        new URL('../../node_modules/astro/bin/astro.mjs', import.meta.url),
+      ),
+      'dev',
+      '--config',
+      'tests/fixtures/map-library.config.mjs',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      port,
+      '--ignore-lock',
+    ],
     {
       cwd: fileURLToPath(new URL('../..', import.meta.url)),
       env: { ...process.env, TEST_EPHEMERAL: '1' },
+      detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
+  const stop = (signal: NodeJS.Signals) => {
+    if (!server.pid) return;
+    try {
+      process.kill(-server.pid, signal);
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== 'ESRCH'
+      )
+        throw error;
+    }
+  };
   let serverLog = '';
   const record = (chunk: Buffer) => {
     serverLog = (serverLog + chunk.toString()).slice(-200_000);
@@ -869,24 +909,20 @@ test('a 600-photo published library retains the last native photo and its first 
         })
       ).ok(),
     ).toBe(true);
-    const libraryIds = [id];
-    for (let index = 0; index < 599; index++) {
-      const saved = await request.post('/_emdash/api/content/media_items', {
-        headers,
-        data: { slug: `synthetic-library-${crypto.randomUUID()}`, data },
+    const libraryIds =
+      await test.step('seed the full 600-photo library in ephemeral D1', async () => {
+        const seeded = await request.post(
+          `/__synthetic/map-library?sourceId=${id}`,
+          {
+            headers,
+          },
+        );
+        expect(seeded.ok()).toBe(true);
+        const { ids } = z
+          .object({ ids: z.array(z.string()).length(599) })
+          .parse(await seeded.json());
+        return [id, ...ids];
       });
-      expect(saved.status()).toBe(201);
-      const created = result.parse(await saved.json()).data;
-      libraryIds.push(created.item.id);
-      expect(
-        (
-          await request.post(
-            `/_emdash/api/content/media_items/${created.item.id}/publish`,
-            { headers, data: { _rev: created._rev } },
-          )
-        ).ok(),
-      ).toBe(true);
-    }
     await context.route('https://toolbar.bent.build/embed.js', (route) =>
       route.fulfill({ contentType: 'application/javascript', body: '' }),
     );
@@ -929,12 +965,12 @@ test('a 600-photo published library retains the last native photo and its first 
     await context.close();
     await request.dispose();
     const exited = once(server, 'exit');
-    server.kill('SIGTERM');
+    stop('SIGTERM');
     await Promise.race([
       exited,
       new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          server.kill('SIGKILL');
+          stop('SIGKILL');
           resolve();
         }, 3000);
         timer.unref();
