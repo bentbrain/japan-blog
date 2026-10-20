@@ -156,90 +156,117 @@ for (const width of [390, 671, 672, 1280, 1991])
           await context.route('https://toolbar.bent.build/embed.js', (route) =>
             route.fulfill({ contentType: 'application/javascript', body: '' }),
           );
-          for (const [index, id] of fixtureIds.entries()) {
-            const fresh = await context.newPage();
-            const requests: string[] = [];
-            fresh.on('request', (r) => {
-              if (r.url().match(/\/(?:media-preview|_emdash\/api\/media)\//))
-                requests.push(r.url());
-            });
-            await fresh.goto(`${baseURL || ''}/?media=${id}#japan-map`);
-            const image = fresh.locator('[data-feedback-id="map-preview"] img');
-            await expect(image).toBeVisible();
-            const measured = await image.evaluate(async (image) => {
-              if (!(image instanceof HTMLImageElement))
-                throw new Error('Photo required');
-              await image.decode();
-              const box = image.getBoundingClientRect();
-              return {
-                width: box.width,
-                height: box.height,
-                sizes: image.sizes,
-                bytes: performance
-                  .getEntriesByName(image.currentSrc)
-                  .find((entry) => entry instanceof PerformanceResourceTiming)
-                  ?.encodedBodySize,
-                srcset: image.srcset,
-                source: image.src,
-                selected: image.currentSrc.match(/\/(\d+)\/auto$/)?.[1],
-                resolution: performance
-                  .getEntriesByType('resource')
-                  .filter((entry) => entry.name.includes('/map-photo/'))
-                  .map((entry) => ({
-                    startMs: entry.startTime,
-                    durationMs: entry.duration,
-                  })),
-                imageStartMs: performance.getEntriesByName(image.currentSrc)[0]
-                  ?.startTime,
-                measuredAtMs: performance.now(),
-              };
-            });
-            const controlContext = await browser.newContext({
-              deviceScaleFactor: dpr,
-            });
-            const controlPage = await controlContext.newPage();
-            await controlPage.goto(`${baseURL || ''}/_emdash/api/health`);
-            const control = await controlPage.evaluate(
-              async ({ srcset, width }) => {
-                const image = new Image();
-                image.sizes = `${String(width)}px`;
-                image.srcset = srcset;
-                await image.decode();
-                return image.currentSrc.match(/\/(\d+)\/auto$/)?.[1];
-              },
-              measured,
-            );
-            await controlContext.close();
-            expect(measured.resolution).toHaveLength(1);
-            const mapRequests = requestsForPhoto(
-              measured.srcset,
-              measured.source,
-              requests,
-            );
-            expect(mapRequests).toHaveLength(1);
-            expect(
-              await fresh.evaluate(
-                () => matchMedia('(prefers-color-scheme: dark)').matches,
-              ),
-            ).toBe(colorScheme === 'dark');
-            measurements.push({
-              index,
-              dpr,
-              ...measured,
-              control,
-              requests: mapRequests,
-            });
-            if (!measured.selected || !control || measured.selected !== control)
-              failures.push({ index, ...measured, control });
-            if (evidence)
-              await fresh
-                .locator('[data-feedback-id="map-preview"]')
-                .screenshot({
-                  path: `${evidence}/${String(width)}-${String(height)}-${String(dpr)}-${colorScheme}-shape${String(index)}.png`,
+          try {
+            // Each shape owns a fresh page and an isolated measured-slot control.
+            // Overlap these three read-only journeys without sharing image state.
+            const outcomes = await Promise.allSettled(
+              fixtureIds.map(async (id, index) => {
+                const fresh = await context.newPage();
+                const requests: string[] = [];
+                fresh.on('request', (r) => {
+                  if (
+                    r.url().match(/\/(?:media-preview|_emdash\/api\/media)\//)
+                  )
+                    requests.push(r.url());
                 });
-            await fresh.close();
+                await fresh.goto(`${baseURL || ''}/?media=${id}#japan-map`);
+                const image = fresh.locator(
+                  '[data-feedback-id="map-preview"] img',
+                );
+                await expect(image).toBeVisible();
+                const measured = await image.evaluate(async (image) => {
+                  if (!(image instanceof HTMLImageElement))
+                    throw new Error('Photo required');
+                  await image.decode();
+                  const box = image.getBoundingClientRect();
+                  return {
+                    width: box.width,
+                    height: box.height,
+                    sizes: image.sizes,
+                    bytes: performance
+                      .getEntriesByName(image.currentSrc)
+                      .find(
+                        (entry) => entry instanceof PerformanceResourceTiming,
+                      )?.encodedBodySize,
+                    srcset: image.srcset,
+                    source: image.src,
+                    selected: image.currentSrc.match(/\/(\d+)\/auto$/)?.[1],
+                    resolution: performance
+                      .getEntriesByType('resource')
+                      .filter((entry) => entry.name.includes('/map-photo/'))
+                      .map((entry) => ({
+                        startMs: entry.startTime,
+                        durationMs: entry.duration,
+                      })),
+                    imageStartMs: performance.getEntriesByName(
+                      image.currentSrc,
+                    )[0]?.startTime,
+                    measuredAtMs: performance.now(),
+                  };
+                });
+                const controlContext = await browser.newContext({
+                  deviceScaleFactor: dpr,
+                });
+                let control: string | undefined;
+                try {
+                  const controlPage = await controlContext.newPage();
+                  await controlPage.goto(`${baseURL || ''}/_emdash/api/health`);
+                  control = await controlPage.evaluate(
+                    async ({ srcset, width }) => {
+                      const image = new Image();
+                      image.sizes = `${String(width)}px`;
+                      image.srcset = srcset;
+                      await image.decode();
+                      return image.currentSrc.match(/\/(\d+)\/auto$/)?.[1];
+                    },
+                    measured,
+                  );
+                } finally {
+                  await controlContext.close();
+                }
+                expect(measured.resolution).toHaveLength(1);
+                const mapRequests = requestsForPhoto(
+                  measured.srcset,
+                  measured.source,
+                  requests,
+                );
+                expect(mapRequests).toHaveLength(1);
+                expect(
+                  await fresh.evaluate(
+                    () => matchMedia('(prefers-color-scheme: dark)').matches,
+                  ),
+                ).toBe(colorScheme === 'dark');
+                measurements[index] = {
+                  index,
+                  dpr,
+                  ...measured,
+                  control,
+                  requests: mapRequests,
+                };
+                if (
+                  !measured.selected ||
+                  !control ||
+                  measured.selected !== control
+                )
+                  failures.push({ index, ...measured, control });
+                if (evidence)
+                  await fresh
+                    .locator('[data-feedback-id="map-preview"]')
+                    .screenshot({
+                      path: `${evidence}/${String(width)}-${String(height)}-${String(dpr)}-${colorScheme}-shape${String(index)}.png`,
+                    });
+                await fresh.close();
+              }),
+            );
+            for (const outcome of outcomes) {
+              if (outcome.status === 'rejected') {
+                if (outcome.reason instanceof Error) throw outcome.reason;
+                throw new Error('Map photo journey failed');
+              }
+            }
+          } finally {
+            await context.close();
           }
-          await context.close();
           if (evidence)
             await writeFile(
               `${evidence}/${String(width)}-${String(height)}-${String(dpr)}-${colorScheme}.json`,
