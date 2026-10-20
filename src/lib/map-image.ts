@@ -18,6 +18,83 @@ interface HeaderBucket {
   } | null>;
 }
 
+class HeaderTimeout extends Error {}
+
+async function readHeader(
+  bucket: HeaderBucket,
+  key: string,
+  signal: AbortSignal,
+) {
+  let stopped = false;
+  const inactive = () => stopped;
+  let cleanup = () => {};
+  let stop = () => {};
+  const interrupted = new Promise<never>((_, reject) => {
+    stop = () => {
+      stopped = true;
+      cleanup();
+      reject(new HeaderTimeout());
+    };
+  });
+  const deadline = setTimeout(stop, 4000);
+  signal.addEventListener('abort', stop, { once: true });
+  if (signal.aborted) stop();
+  const read = async () => {
+    if (inactive()) return;
+    const header = await bucket.get(key, {
+      range: { offset: 0, length: 65536 },
+    });
+    if (!header) return;
+    if (inactive() || header.httpMetadata?.contentType !== 'image/jpeg') {
+      // R2 get has no abort option. Dispose its body if it arrives after expiry.
+      void header.body.cancel().catch(() => {});
+      return;
+    }
+    const reader = header.body.getReader();
+    let cancelled = false;
+    cleanup = () => {
+      if (cancelled) return;
+      cancelled = true;
+      // Cancellation itself may wait on the source. Never let it hold a response.
+      try {
+        void reader.cancel().catch(() => {});
+      } catch {
+        // A failed cancellation must not prevent deadline completion.
+      }
+      try {
+        reader.releaseLock();
+      } catch {
+        // Some streams retain their lock while a pending read is cancelled.
+      }
+    };
+    try {
+      const bytes = new Uint8Array(65536);
+      let length = 0;
+      while (!inactive() && length < bytes.length) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        if (chunk.value) {
+          const part = chunk.value.subarray(0, bytes.length - length);
+          bytes.set(part, length);
+          length += part.length;
+          const dimensions = jpegDimensions(bytes.subarray(0, length));
+          if (!inactive() && dimensions) return dimensions;
+        }
+      }
+    } finally {
+      cleanup();
+    }
+  };
+  try {
+    return await Promise.race([read(), interrupted]);
+  } finally {
+    stopped = true;
+    clearTimeout(deadline);
+    signal.removeEventListener('abort', stop);
+    cleanup();
+  }
+}
+
 // Prepared display JPEGs have their frame header before the compressed scan.
 // Read only a bounded prefix of the selected public display, never an original.
 export function jpegDimensions(bytes: Uint8Array) {
@@ -105,47 +182,14 @@ export async function serveMapPhoto(
         : undefined;
     if (!dimensions) {
       try {
-        const header = await env.MEDIA.get(current.storage_key, {
-          range: { offset: 0, length: 65536 },
-        });
-        if (header) {
-          if (
-            cancelled() ||
-            header.httpMetadata?.contentType !== 'image/jpeg'
-          ) {
-            await header.body.cancel();
-          } else {
-            const reader = header.body.getReader();
-            let cancellation: Promise<void> | undefined;
-            const cancel = () => (cancellation ??= reader.cancel());
-            const abort = () => {
-              void cancel().catch(() => {});
-            };
-            request.signal.addEventListener('abort', abort, { once: true });
-            try {
-              const bytes = new Uint8Array(65536);
-              let length = 0;
-              while (!cancelled() && length < bytes.length) {
-                const chunk = await reader.read();
-                if (chunk.done) break;
-                if (chunk.value) {
-                  const part = chunk.value.subarray(0, bytes.length - length);
-                  bytes.set(part, length);
-                  length += part.length;
-                }
-              }
-              dimensions = jpegDimensions(bytes.subarray(0, length));
-            } finally {
-              request.signal.removeEventListener('abort', abort);
-              try {
-                await cancel();
-              } finally {
-                reader.releaseLock();
-              }
-            }
-          }
-        }
-      } catch {
+        dimensions = await readHeader(
+          env.MEDIA,
+          current.storage_key,
+          request.signal,
+        );
+      } catch (error) {
+        if (cancelled()) return unavailable();
+        if (error instanceof HeaderTimeout) return unavailable(503);
         // Missing headers retain the live display path, after the final check.
       }
       if ((await live())?.storage_key !== current.storage_key || cancelled())

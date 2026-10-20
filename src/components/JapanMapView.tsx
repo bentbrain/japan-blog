@@ -39,6 +39,13 @@ function MapPhoto({ item }: { item: MapItem }) {
   useEffect(() => {
     if (!item.photoResolution) return;
     const controller = new AbortController();
+    let current = true;
+    // Cover response headers and JSON parsing, including transports slow to abort.
+    const deadline = setTimeout(() => {
+      current = false;
+      controller.abort();
+      setFailed(true);
+    }, 8000);
     async function resolve() {
       try {
         const response = await fetch(item.photoResolution || '', {
@@ -63,10 +70,11 @@ function MapPhoto({ item }: { item: MapItem }) {
             throw new Error('Invalid photo dimensions');
           dimensions = { width: value.width, height: value.height };
         }
-        if (!controller.signal.aborted)
-          setPhoto(mapPhoto(item.poster, dimensions));
+        if (current) setPhoto(mapPhoto(item.poster, dimensions));
       } catch {
-        if (!controller.signal.aborted) setFailed(true);
+        if (current) setFailed(true);
+      } finally {
+        clearTimeout(deadline);
       }
     }
     // Coalesce rapid next/previous actions without starting obsolete lookups.
@@ -74,7 +82,9 @@ function MapPhoto({ item }: { item: MapItem }) {
       void resolve();
     }, 60);
     return () => {
+      current = false;
       clearTimeout(timer);
+      clearTimeout(deadline);
       controller.abort();
     };
   }, [item, attempt]);

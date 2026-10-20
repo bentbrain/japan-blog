@@ -522,3 +522,87 @@ void test('600 distinct selected native photos each stay within two queries and 
     }),
   );
 });
+
+for (const interruption of ['deadline', 'abort'])
+  for (const seam of ['get', 'body'])
+    void test(`selected header ${interruption} at ${seam} returns retryable failure without awaiting cancellation`, async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const controller = new AbortController();
+      let entered = () => {};
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let cancelled = 0;
+      let settled: Response | undefined;
+      const pending = selected(
+        {
+          ...platform.env,
+          MEDIA: {
+            async get() {
+              if (seam === 'get') {
+                entered();
+                await held;
+              }
+              return {
+                httpMetadata: { contentType: 'image/jpeg' },
+                body: new ReadableStream<Uint8Array>({
+                  async pull(output) {
+                    if (seam === 'body') {
+                      entered();
+                      await held;
+                    }
+                    try {
+                      output.enqueue(source);
+                    } catch {
+                      /* The consumer has already cancelled. */
+                    }
+                  },
+                  cancel() {
+                    cancelled++;
+                    return new Promise<void>(() => {});
+                  },
+                }),
+              };
+            },
+          },
+        },
+        { signal: controller.signal },
+      ).then((response) => {
+        settled = response;
+        return response;
+      });
+      try {
+        await started;
+        if (interruption === 'deadline') {
+          t.mock.timers.tick(3999);
+          assert.equal(settled, undefined);
+          t.mock.timers.tick(1);
+        } else controller.abort();
+        for (let turn = 0; turn < 10; turn++)
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(
+          settled?.status,
+          interruption === 'deadline' ? 503 : 404,
+          'a held header must finish without waiting on cancellation',
+        );
+        noStore(settled);
+        assert.equal(cancelled, seam === 'body' ? 1 : 0);
+        release();
+        for (let turn = 0; turn < 10; turn++)
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(
+          cancelled,
+          1,
+          'late R2 object must be cancelled exactly once',
+        );
+        await pending;
+      } finally {
+        controller.abort();
+        release();
+        t.mock.timers.reset();
+      }
+    });

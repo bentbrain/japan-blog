@@ -470,6 +470,267 @@ test('transient dimension failure keeps controls available and retries before an
   await context.close();
 });
 
+for (const lateAt of ['before retry', 'after retry'])
+  for (const seam of ['headers', 'body'])
+    test(`dimension deadline covers held ${seam}, retries and ignores late completion ${lateAt}`, async ({
+      browser,
+      baseURL,
+    }) => {
+      const context = await browser.newContext({
+        viewport: { width: 1280, height: 844 },
+        deviceScaleFactor: 2,
+        colorScheme: 'light',
+      });
+      await context.route('https://toolbar.bent.build/embed.js', (route) =>
+        route.fulfill({ contentType: 'application/javascript', body: '' }),
+      );
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let calls = 0;
+      if (seam === 'headers')
+        await context.route('**/map-photo/**', async (route) => {
+          calls++;
+          if (calls === 1) {
+            await held;
+            await route
+              .fulfill({
+                contentType: 'application/json',
+                body: '{"width":1600,"height":1200}',
+              })
+              .catch(() => {});
+          } else await route.continue();
+        });
+      await context.addInitScript(
+        ({ seam }) => {
+          const original = window.fetch.bind(window);
+          let calls = 0;
+          window.fetch = async (...args) => {
+            const selected = (
+              args[0] instanceof Request ? args[0].url : args[0].toString()
+            ).includes('/map-photo/');
+            if (selected)
+              args[1]?.signal?.addEventListener('abort', () => {
+                document.documentElement.dataset.dimensionAbort = 'yes';
+              });
+            const response = await original(...args);
+            if (!selected || ++calls !== 1 || seam !== 'body') return response;
+            document.documentElement.dataset.dimensionBody = 'pending';
+            // A transport/body which completes even after abort must not win a later attempt.
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  window.addEventListener(
+                    'release-dimension-body',
+                    () => {
+                      controller.enqueue(
+                        new TextEncoder().encode(
+                          '{"width":1600,"height":1200}',
+                        ),
+                      );
+                      controller.close();
+                    },
+                    { once: true },
+                  );
+                },
+              }),
+              { headers: { 'Content-Type': 'application/json' } },
+            );
+          };
+        },
+        { seam },
+      );
+      const page = await context.newPage();
+      const photoRequests: string[] = [];
+      page.on('request', (request) => {
+        if (request.url().includes('/media-preview/'))
+          photoRequests.push(request.url());
+      });
+      await page.clock.install();
+      const evidence = process.env.MAP_IMAGE_EVIDENCE_DIR;
+      const stage = async (name: string) => {
+        if (evidence) {
+          await mkdir(evidence, { recursive: true });
+          await page.locator('[data-feedback-id="map-preview"]').screenshot({
+            path: `${evidence}/deadline-${seam}-${lateAt.replace(' ', '-')}-${name}.png`,
+          });
+        }
+      };
+      try {
+        await page.goto(
+          `${baseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`,
+        );
+        const popup = page.locator('[data-feedback-id="map-preview"]');
+        if (seam === 'headers') await expect.poll(() => calls).toBe(1);
+        else
+          await expect(page.locator('html')).toHaveAttribute(
+            'data-dimension-body',
+            'pending',
+          );
+        await expect(popup.locator('img')).toHaveCount(0);
+        await stage('loading');
+        await page.clock.fastForward(10_000);
+        await expect(
+          popup.getByRole('button', { name: 'RETRY PHOTO' }),
+        ).toBeVisible({ timeout: 1000 });
+        await stage('deadline');
+        await expect(popup.locator('img')).toHaveCount(0);
+        await expect(page.locator('html')).toHaveAttribute(
+          'data-dimension-abort',
+          'yes',
+        );
+        const finishLate = async () => {
+          release();
+          await page.evaluate(() =>
+            window.dispatchEvent(new Event('release-dimension-body')),
+          );
+          await page.clock.runFor(100);
+        };
+        if (lateAt === 'before retry') {
+          await finishLate();
+          await expect(
+            popup.getByRole('button', { name: 'RETRY PHOTO' }),
+          ).toBeVisible();
+          await expect(popup.locator('img')).toHaveCount(0);
+        }
+        await popup.getByRole('button', { name: 'RETRY PHOTO' }).click();
+        await stage('retry-loading');
+        await page.clock.runFor(100);
+        const image = popup.locator('img');
+        await expect(image).toBeVisible();
+        await image.evaluate(async (image) => {
+          if (image instanceof HTMLImageElement) await image.decode();
+        });
+        await expect
+          .poll(() =>
+            image.evaluate((image) =>
+              image instanceof HTMLImageElement ? image.currentSrc : '',
+            ),
+          )
+          .toMatch(/\/800\/auto$/);
+        await stage('retry-loaded');
+        if (lateAt === 'after retry') await finishLate();
+        const photo = await image.evaluate((image) => {
+          if (!(image instanceof HTMLImageElement))
+            throw new Error('Photo required');
+          return { srcset: image.srcset, source: image.src };
+        });
+        expect(
+          requestsForPhoto(photo.srcset, photo.source, photoRequests),
+        ).toHaveLength(1);
+        await expect(image).toHaveAttribute('sizes', /41.25dvh/);
+        await expect
+          .poll(() =>
+            image.evaluate((image) =>
+              image instanceof HTMLImageElement ? image.currentSrc : '',
+            ),
+          )
+          .toMatch(/\/800\/auto$/);
+      } finally {
+        release();
+        await context.close();
+      }
+    });
+
+for (const action of ['selection', 'close', 'unmount'])
+  test(`obsolete JSON body after ${action} cannot expose retry or overwrite the active photo`, async ({
+    browser,
+    baseURL,
+  }) => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 844 },
+      deviceScaleFactor: 2,
+    });
+    await context.route('https://toolbar.bent.build/embed.js', (route) =>
+      route.fulfill({ contentType: 'application/javascript', body: '' }),
+    );
+    await context.addInitScript(() => {
+      const original = window.fetch.bind(window);
+      let held = false;
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (
+          !(
+            args[0] instanceof Request ? args[0].url : args[0].toString()
+          ).includes('/map-photo/') ||
+          held
+        )
+          return response;
+        held = true;
+        document.documentElement.dataset.dimensionBody = 'pending';
+        args[1]?.signal?.addEventListener('abort', () => {
+          document.documentElement.dataset.dimensionAbort = 'yes';
+        });
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              window.addEventListener(
+                'release-dimension-body',
+                () => {
+                  controller.enqueue(
+                    new TextEncoder().encode('{"width":1,"height":1000}'),
+                  );
+                  controller.close();
+                },
+                { once: true },
+              );
+            },
+          }),
+        );
+      };
+    });
+    const page = await context.newPage();
+    await page.clock.install();
+    try {
+      await page.goto(
+        `${baseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`,
+      );
+      const popup = page.locator('[data-feedback-id="map-preview"]');
+      await expect(page.locator('html')).toHaveAttribute(
+        'data-dimension-body',
+        'pending',
+      );
+      if (action === 'selection')
+        await popup
+          .getByRole('button', { name: 'Next media at this location' })
+          .click();
+      else if (action === 'close')
+        await popup.getByRole('button', { name: 'Close map preview' }).click();
+      else
+        await page
+          .locator('astro-island[component-export="JapanMapView"]')
+          .evaluate((island) =>
+            island.dispatchEvent(new Event('astro:unmount')),
+          );
+      await expect(page.locator('html')).toHaveAttribute(
+        'data-dimension-abort',
+        'yes',
+      );
+      await page.evaluate(() =>
+        window.dispatchEvent(new Event('release-dimension-body')),
+      );
+      await page.clock.runFor(100);
+      if (action === 'selection') {
+        await expect(popup.locator('img')).toBeVisible();
+        await expect(popup.locator('img')).toHaveAttribute(
+          'alt',
+          /^Synthetic (landscape|square)$/,
+        );
+        await expect(popup.locator('img')).toHaveAttribute(
+          'sizes',
+          /(?:73.33333333333333|55)dvh/,
+        );
+      } else await expect(popup).toHaveCount(0);
+      await page.clock.fastForward(10_000);
+      await expect(
+        page.getByRole('button', { name: 'RETRY PHOTO' }),
+      ).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+
 test('a 600-photo published library retains the last native photo and its first measured candidate', async ({
   request: sharedRequest,
   browser,
