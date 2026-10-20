@@ -1,5 +1,8 @@
 ---
-import { responsiveImage } from '../lib/responsive-image';
+import {
+  displayPreviewReference,
+  responsiveImage,
+} from '../lib/responsive-image';
 import { tripMap } from '../lib/map';
 import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
 interface Props {
@@ -30,6 +33,12 @@ const points = media.flatMap((item) => {
               posterUrl(item),
               '(min-width: 672px) 614px, calc(100vw - 58px)',
             ),
+      photoResolution:
+        !Astro.locals.privateMediaRender &&
+        item.kind === 'photo' &&
+        displayPreviewReference(posterUrl(item))
+          ? `/map-photo/${item.id}/${displayPreviewReference(posterUrl(item)) || ''}`
+          : undefined,
     },
   ];
 });

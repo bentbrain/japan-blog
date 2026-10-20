@@ -6,6 +6,7 @@ import {
   imageUnavailable,
   serveResponsiveImage,
 } from './lib/serve-responsive-image';
+import { serveMapPhoto } from './lib/map-image';
 import { publishedMediaAccess } from './lib/published-media-access';
 
 export const onRequest = defineMiddleware(async (context, next) => {
@@ -15,13 +16,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
     try {
       path = decodeURIComponent(path);
     } catch {
-      return path.startsWith('/media-preview/')
+      return path.startsWith('/media-preview/') ||
+        path.startsWith('/map-photo/')
         ? imageUnavailable()
         : new Response('Not found', { status: 404 });
     }
   }
   if (path.includes('%'))
-    return path.startsWith('/media-preview/')
+    return path.startsWith('/media-preview/') || path.startsWith('/map-photo/')
       ? imageUnavailable()
       : new Response('Not found', { status: 404 });
   if (!import.meta.env.DEV) {
@@ -70,6 +72,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     previewRequest ||
     (owner && context.cookies.get('emdash-edit-mode')?.value === 'true');
   context.locals.privateMediaRender = privateRender;
+  if (path === '/map-photo' || path.startsWith('/map-photo/')) {
+    context.cache.set(false);
+    return serveMapPhoto(context.request, path, env, privateRender);
+  }
   if (path === '/media-preview' || path.startsWith('/media-preview/')) {
     context.cache.set(false);
     return serveResponsiveImage(context.request, path, env, privateRender);
