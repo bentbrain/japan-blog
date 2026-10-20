@@ -16,7 +16,7 @@ export const previewPath = new RegExp(
   `^/media-preview/(asset/(${assetId})|file/(${uuid})/(photo|poster)\\.jpg)/(320|480|800|1120|1600)/(auto|jpeg|webp)$`,
 );
 
-export function responsiveImage(source: string, sizes: string) {
+export function displayPreviewReference(source: string) {
   const file = fileSource.exec(source);
   const asset = assetSource.exec(source);
   const folder = file?.[1];
@@ -28,13 +28,30 @@ export function responsiveImage(source: string, sizes: string) {
       : id
         ? `asset/${id}`
         : undefined;
+  return reference;
+}
+
+export function responsiveImage(
+  source: string,
+  sizes: string,
+  sourceWidth?: number,
+) {
+  const reference = displayPreviewReference(source);
   if (!reference) return { src: source };
   return {
     src: source,
     srcSet: imageWidths
+      // Keep one terminal candidate at the actual source width. Larger width
+      // descriptors would shrink auto-width images through density correction.
+      .filter(
+        (width, index) =>
+          !sourceWidth ||
+          index === 0 ||
+          (imageWidths[index - 1] || 0) < sourceWidth,
+      )
       .map(
         (width) =>
-          `/media-preview/${reference}/${String(width)}/auto ${String(width)}w`,
+          `/media-preview/${reference}/${String(width)}/auto ${String(sourceWidth ? Math.min(width, sourceWidth) : width)}w`,
       )
       .join(', '),
     sizes,
