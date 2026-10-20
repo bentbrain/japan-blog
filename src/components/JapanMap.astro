@@ -1,6 +1,8 @@
 ---
-import { env } from 'cloudflare:workers';
-import { mapImage } from '../lib/map-image';
+import {
+  displayPreviewReference,
+  responsiveImage,
+} from '../lib/responsive-image';
 import { tripMap } from '../lib/map';
 import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
 interface Props {
@@ -9,32 +11,37 @@ interface Props {
 const { media } = Astro.props;
 const { projectMedia, land } = tripMap(media);
 import { JapanMapView } from './JapanMapView';
-const points = (
-  await Promise.all(
-    media.map(async (item) => {
-      const point = projectMedia(item);
-      if (!point) return [];
-      const [x = 0, y = 0] = point;
-      return [
-        {
-          x,
-          y,
-          id: item.id,
-          slug: item.slug,
-          title: item.title,
-          place: item.place,
-          kind: item.kind,
-          src: mediaUrl(item),
-          poster: posterUrl(item),
-          photo:
-            Astro.locals.privateMediaRender || item.kind === 'video'
-              ? { src: posterUrl(item) }
-              : await mapImage(item.id, posterUrl(item), env),
-        },
-      ];
-    }),
-  )
-).flat();
+const points = media.flatMap((item) => {
+  const point = projectMedia(item);
+  if (!point) return [];
+  const [x = 0, y = 0] = point;
+  return [
+    {
+      x,
+      y,
+      id: item.id,
+      slug: item.slug,
+      title: item.title,
+      place: item.place,
+      kind: item.kind,
+      src: mediaUrl(item),
+      poster: posterUrl(item),
+      photo:
+        Astro.locals.privateMediaRender || item.kind === 'video'
+          ? { src: posterUrl(item) }
+          : responsiveImage(
+              posterUrl(item),
+              '(min-width: 672px) 614px, calc(100vw - 58px)',
+            ),
+      photoResolution:
+        !Astro.locals.privateMediaRender &&
+        item.kind === 'photo' &&
+        displayPreviewReference(posterUrl(item))
+          ? `/map-photo/${item.id}/${displayPreviewReference(posterUrl(item)) || ''}`
+          : undefined,
+    },
+  ];
+});
 ---
 
 <JapanMapView land={land || ''} points={points} client:load />

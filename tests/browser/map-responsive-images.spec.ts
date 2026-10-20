@@ -1,6 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 const fixtureIds: string[] = [];
 const result = z.object({
   data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
@@ -178,6 +181,16 @@ for (const width of [390, 671, 672, 1280, 1991])
                 srcset: image.srcset,
                 source: image.src,
                 selected: image.currentSrc.match(/\/(\d+)\/auto$/)?.[1],
+                resolution: performance
+                  .getEntriesByType('resource')
+                  .filter((entry) => entry.name.includes('/map-photo/'))
+                  .map((entry) => ({
+                    startMs: entry.startTime,
+                    durationMs: entry.duration,
+                  })),
+                imageStartMs: performance.getEntriesByName(image.currentSrc)[0]
+                  ?.startTime,
+                measuredAtMs: performance.now(),
               };
             });
             const controlContext = await browser.newContext({
@@ -196,6 +209,7 @@ for (const width of [390, 671, 672, 1280, 1991])
               measured,
             );
             await controlContext.close();
+            expect(measured.resolution).toHaveLength(1);
             const mapRequests = requestsForPhoto(
               measured.srcset,
               measured.source,
@@ -302,6 +316,11 @@ test('gallery to viewer to map keeps the first request small, handles late fonts
     });
     expect(await image.getAttribute('sizes')).toContain('dvh');
   }
+  await popup
+    .getByRole('button', { name: 'Previous media at this location' })
+    .click();
+  await expect(image).toBeVisible();
+  await expect(image).toHaveAttribute('sizes', /dvh/);
   await popup.getByRole('button', { name: 'Close map preview' }).click();
   await expect(popup).toHaveCount(0);
   await context.close();
@@ -351,6 +370,323 @@ test('gallery to viewer to map keeps the first request small, handles late fonts
     requestsForPhoto(latePhoto.srcset, latePhoto.source, lateRequests),
   ).toHaveLength(1);
   await late.close();
+});
+
+test('only the active photo resolves before its first image, and closing cancels pending selection', async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 844 },
+    deviceScaleFactor: 2,
+  });
+  await context.route('https://toolbar.bent.build/embed.js', (route) =>
+    route.fulfill({ contentType: 'application/javascript', body: '' }),
+  );
+  let release = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const resolutions: string[] = [];
+  await context.route('**/map-photo/**', async (route) => {
+    resolutions.push(route.request().url());
+    await pending;
+    await route.continue().catch(() => {});
+  });
+  const page = await context.newPage();
+  await page.goto(`${baseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`);
+  const popup = page.locator('[data-feedback-id="map-preview"]');
+  await expect(popup).toBeVisible();
+  try {
+    await expect(popup.locator('img')).toHaveCount(0);
+    await expect.poll(() => resolutions.length).toBe(1);
+    await expect(popup.getByRole('status')).toHaveText('loading photo');
+    await popup
+      .getByRole('button', { name: 'Next media at this location' })
+      .click();
+    await expect.poll(() => resolutions.length).toBe(2);
+    await expect(popup.locator('img')).toHaveCount(0);
+    await popup.getByRole('button', { name: 'Close map preview' }).click();
+    release();
+    await expect(popup).toHaveCount(0);
+    await expect(
+      page.locator('[data-feedback-id="map-preview"] img'),
+    ).toHaveCount(0);
+  } finally {
+    release();
+    await context.close();
+  }
+});
+
+test('transient dimension failure keeps controls available and retries before any image download', async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 844 },
+    deviceScaleFactor: 2,
+  });
+  await context.route('https://toolbar.bent.build/embed.js', (route) =>
+    route.fulfill({ contentType: 'application/javascript', body: '' }),
+  );
+  let calls = 0;
+  await context.route('**/map-photo/**', async (route) => {
+    calls++;
+    if (calls === 1)
+      await route.fulfill({ status: 503, body: 'synthetic transient failure' });
+    else await route.continue();
+  });
+  const page = await context.newPage();
+  const requests: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/media-preview/')) requests.push(r.url());
+  });
+  await page.goto(`${baseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`);
+  const popup = page.locator('[data-feedback-id="map-preview"]');
+  await expect(
+    popup.getByRole('button', { name: 'RETRY PHOTO' }),
+  ).toBeVisible();
+  await expect(popup.locator('img')).toHaveCount(0);
+  await expect(
+    popup.getByRole('button', { name: 'Next media at this location' }),
+  ).toBeEnabled();
+  await popup.getByRole('button', { name: 'RETRY PHOTO' }).click();
+  const image = popup.locator('img');
+  await expect(image).toBeVisible();
+  const photo = await image.evaluate(async (image) => {
+    if (!(image instanceof HTMLImageElement)) throw new Error('Photo required');
+    await image.decode();
+    return {
+      srcset: image.srcset,
+      source: image.src,
+      selected: image.currentSrc,
+    };
+  });
+  expect(requestsForPhoto(photo.srcset, photo.source, requests)).toHaveLength(
+    1,
+  );
+  expect(photo.selected).toMatch(/\/800\/auto$/);
+  expect(calls).toBe(2);
+  await context.close();
+});
+
+test('a 600-photo published library retains the last native photo and its first measured candidate', async ({
+  request: sharedRequest,
+  browser,
+  playwright,
+  baseURL: sharedBaseURL,
+}) => {
+  test.setTimeout(120_000);
+  // A representative library owns its runtime, including CMS background work.
+  // Disposing it avoids leaking hundreds of fixture lifecycle jobs into other tests.
+  await sharedRequest.get('/_emdash/api/auth/dev-bypass');
+  const original = z
+    .object({
+      data: z.object({
+        item: z.object({ data: z.record(z.string(), z.unknown()) }),
+      }),
+    })
+    .parse(
+      await (
+        await sharedRequest.get(
+          `/_emdash/api/content/media_items/${fixtureIds[0] || ''}`,
+        )
+      ).json(),
+    ).data.item.data;
+  const sourcePage = await browser.newPage();
+  await sourcePage.route('https://toolbar.bent.build/embed.js', (route) =>
+    route.fulfill({ contentType: 'application/javascript', body: '' }),
+  );
+  await sourcePage.goto(
+    `${sharedBaseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`,
+  );
+  const sourceImage = sourcePage.locator(
+    '[data-feedback-id="map-preview"] img',
+  );
+  await expect(sourceImage).toBeVisible();
+  const source = await sourceImage.getAttribute('src');
+  expect(source).toMatch(/^\/_emdash\/api\/media\/file\/trip\//);
+  const display = await sharedRequest.get(source || '');
+  expect(display.ok()).toBe(true);
+  const bytes = await display.body();
+  await sourcePage.close();
+  const baseURL = 'http://127.0.0.1:4393';
+  const server = spawn(
+    'pnpm',
+    ['dev', '--host', '127.0.0.1', '--port', '4393', '--ignore-lock'],
+    {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      env: { ...process.env, TEST_EPHEMERAL: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  let serverLog = '';
+  const record = (chunk: Buffer) => {
+    serverLog = (serverLog + chunk.toString()).slice(-200_000);
+  };
+  server.stdout.on('data', record);
+  server.stderr.on('data', record);
+  const request = await playwright.request.newContext({ baseURL });
+  const context = await browser.newContext({
+    viewport: { width: 1991, height: 844 },
+    deviceScaleFactor: 2,
+    colorScheme: 'dark',
+  });
+  try {
+    await expect
+      .poll(
+        async () => {
+          try {
+            return (await request.get('/_emdash/api/health')).ok();
+          } catch {
+            return false;
+          }
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
+    const headers = { 'X-EmDash-Request': '1', Origin: baseURL };
+    expect(
+      (
+        await request.post('/_emdash/api/setup/dev-bypass', {
+          headers,
+          data: {},
+        })
+      ).ok(),
+    ).toBe(true);
+    await request.get('/_emdash/api/auth/dev-bypass');
+    const file = {
+      name: 'synthetic-library.jpg',
+      mimeType: 'image/jpeg',
+      buffer: bytes,
+    };
+    const uploaded = await request.post('/api/trip/upload', {
+      headers,
+      multipart: { original: file, display: file, poster: file },
+    });
+    expect(uploaded.status()).toBe(201);
+    const id = z
+      .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
+      .parse(await uploaded.json()).data.item.id;
+    const loaded = await request.get(`/_emdash/api/content/media_items/${id}`);
+    const native = result.parse(await loaded.json()).data;
+    const media = z
+      .object({
+        data: z.object({
+          item: z.object({ data: z.record(z.string(), z.unknown()) }),
+        }),
+      })
+      .parse(await loaded.json()).data.item.data;
+    const data = {
+      ...media,
+      title: 'Synthetic library photo',
+      captured_at: original.captured_at,
+      latitude: original.latitude,
+      longitude: original.longitude,
+      place: original.place,
+      categories: [],
+      demo: true,
+    };
+    expect(
+      (
+        await request.put(`/_emdash/api/content/media_items/${id}`, {
+          headers,
+          data: { _rev: native._rev, data },
+        })
+      ).ok(),
+    ).toBe(true);
+    const revision = result.parse(
+      await (
+        await request.get(`/_emdash/api/content/media_items/${id}`)
+      ).json(),
+    ).data._rev;
+    expect(
+      (
+        await request.post(`/_emdash/api/content/media_items/${id}/publish`, {
+          headers,
+          data: { _rev: revision },
+        })
+      ).ok(),
+    ).toBe(true);
+    const libraryIds = [id];
+    for (let index = 0; index < 599; index++) {
+      const saved = await request.post('/_emdash/api/content/media_items', {
+        headers,
+        data: { slug: `synthetic-library-${crypto.randomUUID()}`, data },
+      });
+      expect(saved.status()).toBe(201);
+      const created = result.parse(await saved.json()).data;
+      libraryIds.push(created.item.id);
+      expect(
+        (
+          await request.post(
+            `/_emdash/api/content/media_items/${created.item.id}/publish`,
+            { headers, data: { _rev: created._rev } },
+          )
+        ).ok(),
+      ).toBe(true);
+    }
+    await context.route('https://toolbar.bent.build/embed.js', (route) =>
+      route.fulfill({ contentType: 'application/javascript', body: '' }),
+    );
+    const page = await context.newPage();
+    const resolutions: string[] = [];
+    const requests: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/map-photo/')) resolutions.push(r.url());
+      if (r.url().includes('/media-preview/')) requests.push(r.url());
+    });
+    const response = await page.goto(
+      `${baseURL}/?media=${libraryIds.at(-1) || ''}#japan-map`,
+    );
+    expect(response?.headers()['cache-control']).toContain('no-store');
+    const serializedPoints = await page
+      .locator('astro-island[component-export="JapanMapView"]')
+      .getAttribute('props');
+    for (const entryId of libraryIds)
+      expect(serializedPoints).toContain(entryId);
+    const popup = page.locator('[data-feedback-id="map-preview"]');
+    const image = popup.locator('img');
+    await expect(image).toBeVisible();
+    const photo = await image.evaluate(async (image) => {
+      if (!(image instanceof HTMLImageElement))
+        throw new Error('Photo required');
+      await image.decode();
+      return {
+        srcset: image.srcset,
+        source: image.src,
+        selected: image.currentSrc,
+      };
+    });
+    expect(photo.selected).toMatch(/\/800\/auto$/);
+    expect(resolutions).toHaveLength(1);
+    expect(requestsForPhoto(photo.srcset, photo.source, requests)).toHaveLength(
+      1,
+    );
+    expect(await popup.getByRole('heading').innerText()).toContain('600');
+  } finally {
+    await context.close();
+    await request.dispose();
+    const exited = once(server, 'exit');
+    server.kill('SIGTERM');
+    await Promise.race([
+      exited,
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          server.kill('SIGKILL');
+          resolve();
+        }, 3000);
+        timer.unref();
+      }),
+    ]);
+    if (process.env.MAP_IMAGE_EVIDENCE_DIR) {
+      await mkdir(process.env.MAP_IMAGE_EVIDENCE_DIR, { recursive: true });
+      await writeFile(
+        `${process.env.MAP_IMAGE_EVIDENCE_DIR}/library-server.log`,
+        serverLog,
+      );
+    }
+  }
 });
 
 test.afterAll(async ({ request, baseURL }) => {

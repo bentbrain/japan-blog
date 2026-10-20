@@ -1,10 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import {
-  displayPreviewKey,
-  displayPreviewReference,
-  previewPath,
-  responsiveImage,
-} from './responsive-image';
+import { displayPreviewKey, previewPath } from './responsive-image';
 
 interface HeaderBucket {
   get(
@@ -12,12 +7,19 @@ interface HeaderBucket {
     options: { range: { offset: number; length: number } },
   ): Promise<{
     httpMetadata?: { contentType?: string };
-    arrayBuffer(): Promise<ArrayBuffer>;
+    body: {
+      cancel(): Promise<void>;
+      getReader(): {
+        read(): Promise<{ done: boolean; value?: Uint8Array }>;
+        cancel(reason?: unknown): Promise<void>;
+        releaseLock(): void;
+      };
+    };
   } | null>;
 }
 
 // Prepared display JPEGs have their frame header before the compressed scan.
-// Read only a bounded prefix, never an original or a browser metadata request.
+// Read only a bounded prefix of the selected public display, never an original.
 export function jpegDimensions(bytes: Uint8Array) {
   if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return;
   let offset = 2;
@@ -42,38 +44,56 @@ export function jpegDimensions(bytes: Uint8Array) {
   }
 }
 
-export async function mapImage(
-  id: string,
-  source: string,
+export async function serveMapPhoto(
+  request: Request,
+  path: string,
   env: { DB: D1Database; MEDIA: HeaderBucket },
+  privateRender: boolean,
 ) {
-  const horizontal = '(min-width: 672px) 614px, calc(100vw - 58px)';
-  const fallback = responsiveImage(source, horizontal);
-  const reference = displayPreviewReference(source);
-  if (!reference) return fallback;
-  const match = previewPath.exec(`/media-preview/${reference}/320/auto`);
-  if (!match) return fallback;
-  const [, , asset, folder, filename] = match;
+  const headers = {
+    'Cache-Control': 'private, no-store',
+    'CDN-Cache-Control': 'no-store',
+    'Cloudflare-CDN-Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  const unavailable = (status = 404) =>
+    new Response('Photo unavailable', { status, headers });
+  const cancelled = () => request.signal.aborted;
+  const match = /^\/map-photo\/([0-7][0-9A-HJKMNP-TV-Z]{25})\/(.+)$/.exec(path);
+  if (
+    !match ||
+    request.method !== 'GET' ||
+    privateRender ||
+    new URL(request.url).search ||
+    cancelled()
+  )
+    return unavailable();
+  const [, id, reference] = match;
+  const preview = previewPath.exec(
+    `/media-preview/${reference || ''}/320/auto`,
+  );
+  if (!preview) return unavailable();
+  const [, , asset, folder, filename] = preview;
   const key = asset || `trip/${folder || ''}/${filename || ''}.jpg`;
   try {
     const live = () =>
       env.DB.prepare(
         `SELECT a.storage_key, a.width, a.height FROM media a
-         JOIN ec_media_items m ON a.id=json_extract(CASE WHEN json_valid(m.asset) THEN m.asset END,'$.id')
-           OR a.id=json_extract(CASE WHEN json_valid(m.poster) THEN m.poster END,'$.id')
-         WHERE m.id=? AND m.kind='photo' AND m.status='published'
-           AND m.deleted_at IS NULL AND a.mime_type='image/jpeg'
-           AND a.${asset ? 'id' : 'storage_key'}=? LIMIT 1`,
+       JOIN ec_media_items m ON a.id=json_extract(CASE WHEN json_valid(m.asset) THEN m.asset END,'$.id')
+         OR a.id=json_extract(CASE WHEN json_valid(m.poster) THEN m.poster END,'$.id')
+       WHERE m.id=? AND m.kind='photo' AND m.status='published'
+         AND m.deleted_at IS NULL AND a.mime_type='image/jpeg'
+         AND a.${asset ? 'id' : 'storage_key'}=? LIMIT 1`,
       )
-        .bind(id, key)
+        .bind(id || '', key)
         .first<{
           storage_key: string;
           width: number | null;
           height: number | null;
         }>();
     const current = await live();
-    if (!current || !displayPreviewKey.test(current.storage_key))
-      return fallback;
+    if (!current || !displayPreviewKey.test(current.storage_key) || cancelled())
+      return unavailable();
     let dimensions =
       Number.isSafeInteger(current.width) &&
       Number.isSafeInteger(current.height) &&
@@ -84,27 +104,55 @@ export async function mapImage(
         ? { width: current.width, height: current.height }
         : undefined;
     if (!dimensions) {
-      const header = await env.MEDIA.get(current.storage_key, {
-        range: { offset: 0, length: 65536 },
-      });
-      if (!header) return fallback;
-      const bytes = new Uint8Array(await header.arrayBuffer());
-      if (header.httpMetadata?.contentType !== 'image/jpeg') return fallback;
-      dimensions = jpegDimensions(bytes);
-      if ((await live())?.storage_key !== current.storage_key) return fallback;
+      try {
+        const header = await env.MEDIA.get(current.storage_key, {
+          range: { offset: 0, length: 65536 },
+        });
+        if (header) {
+          if (
+            cancelled() ||
+            header.httpMetadata?.contentType !== 'image/jpeg'
+          ) {
+            await header.body.cancel();
+          } else {
+            const reader = header.body.getReader();
+            let cancellation: Promise<void> | undefined;
+            const cancel = () => (cancellation ??= reader.cancel());
+            const abort = () => {
+              void cancel().catch(() => {});
+            };
+            request.signal.addEventListener('abort', abort, { once: true });
+            try {
+              const bytes = new Uint8Array(65536);
+              let length = 0;
+              while (!cancelled() && length < bytes.length) {
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                if (chunk.value) {
+                  const part = chunk.value.subarray(0, bytes.length - length);
+                  bytes.set(part, length);
+                  length += part.length;
+                }
+              }
+              dimensions = jpegDimensions(bytes.subarray(0, length));
+            } finally {
+              request.signal.removeEventListener('abort', abort);
+              try {
+                await cancel();
+              } finally {
+                reader.releaseLock();
+              }
+            }
+          }
+        }
+      } catch {
+        // Missing headers retain the live display path, after the final check.
+      }
+      if ((await live())?.storage_key !== current.storage_key || cancelled())
+        return unavailable();
     }
-    if (!dimensions) return fallback;
-    const heightWidth = `${String((55 * dimensions.width) / dimensions.height)}dvh`;
-    return responsiveImage(
-      source,
-      `(min-width: 672px) min(614px, ${heightWidth}), min(calc(100vw - 58px), ${heightWidth})`,
-      Math.min(
-        dimensions.width,
-        Math.max(1, Math.round((1600 * dimensions.width) / dimensions.height)),
-      ),
-    );
+    return Response.json(dimensions || null, { headers });
   } catch {
-    // A missing header must not hide a photo or break the map controls.
-    return fallback;
+    return unavailable(503);
   }
 }

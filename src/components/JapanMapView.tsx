@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { mapPhoto } from '../lib/responsive-image';
 import {
   Popover,
   PopoverContent,
@@ -23,10 +24,84 @@ type MapItem = MapPoint & {
   kind: 'photo' | 'video';
   src: string;
   poster: string;
+  photoResolution?: string;
   photo?: { src: string; srcSet?: string; sizes?: string };
 };
 const controlClass =
   'size-11 bg-background p-0 text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground';
+
+function MapPhoto({ item }: { item: MapItem }) {
+  const [photo, setPhoto] = useState(
+    item.photoResolution ? undefined : item.photo || { src: item.poster },
+  );
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!item.photoResolution) return;
+    const controller = new AbortController();
+    async function resolve() {
+      try {
+        const response = await fetch(item.photoResolution || '', {
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+        if (!response.ok) throw new Error('Photo dimensions unavailable');
+        const value: unknown = await response.json();
+        let dimensions: { width: number; height: number } | undefined;
+        if (value !== null) {
+          if (
+            typeof value !== 'object' ||
+            !('width' in value) ||
+            !('height' in value) ||
+            typeof value.width !== 'number' ||
+            typeof value.height !== 'number' ||
+            !Number.isSafeInteger(value.width) ||
+            !Number.isSafeInteger(value.height) ||
+            value.width <= 0 ||
+            value.height <= 0
+          )
+            throw new Error('Invalid photo dimensions');
+          dimensions = { width: value.width, height: value.height };
+        }
+        if (!controller.signal.aborted)
+          setPhoto(mapPhoto(item.poster, dimensions));
+      } catch {
+        if (!controller.signal.aborted) setFailed(true);
+      }
+    }
+    // Coalesce rapid next/previous actions without starting obsolete lookups.
+    const timer = setTimeout(() => {
+      void resolve();
+    }, 60);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [item, attempt]);
+  if (photo)
+    return (
+      <img
+        {...photo}
+        alt={item.title}
+        className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
+      />
+    );
+  return failed ? (
+    <Button
+      variant="link"
+      onClick={() => {
+        setFailed(false);
+        setAttempt((current) => current + 1);
+      }}
+    >
+      RETRY PHOTO
+    </Button>
+  ) : (
+    <span role="status" className="self-center">
+      loading photo
+    </span>
+  );
+}
 
 export function JapanMapView({
   land,
@@ -303,13 +378,9 @@ export function JapanMapView({
                     preload="metadata"
                     className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
                   />
-                ) : (
-                  <img
-                    {...(selected.photo || { src: selected.poster })}
-                    alt={selected.title}
-                    className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
-                  />
-                )}
+                ) : active === selected.id ? (
+                  <MapPhoto key={selected.id} item={selected} />
+                ) : null}
                 <div className="flex items-center justify-between gap-3">
                   <Button
                     className={controlClass}
