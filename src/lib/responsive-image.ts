@@ -48,3 +48,12 @@ export const galleryImageSizes =
   '(min-width: 1400px) 446px, (min-width: 901px) calc((100vw - 62px) / 3), (min-width: 601px) calc((100vw - 55px) / 2), calc(100vw - 32px)';
 export const postImageSizes =
   '(min-width: 848px) 800px, (min-width: 601px) calc(100vw - 48px), calc(100vw - 32px)';
+
+// Inline photos sit inside the homepage card's 2px border and 32px content
+// padding. Gallery gaps are 12px; below 601px every gallery has one column.
+export function inlineImageSizes(singlePost: boolean, columns: number) {
+  const gaps = 12 * (columns - 1);
+  if (singlePost)
+    return `(min-width: 848px) calc(${String(800 - gaps)}px / ${String(columns)}), (min-width: 601px) calc((100vw - ${String(48 + gaps)}px) / ${String(columns)}), calc(100vw - 32px)`;
+  return `(min-width: 1400px) calc(${String(406 - gaps)}px / ${String(columns)}), (min-width: 901px) calc((100vw - ${String(182 + 3 * gaps)}px) / ${String(3 * columns)}), (min-width: 601px) calc((100vw - ${String(132 + 2 * gaps)}px) / ${String(2 * columns)}), calc(100vw - 66px)`;
+}

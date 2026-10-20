@@ -24,24 +24,40 @@ interface ByteStream {
 }
 function webStream(source: ByteStream) {
   const reader = source.getReader();
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          controller.close();
-          reader.releaseLock();
-        } else if (chunk.value) controller.enqueue(chunk.value);
-      } catch (error) {
-        controller.error(error);
-        reader.releaseLock();
-      }
-    },
-    async cancel(reason) {
+  let released = false;
+  function release() {
+    if (released) return;
+    released = true;
+    reader.releaseLock();
+  }
+  async function cancel(reason?: unknown) {
+    if (released) return;
+    try {
       await reader.cancel(reason);
-      reader.releaseLock();
-    },
-  });
+    } finally {
+      release();
+    }
+  }
+  return {
+    // Keep cancellation with the source reader, even if IMAGES locks the
+    // adapter before rejecting. Cancelling a locked adapter itself would fail.
+    cancel,
+    stream: new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const chunk = await reader.read();
+          if (chunk.done) {
+            controller.close();
+            release();
+          } else if (chunk.value) controller.enqueue(chunk.value);
+        } catch (error) {
+          controller.error(error);
+          release();
+        }
+      },
+      cancel,
+    }),
+  };
 }
 interface PreviewBucket {
   get(key: string): Promise<{
@@ -105,6 +121,8 @@ export async function serveResponsiveImage(
     }
     if (request.method === 'HEAD') {
       await source.body.cancel();
+      const live = await livePreview();
+      if (live?.storage_key !== current.storage_key) return imageUnavailable();
       return new Response(null, { headers: privateHeaders });
     }
     // Native uploads permit larger display previews than the bounded transform
@@ -115,7 +133,7 @@ export async function serveResponsiveImage(
         await source.body.cancel();
         return imageUnavailable();
       }
-      return new Response(webStream(source.body), {
+      return new Response(webStream(source.body).stream, {
         headers: { ...privateHeaders, 'Content-Type': 'image/jpeg' },
       });
     }
@@ -134,11 +152,13 @@ export async function serveResponsiveImage(
       output === 'webp' || (output === 'auto' && acceptsWebp)
         ? 'image/webp'
         : 'image/jpeg';
+    const input = webStream(source.body);
+    let transformed: Response | undefined;
     try {
-      const result = await env.IMAGES.input(webStream(source.body))
+      const result = await env.IMAGES.input(input.stream)
         .transform({ width: Number(width), height: 1600, fit: 'scale-down' })
         .output({ format, quality: 75, anim: false });
-      const transformed = result.response();
+      transformed = result.response();
       if (
         !transformed.ok ||
         !transformed.body ||
@@ -147,15 +167,18 @@ export async function serveResponsiveImage(
         throw new Error('Image transform failed');
       const live = await livePreview();
       if (live?.storage_key !== current.storage_key) {
-        await transformed.body.cancel();
+        await Promise.allSettled([transformed.body.cancel(), input.cancel()]);
         return imageUnavailable();
       }
       return new Response(transformed.body, {
         headers: { ...privateHeaders, 'Content-Type': format },
       });
     } catch {
-      // Recheck membership before falling back, so an unpublish during a failed
-      // transform cannot expose a now-private preview. No stored derivatives.
+      // Neither a rejected output nor an abandoned transform input is returned.
+      // Cleanup failures must not prevent an otherwise eligible fallback.
+      await Promise.allSettled([input.cancel(), transformed?.body?.cancel()]);
+      // Check both sides of the R2 wait. Publication or the storage key can
+      // change while either the transform or fallback read is pending.
       const live = await livePreview();
       if (live?.storage_key !== current.storage_key) return imageUnavailable();
       const fallback = await env.MEDIA.get(current.storage_key);
@@ -167,7 +190,18 @@ export async function serveResponsiveImage(
         await fallback.body.cancel();
         return imageUnavailable(422);
       }
-      return new Response(webStream(fallback.body), {
+      let final;
+      try {
+        final = await livePreview();
+      } catch (error) {
+        await fallback.body.cancel();
+        throw error;
+      }
+      if (final?.storage_key !== current.storage_key) {
+        await fallback.body.cancel();
+        return imageUnavailable();
+      }
+      return new Response(webStream(fallback.body).stream, {
         headers: { ...privateHeaders, 'Content-Type': 'image/jpeg' },
       });
     }

@@ -403,3 +403,159 @@ void test('storage failures return a noncacheable failure without private error 
   noStore(response);
   assert.equal(await response.text(), 'Image unavailable');
 });
+
+for (const change of [
+  "UPDATE ec_media_items SET status='draft'",
+  "UPDATE ec_media_items SET deleted_at='2099-10-15'",
+  "UPDATE media SET storage_key=storage_key || '.changed'",
+]) {
+  void test(`fallback denies and cancels after pending R2 read: ${change}`, async () => {
+    fail = true;
+    let gets = 0;
+    let cancelled = 0;
+    const response = await serveResponsiveImage(
+      new Request('https://synthetic.invalid/'),
+      `/media-preview/asset/${photo}/480/auto`,
+      {
+        DB: platform.env.DB,
+        IMAGES: images,
+        MEDIA: {
+          async get(storageKey) {
+            gets++;
+            const object = await platform.env.MEDIA.get(storageKey);
+            if (!object) return null;
+            if (gets === 2) await platform.env.DB.prepare(change).run();
+            return {
+              ...object,
+              body: {
+                getReader: () => object.body.getReader(),
+                async cancel() {
+                  cancelled++;
+                  await object.body.cancel();
+                },
+              },
+            };
+          },
+        },
+      },
+      false,
+    );
+    const payload = await response.text();
+    assert.equal(gets, 2);
+    assert.equal(response.status, 404);
+    assert.equal(payload, 'Not found');
+    assert.equal(cancelled, 1);
+    noStore(response);
+  });
+}
+
+void test('HEAD rechecks publication after its pending storage read', async () => {
+  let cancelled = 0;
+  const response = await serveResponsiveImage(
+    new Request('https://synthetic.invalid/', { method: 'HEAD' }),
+    `/media-preview/asset/${photo}/480/auto`,
+    {
+      DB: platform.env.DB,
+      IMAGES: images,
+      MEDIA: {
+        async get(storageKey) {
+          const object = await platform.env.MEDIA.get(storageKey);
+          if (!object) return null;
+          await platform.env.DB.prepare(
+            "UPDATE ec_media_items SET status='draft'",
+          ).run();
+          return {
+            ...object,
+            body: {
+              getReader: () => object.body.getReader(),
+              async cancel() {
+                cancelled++;
+                await object.body.cancel();
+              },
+            },
+          };
+        },
+      },
+    },
+    false,
+  );
+  assert.equal(response.status, 404);
+  assert.equal(cancelled, 1);
+  assert.equal(calls, 0);
+  noStore(response);
+});
+
+for (const invalid of ['status', 'type', 'throw', 'locked']) {
+  void test(`failed transform cleans unused input and output, retaining eligible fallback: ${invalid}`, async () => {
+    let inputCancelled = 0;
+    let outputCancelled = 0;
+    let gets = 0;
+    const response = await serveResponsiveImage(
+      new Request('https://synthetic.invalid/'),
+      `/media-preview/asset/${photo}/480/auto`,
+      {
+        DB: platform.env.DB,
+        MEDIA: {
+          async get(storageKey) {
+            gets++;
+            if (gets > 1) return platform.env.MEDIA.get(storageKey);
+            return {
+              body: new ReadableStream<Uint8Array>({
+                cancel() {
+                  inputCancelled++;
+                },
+              }),
+              size: 6,
+              httpMetadata: { contentType: 'image/jpeg' },
+            };
+          },
+        },
+        IMAGES: {
+          input(stream) {
+            if (invalid === 'locked') stream.getReader();
+            return {
+              transform() {
+                return {
+                  output() {
+                    if (invalid === 'throw' || invalid === 'locked')
+                      return Promise.reject(
+                        new Error('Synthetic transform failure'),
+                      );
+                    return Promise.resolve({
+                      response: () =>
+                        new Response(
+                          new ReadableStream<Uint8Array>({
+                            cancel() {
+                              outputCancelled++;
+                            },
+                          }),
+                          {
+                            status: invalid === 'status' ? 500 : 200,
+                            headers: {
+                              'Content-Type':
+                                invalid === 'type'
+                                  ? 'text/plain'
+                                  : 'image/jpeg',
+                            },
+                          },
+                        ),
+                    });
+                  },
+                };
+              },
+            };
+          },
+        },
+      },
+      false,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), source);
+    assert.equal(inputCancelled, 1);
+    assert.equal(
+      outputCancelled,
+      invalid === 'throw' || invalid === 'locked' ? 0 : 1,
+    );
+    noStore(response);
+  });
+}

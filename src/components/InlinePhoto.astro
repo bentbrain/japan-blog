@@ -1,10 +1,6 @@
 ---
 import { z } from 'zod';
-import {
-  responsiveImage,
-  cardImageSizes,
-  postImageSizes,
-} from '../lib/responsive-image';
+import { responsiveImage, inlineImageSizes } from '../lib/responsive-image';
 import { mediaUrl } from '../lib/model';
 interface Props {
   node: unknown;
@@ -34,14 +30,7 @@ if (node?.link) {
 }
 const singlePost = Astro.url.pathname.startsWith('/posts/');
 const columns = Astro.props.columns || 1;
-const sizes =
-  columns === 1
-    ? singlePost
-      ? postImageSizes
-      : cardImageSizes
-    : singlePost
-      ? `(min-width: 848px) ${Math.ceil((800 - 12 * (columns - 1)) / columns)}px, (min-width: 601px) calc((100vw - ${48 + 12 * (columns - 1)}px) / ${columns}), calc(100vw - 32px)`
-      : cardImageSizes;
+const sizes = inlineImageSizes(singlePost, columns);
 const photo = responsiveImage(item ? mediaUrl(item) : '', sizes);
 const blank = node?.link?.blank && !href?.startsWith('#');
 ---
