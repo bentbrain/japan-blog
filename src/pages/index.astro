@@ -28,7 +28,7 @@ const posts = entries.map((post) => ({
 ---
 
 <Site>
-  <div class="journal-grid grid grid-cols-1 auto-rows-[8px] items-start gap-4 min-[601px]:grid-cols-2 min-[901px]:grid-cols-3">
+  <div class="journal-grid grid grid-cols-1 auto-rows-auto items-start gap-4 min-[601px]:grid-cols-2 min-[901px]:grid-cols-3">
     <section class="journal-card journal-map-card col-span-full min-w-0">
       <Card className="journal-card-inner overflow-hidden border gap-0 py-0 shadow-none">
         <JapanMap media={media} />
@@ -79,13 +79,16 @@ const posts = entries.map((post) => ({
   function layout() {
     if (!(grid instanceof HTMLElement)) return;
     const style = getComputedStyle(grid),
-      row = parseFloat(style.gridAutoRows),
+      row = 8,
       gap = parseFloat(style.rowGap);
     grid.querySelectorAll('.journal-card').forEach((card) => {
       const inner = card.querySelector('.journal-card-inner');
       if (card instanceof HTMLElement && inner)
         card.style.gridRowEnd = `span ${Math.ceil((inner.getBoundingClientRect().height + gap) / (row + gap))}`;
     });
+    // Keep content-sized rows until every card has a measured span. The first
+    // paint stays readable even while this module is downloading.
+    grid.style.gridAutoRows = `${row}px`;
   }
   const observer = new ResizeObserver(layout);
   document
