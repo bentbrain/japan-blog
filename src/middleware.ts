@@ -2,6 +2,10 @@ import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
 import { getRequestContext } from 'emdash';
 import { ensureLocalIconSchema } from './lib/category-icon-dev';
+import {
+  imageUnavailable,
+  serveResponsiveImage,
+} from './lib/serve-responsive-image';
 import { publishedMediaAccess } from './lib/published-media-access';
 
 export const onRequest = defineMiddleware(async (context, next) => {
@@ -11,10 +15,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
     try {
       path = decodeURIComponent(path);
     } catch {
-      return new Response('Not found', { status: 404 });
+      return path.startsWith('/media-preview/')
+        ? imageUnavailable()
+        : new Response('Not found', { status: 404 });
     }
   }
-  if (path.includes('%')) return new Response('Not found', { status: 404 });
+  if (path.includes('%'))
+    return path.startsWith('/media-preview/')
+      ? imageUnavailable()
+      : new Response('Not found', { status: 404 });
   if (!import.meta.env.DEV) {
     if (path === '/owner/setup') {
       const key = context.url.searchParams.get('key');
@@ -60,8 +69,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const privateRender =
     previewRequest ||
     (owner && context.cookies.get('emdash-edit-mode')?.value === 'true');
-  // Uploaded previews are already resized; refuse the transform endpoint so it
-  // cannot read private storage directly or cache unpublished derivatives.
+  context.locals.privateMediaRender = privateRender;
+  if (path === '/media-preview' || path.startsWith('/media-preview/')) {
+    context.cache.set(false);
+    return serveResponsiveImage(context.request, path, env, privateRender);
+  }
+  // Refuse the generic transform endpoint. Only bounded live display previews
+  // may be transformed through the dedicated route above.
   if (path === '/_image') return new Response('Not found', { status: 404 });
   if (
     path.startsWith('/_emdash/api/media/file/trip-private/') ||

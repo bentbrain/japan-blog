@@ -4,6 +4,7 @@ import { buttonVariants } from '../../components/ui/button';
 import ShopAd from '../../components/ShopAd.astro';
 import { tripMedia } from '../../lib/content';
 import { mediaUrl, formatDay, tokyoDay } from '../../lib/model';
+import { responsiveImage } from '../../lib/responsive-image';
 import { isJapanMapLocation } from '../../lib/map';
 const media = await tripMedia();
 const index = media.findIndex(
@@ -11,6 +12,10 @@ const index = media.findIndex(
   ),
   item = media[index];
 if (!item) return Astro.redirect('/404');
+const photo = responsiveImage(
+  mediaUrl(item),
+  '(min-width: 1148px) 1100px, (min-width: 601px) calc(100vw - 48px), calc(100vw - 32px)',
+);
 const previous = media[(index - 1 + media.length) % media.length],
   next = media[(index + 1) % media.length];
 ---
@@ -43,7 +48,12 @@ const previous = media[(index - 1 + media.length) % media.length],
         aria-label={item.title}
       ></video>
     ) : (
-      <img src={mediaUrl(item)} alt={item.title} />
+      <img
+        src={photo.src}
+        srcset={Astro.locals.privateMediaRender ? undefined : photo.srcSet}
+        sizes={photo.sizes}
+        alt={item.title}
+      />
     )}
     <div class="viewer-toolbar mb-5 flex justify-between gap-3">
       {previous && (

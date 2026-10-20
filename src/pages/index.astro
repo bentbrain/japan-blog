@@ -53,6 +53,7 @@ const posts = entries.map((post) => ({
           </CardContent>
           <PostMedia
             client:load
+            responsive={!Astro.locals.privateMediaRender}
             title={post.data.title}
             design={post.data.shop_design}
             items={galleryIds(post.data.gallery).flatMap((id) => {

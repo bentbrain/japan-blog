@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
+import { responsiveImage, cardImageSizes } from '../lib/responsive-image';
 import { shopDesignSchema } from '../lib/shop-design';
 import { PostDesign } from './PostDesign';
 import {
@@ -68,10 +69,14 @@ export function PostMedia({
   items,
   design: value,
   title,
+  sizes = cardImageSizes,
+  responsive = true,
 }: {
   items: TripMedia[];
   design?: unknown;
   title: string;
+  sizes?: string;
+  responsive?: boolean;
 }) {
   const parsed = shopDesignSchema.safeParse(value);
   const design = parsed.success ? parsed.data : undefined;
@@ -118,7 +123,9 @@ export function PostMedia({
                 draggable={false}
               >
                 <img
-                  src={posterUrl(item)}
+                  {...(responsive
+                    ? responsiveImage(posterUrl(item), sizes)
+                    : { src: posterUrl(item) })}
                   alt={item.title}
                   loading="lazy"
                   draggable={false}

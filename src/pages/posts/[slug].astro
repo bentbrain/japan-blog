@@ -3,6 +3,7 @@ import { getEmDashEntry } from 'emdash';
 import TripContent from '../../components/TripContent.astro';
 import Site from '../../layouts/Site.astro';
 import ShopAd from '../../components/ShopAd.astro';
+import { postImageSizes } from '../../lib/responsive-image';
 import { PostMedia } from '../../components/PostMedia';
 import { tripMedia, tripStartDay } from '../../lib/content';
 import { correctTripTitle } from '../../lib/trip-days';
@@ -36,6 +37,8 @@ const title = correctTripTitle(
     </div>
     <PostMedia
       client:load
+      sizes={postImageSizes}
+      responsive={!Astro.locals.privateMediaRender}
       title={title}
       design={post.data.shop_design}
       items={galleryIds(post.data.gallery).flatMap((id) => {
