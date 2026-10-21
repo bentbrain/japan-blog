@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { decode } from 'fast-png';
 import { z } from 'zod';
+import { positionMediaForSwipe, swipe } from '../fixtures/native-gesture';
 
 const title = 'Synthetic responsive gallery';
 const fixtureRun = crypto.randomUUID();
@@ -277,42 +278,6 @@ async function openGallery(page: Page, route = 'home') {
   await page.evaluate(() => document.fonts.ready);
   return card;
 }
-async function swipe(
-  page: Page,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-) {
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [from],
-  });
-  for (let i = 1; i <= 10; i++) {
-    await cdp.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
-      touchPoints: [
-        {
-          x: from.x + ((to.x - from.x) * i) / 10,
-          y: from.y + ((to.y - from.y) * i) / 10,
-        },
-      ],
-    });
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => {
-            resolve();
-          }),
-        ),
-    );
-  }
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchEnd',
-    touchPoints: [],
-  });
-  await cdp.detach();
-}
-
 async function scrollOverMedia(page: Page, frame: Locator, route: string) {
   const bounds = await frame.boundingBox();
   if (!bounds) throw new Error('Media gesture bounds required');
@@ -481,19 +446,8 @@ for (const route of ['home']) {
         );
       if (width !== 390) return;
       await scrollOverMedia(page, frame, route);
-      await card.evaluate((element) => {
-        window.scrollTo(
-          0,
-          scrollY +
-            (
-              element.querySelector('.post-carousel') ?? element
-            ).getBoundingClientRect().top -
-            80,
-        );
-      });
-      const bounds = await frame.boundingBox();
-      if (!bounds) throw new Error('Gallery bounds required');
-      const before = await page.evaluate(() => scrollY);
+      const bounds = await positionMediaForSwipe(frame);
+      const before = bounds.scrollY;
       await swipe(
         page,
         { x: bounds.x + bounds.width - 35, y: bounds.y + 100 },

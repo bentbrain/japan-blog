@@ -80,7 +80,7 @@ for (const scheme of ['light', 'dark'] satisfies ('light' | 'dark')[]) {
       await page.setViewportSize({ width, height: 1138 });
       await page.evaluate(async () => {
         await document.fonts.ready;
-        // Let the masonry ResizeObserver settle after crossing a breakpoint.
+        // Let responsive map rendering settle after crossing a breakpoint.
         await new Promise<void>((resolve) =>
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
@@ -90,11 +90,6 @@ for (const scheme of ['light', 'dark'] satisfies ('light' | 'dark')[]) {
         );
       });
       await expect(page.locator('astro-island[ssr]')).toHaveCount(0);
-      await expect
-        .poll(() =>
-          articles.first().evaluate((element) => element.style.gridRowEnd),
-        )
-        .not.toBe('');
       if (process.env.HOME_MAP_EVIDENCE && [390, 1991].includes(width))
         await page.screenshot({
           path: `${process.env.HOME_MAP_EVIDENCE}/${String(width)}-${scheme}.png`,
@@ -120,6 +115,7 @@ for (const scheme of ['light', 'dark'] satisfies ('light' | 'dark')[]) {
       const first = boxes[0];
       if (!first) throw new Error('Newest post required');
       expect(first.x).toBeCloseTo(gridBox.x, 0);
+      expect(first.y - mapBox.y - mapBox.height).toBeCloseTo(16, 0);
       for (let index = 1; index < boxes.length; index++) {
         const previous = boxes[index - 1];
         const current = boxes[index];

@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { Input, BufferSource, ALL_FORMATS } from 'mediabunny';
 import { z } from 'zod';
+import { measurePublicFooter } from '../fixtures/footer-geometry';
 const run = promisify(execFile);
 
 async function expectSystemTheme(page: Page, scheme: 'light' | 'dark') {
@@ -328,26 +329,18 @@ for (const width of [320, 1280]) {
         .getByRole('region', { name: 'newsletter' });
       await expect(signup).toHaveCSS('padding', '0px');
       await expect(signup).toHaveCSS('border-top-width', '0px');
-      const signupBox = await signup.boundingBox();
-      const shopBox = await page
-        .locator('[data-feedback-id="shop-ad"]')
-        .boundingBox();
-      expect(signupBox).not.toBeNull();
-      expect(shopBox).not.toBeNull();
-      if (!signupBox || !shopBox)
-        throw new Error(`Missing signup or shop banner on ${path}`);
+      const {
+        signup: signupBox,
+        shop: shopBox,
+        footer: footerBox,
+        scrollHeight,
+        scrollWidth,
+      } = await measurePublicFooter(page);
       expect(shopBox.y - signupBox.y - signupBox.height).toBe(24);
       expect(shopBox.x).toBe(signupBox.x);
       expect(shopBox.width).toBe(signupBox.width);
-      const footerBox = await page.getByRole('contentinfo').boundingBox();
-      expect(footerBox).not.toBeNull();
-      if (!footerBox) throw new Error(`Missing footer on ${path}`);
-      expect(Math.round(footerBox.y + footerBox.height)).toBe(
-        await page.evaluate(() => document.documentElement.scrollHeight),
-      );
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth),
-      ).toBe(width);
+      expect(Math.round(footerBox.y + footerBox.height)).toBe(scrollHeight);
+      expect(scrollWidth).toBe(width);
     }
   });
 }
