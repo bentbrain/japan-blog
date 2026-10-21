@@ -17,14 +17,14 @@ const design = parsed.success ? parsed.data : undefined;
 {(items.length > 0 || design) && (
   <section class="post-mosaic" aria-label={`${title} media`}>
     {items.length > 0 && (
-      <div class="grid grid-cols-1 items-start gap-[7px] min-[601px]:@min-[553px]/post:grid-cols-2">
+      <div class="columns-1 gap-[7px] min-[601px]:@min-[553px]/post:columns-2">
         {items.map((item, index) => {
           const fullWidth = items.length % 2 === 1 && index === 0;
           return (
             <div
               class:list={[
-                'min-w-0 [&_.media-tile_img]:max-h-[70svh] [&_.media-tile_img]:object-contain [&_.media-tile_video]:max-h-[70svh] [&_.media-tile_video]:object-contain',
-                fullWidth && 'col-span-full',
+                'mb-[7px] min-w-0 break-inside-avoid [&_.media-tile_img]:max-h-[70svh] [&_.media-tile_img]:object-contain [&_.media-tile_video]:max-h-[70svh] [&_.media-tile_video]:object-contain',
+                fullWidth && '[column-span:all]',
               ]}
             >
               <MediaTile
