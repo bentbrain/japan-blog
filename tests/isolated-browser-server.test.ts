@@ -54,14 +54,18 @@ function alive(pid: number) {
   }
 }
 
-async function fixture() {
+const stubborn =
+  "const {spawn}=require('node:child_process'); const fs=require('node:fs'); const child=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); process.send('ready')\"],{stdio:['ignore','ignore','ignore','ipc']}); child.once('message',()=>{fs.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,descendant:child.pid})); console.log('synthetic descendant ready');}); process.on('SIGTERM',()=>process.exit(0)); setInterval(()=>{},1000);";
+
+async function fixture(markerName = 'process.json') {
   const directory = await mkdtemp(join(tmpdir(), 'japan-runtime-control-'));
   const roots = join(directory, 'roots');
   const { mkdir } = await import('node:fs/promises');
   await mkdir(roots);
-  const marker = join(directory, 'process.json');
+  const marker = join(directory, markerName);
   const log = join(directory, 'runtime.log');
-  const normal = `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid})); console.log('synthetic server started'); setInterval(() => {}, 1000);`;
+  const normal =
+    "const fs = require('node:fs'); fs.writeFileSync(process.argv[1], JSON.stringify({pid:process.pid})); console.log('synthetic server started'); setInterval(() => {}, 1000);";
   const options = {
     temporaryDirectory: roots,
     inputs: [],
@@ -69,7 +73,7 @@ async function fixture() {
       file: process.execPath,
       args: ['-e', "console.log('synthetic install completed')"],
     },
-    serverCommand: { file: process.execPath, args: ['-e', normal] },
+    serverCommand: { file: process.execPath, args: ['-e', normal, marker] },
     startupTimeoutMs: 1_000,
     installTimeoutMs: 400,
     terminationGraceMs: 100,
@@ -230,10 +234,9 @@ void test('copy failure waits for the other in-flight copies before removing the
 
 void test('teardown kills a same-group descendant after its parent exits on SIGTERM', async () => {
   const f = await fixture();
-  const stubborn = `const {spawn}=require('node:child_process'); const fs=require('node:fs'); const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); process.send('ready')"],{stdio:['ignore','ignore','ignore','ipc']}); child.once('message',()=>{fs.writeFileSync(${JSON.stringify(f.marker)},JSON.stringify({pid:process.pid,descendant:child.pid})); console.log('synthetic descendant ready');}); process.on('SIGTERM',()=>process.exit(0)); setInterval(()=>{},1000);`;
   const runtime = startIsolatedBrowserServer(f.log, {
     ...f.options,
-    serverCommand: { file: process.execPath, args: ['-e', stubborn] },
+    serverCommand: { file: process.execPath, args: ['-e', stubborn, f.marker] },
   });
   try {
     await bounded(runtime.ready);
@@ -258,5 +261,31 @@ void test('normal startup and idempotent teardown preserve diagnostics', async (
     await runtime.stop();
   } finally {
     await f.dispose();
+  }
+});
+
+void test('marker paths stay runtime data for normal and descendant servers', async () => {
+  const markerName = 'marker \'"`\\;${process.exit(91)}\n\u2028\u2029.json';
+  for (const withDescendant of [false, true]) {
+    const f = await fixture(markerName);
+    const runtime = startIsolatedBrowserServer(f.log, {
+      ...f.options,
+      serverCommand: withDescendant
+        ? { file: process.execPath, args: ['-e', stubborn, f.marker] }
+        : f.options.serverCommand,
+    });
+    try {
+      await bounded(runtime.ready);
+      const record = await f.processes();
+      assert.equal(alive(record.pid), true);
+      if (withDescendant) {
+        assert.ok(record.descendant);
+        assert.equal(alive(record.descendant), true);
+      }
+      await bounded(runtime.stop());
+      await f.clean();
+    } finally {
+      await f.dispose();
+    }
   }
 });
