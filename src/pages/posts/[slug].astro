@@ -28,7 +28,7 @@ const title = correctTripTitle(
 
 <Site title={`${title} / jp.bent.build`} privateContent={isPreview}>
   <article class="single-post @container/post mx-auto max-w-[800px] [&_.post-body]:px-0 [&_.post-body]:py-4">
-    <div class="post-heading flex flex-col items-start justify-between gap-2.5 p-4 @min-[400px]/post:flex-row @min-[400px]/post:items-center [&_a]:no-underline">
+    <div class="post-heading flex flex-col items-start justify-between gap-2.5 py-4 @min-[400px]/post:flex-row @min-[400px]/post:items-center [&_a]:no-underline">
       <h1>{title}</h1>
       <time datetime={post.data.day}>{formatDay(post.data.day)}</time>
     </div>
