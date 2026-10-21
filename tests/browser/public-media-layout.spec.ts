@@ -96,7 +96,7 @@ for (const width of [390, 1280]) {
       await expect(
         page.locator('astro-island[component-export="PostMedia"][ssr]'),
       ).toHaveCount(0);
-      if (path !== '/gallery') {
+      if (path === '/') {
         for (const card of await page.locator('article').all()) {
           const slides = card.locator('[data-slot="carousel-item"]');
           for (let index = 0; index < (await slides.count()); index++) {
@@ -150,9 +150,19 @@ for (const width of [390, 1280]) {
           }),
         ),
       );
-      for (const ratio of ratios) {
-        expect(ratio.actual).toBeCloseTo(ratio.natural, 2);
-        expect(ratio.tileHeight).toBeCloseTo(ratio.imageHeight, 0);
+      for (const [index, ratio] of ratios.entries()) {
+        if (path === '/gallery') {
+          expect(ratio.actual).toBeCloseTo(ratio.natural, 2);
+          expect(ratio.tileHeight).toBeCloseTo(ratio.imageHeight, 0);
+        } else {
+          const paint = photoBounds(
+            await images.nth(index).screenshot({ caret: 'initial' }),
+          );
+          // Raster edges round independently when a grid slot is fractional.
+          expect(
+            Math.abs(paint.width - paint.height * ratio.natural),
+          ).toBeLessThanOrEqual(2);
+        }
       }
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
@@ -160,36 +170,26 @@ for (const width of [390, 1280]) {
     });
   }
 
-  for (const path of ['/posts/tokyo-after-dark']) {
-    test(`post carousel advances and clips its slides on ${path} at ${String(width)}px`, async ({
-      page,
-    }) => {
-      await page.setViewportSize({ width, height: 844 });
-      await page.goto(path);
-      const carousel = page
-        .locator('.post-carousel[aria-label="tokyo media"]')
-        .first();
-      const viewport = carousel.locator('[data-slot="carousel-content"]');
-      await expect(viewport).toHaveCSS('overflow-x', 'hidden');
-      const first = carousel.locator('[data-slot="carousel-item"]').first();
-      const before = await first.evaluate(
-        (element) => element.getBoundingClientRect().left,
-      );
-      await carousel.getByRole('button', { name: 'Next slide' }).click();
-      await expect(carousel.getByText('2 / 3', { exact: true })).toBeVisible();
-      await expect
-        .poll(
-          async () =>
-            before -
-            (await first.evaluate(
-              (element) => element.getBoundingClientRect().left,
-            )),
-        )
-        .toBeGreaterThan(100);
-      await carousel.getByRole('button', { name: 'Previous slide' }).click();
-      await expect(carousel.getByText('1 / 3', { exact: true })).toBeVisible();
+  test(`post mosaic exposes every photo and video without carousel controls at ${String(width)}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/posts/tokyo-after-dark');
+    const mosaic = page.getByRole('region', {
+      name: 'tokyo media',
+      exact: true,
     });
-  }
+    await expect(mosaic.locator('.media-tile')).toHaveCount(3);
+    await expect(mosaic.locator('img')).toHaveCount(2);
+    await expect(mosaic.locator('video[controls]')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Next slide' })).toHaveCount(
+      0,
+    );
+    for (const tile of await mosaic.locator('.media-tile').all()) {
+      await tile.scrollIntoViewIfNeeded();
+      await expect(tile).toBeInViewport();
+    }
+  });
 }
 
 test('post layout responds to its container without changing the viewport', async ({
@@ -198,26 +198,20 @@ test('post layout responds to its container without changing the viewport', asyn
   await page.goto('/posts/tokyo-after-dark');
   const article = page.locator('.single-post');
   const heading = article.locator('.post-heading');
-  const first = article.locator('[data-slot="carousel-item"]').first();
+  const tiles = article.locator('.post-mosaic .media-tile');
+  await expect(tiles).toHaveCount(3);
   await expect(heading).toHaveCSS('flex-direction', 'row');
-  const wide = await first.evaluate(
-    (element) =>
-      element.getBoundingClientRect().width /
-      (element.closest('.post-carousel')?.getBoundingClientRect().width || 1),
-  );
-  expect(wide).toBeCloseTo(1, 2);
-  await expect(article.locator('.post-media')).toHaveCSS('height', '320px');
+  const wide = await tiles.nth(1).boundingBox();
+  const articleBox = await article.boundingBox();
+  if (!wide || !articleBox) throw new Error('Post media bounds required');
+  expect(wide.width).toBeCloseTo((articleBox.width - 7) / 2, 0);
   await article.evaluate((element) => {
     element.style.width = '320px';
   });
   await expect(heading).toHaveCSS('flex-direction', 'column');
-  const narrow = await first.evaluate(
-    (element) =>
-      element.getBoundingClientRect().width /
-      (element.closest('.post-carousel')?.getBoundingClientRect().width || 1),
-  );
-  expect(narrow).toBeCloseTo(1, 2);
-  await expect(article.locator('.post-media')).toHaveCSS('height', '320px');
+  const narrow = await tiles.nth(1).boundingBox();
+  if (!narrow) throw new Error('Narrow post media required');
+  expect(narrow.width).toBeCloseTo(320, 0);
 });
 
 for (const { title, ratio, shape } of [

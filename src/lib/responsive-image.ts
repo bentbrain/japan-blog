@@ -66,6 +66,9 @@ export const galleryImageSizes =
 export const postImageSizes =
   '(min-width: 848px) 800px, (min-width: 601px) calc(100vw - 48px), calc(100vw - 32px)';
 
+export const postMosaicImageSizes =
+  '(min-width: 848px) 396.5px, (min-width: 601px) calc((100vw - 55px) / 2), calc(100vw - 32px)';
+
 // Inline photos sit inside the homepage card's 2px border and 32px content
 // padding. Gallery gaps are 12px; below 601px every gallery has one column.
 export function inlineImageSizes(singlePost: boolean, columns: number) {

@@ -892,6 +892,10 @@ try {
   );
   const previewHtml = await ownerPreview.text();
   assert.ok(previewHtml.includes('Full post body verification'));
+  assert.ok(previewHtml.includes('class="post-mosaic"'));
+  assert.ok(!previewHtml.includes('post-carousel'));
+  assert.ok(previewHtml.includes('data-visibility-video'));
+  assert.ok(!previewHtml.includes('/media-preview/'));
   assert.ok(previewHtml.includes('data-feedback-redact="true"'));
   assert.ok(previewHtml.includes('data-feedback-private="true"'));
   assert.ok(previewHtml.includes('name="robots" content="noindex"'));

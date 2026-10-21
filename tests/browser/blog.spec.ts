@@ -145,45 +145,26 @@ test('shared layout installs the toolbar once and keeps owner content private', 
     ),
   ).toBe(true);
 });
-test('mouse dragging advances the individual post carousel', async ({
+test('individual post media stays inline with direct photo links', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/posts/tokyo-after-dark');
-  const gallery = page.locator('.post-media').first();
-  await expect(
-    page
-      .locator('.post-carousel')
-      .first()
-      .getByRole('button', { name: 'Next slide' }),
-  ).toBeEnabled();
-  await gallery.scrollIntoViewIfNeeded();
-  const first = gallery.locator('.media-tile').first();
-  const before = await first.evaluate((el) => el.getBoundingClientRect().left);
-  const box = await gallery.boundingBox();
-  if (!box) throw new Error('Post gallery is missing');
-  await page.mouse.move(box.x + box.width * 0.8, box.y + 60);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.15, box.y + 60, { steps: 12 });
-  await page.mouse.up();
-  await expect
-    .poll(
-      async () =>
-        before -
-        (await first.evaluate((el) => el.getBoundingClientRect().left)),
-    )
-    .toBeGreaterThan(100);
+  const mosaic = page.locator('.post-mosaic');
+  await expect(mosaic.locator('.media-tile')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Next slide' })).toHaveCount(0);
+  for (const photo of await mosaic.locator('a.media-tile').all()) {
+    await expect(photo).toHaveAttribute('href', /^\/media\//);
+    await photo.scrollIntoViewIfNeeded();
+    await expect(photo).toBeInViewport();
+  }
 });
-test('carousel preserves video playback and keyboard controls', async ({
+test('post mosaic preserves video playback and keyboard controls', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/posts/tokyo-after-dark');
-  const carousel = page.locator('.post-carousel').first();
-  const next = carousel.getByRole('button', { name: 'Next slide' });
-  await next.click();
-  await next.click();
-  const video = carousel.locator('video').first();
+  const video = page.locator('.post-mosaic video').first();
   await video.scrollIntoViewIfNeeded();
   await expect
     .poll(() =>
@@ -278,36 +259,23 @@ test('owner attaches, recolours and removes a shop design', async ({
     /\/black\.webp\?/,
   );
   await page.setViewportSize({ width: 390, height: 844 });
-  const carousel = page.locator('.post-carousel');
-  for (let slide = 1; slide < 4; slide++) {
-    await carousel.getByRole('button', { name: 'Next slide' }).click();
-    await expect(
-      carousel.getByText(`${String(slide + 1)} / 4`, { exact: true }),
-    ).toBeVisible();
-  }
-  await expect(
-    carousel.getByRole('button', { name: 'Next slide' }),
-  ).toBeDisabled();
-  await expect
-    .poll(async () =>
-      carousel.locator('.post-design').evaluate((el) => {
-        const viewport = el.closest('[data-slot="carousel-content"]');
-        if (!viewport) return false;
-        const box = el.getBoundingClientRect(),
-          bounds = viewport.getBoundingClientRect();
-        return box.left >= bounds.left - 1 && box.right <= bounds.right + 1;
-      }),
-    )
-    .toBe(true);
+  const mosaic = page.locator('.post-mosaic');
+  await expect(mosaic.locator('.media-tile')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Next slide' })).toHaveCount(0);
+  const shopLink = mosaic.locator('.post-design-link');
+  await shopLink.scrollIntoViewIfNeeded();
+  await expect(shopLink).toBeInViewport();
   expect(
-    await carousel
-      .locator('.post-design img')
-      .evaluate((el) => el.closest('a')),
+    await mosaic.locator('.post-design img').evaluate((el) => el.closest('a')),
   ).toBeNull();
-  await expect(carousel.locator('.post-design').getByRole('link')).toHaveCount(
-    1,
+  await expect(mosaic.locator('.post-design').getByRole('link')).toHaveCount(1);
+  const designBox = await mosaic.locator('.post-design').boundingBox();
+  const articleBox = await page.locator('.single-post').boundingBox();
+  if (!designBox || !articleBox) throw new Error('Post design required');
+  expect(designBox.x).toBeGreaterThanOrEqual(articleBox.x);
+  expect(designBox.x + designBox.width).toBeLessThanOrEqual(
+    articleBox.x + articleBox.width,
   );
-  await expect(carousel.locator('.post-design-link')).toBeInViewport();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(editorUrl);
   await page.getByRole('button', { name: 'WHITE', exact: true }).click();
