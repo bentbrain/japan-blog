@@ -4,11 +4,12 @@ import { responsiveImage, galleryImageSizes } from '../lib/responsive-image';
 interface Props {
   item: TripMedia;
   inline?: boolean;
+  sizes?: string;
 }
-const { item, inline = false } = Astro.props;
+const { item, inline = false, sizes = galleryImageSizes } = Astro.props;
 const photo = Astro.locals.privateMediaRender
   ? { src: posterUrl(item), srcSet: undefined, sizes: undefined }
-  : responsiveImage(posterUrl(item), galleryImageSizes);
+  : responsiveImage(posterUrl(item), sizes);
 ---
 
 {item.kind === 'video' ? (

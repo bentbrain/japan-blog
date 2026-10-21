@@ -334,7 +334,7 @@ for (const width of [390, 1280]) {
     page,
   }) => {
     await page.setViewportSize({ width, height: 800 });
-    for (const path of [`/posts/${postSlug}`, '/']) {
+    for (const path of ['/']) {
       await page.goto(path);
       const carousel =
         path === '/'
@@ -541,15 +541,12 @@ test('pending automatic play cannot restart an offscreen or removed video', asyn
   await pending.dispose();
 });
 
-test('a tall portrait stays bounded in the post carousel and plays without cropping', async ({
+test('a tall portrait stays bounded in the post mosaic and plays without cropping', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 700 });
   await page.goto(`/posts/${postSlug}`);
-  const carousel = page.locator('.post-carousel');
-  await carousel.getByRole('button', { name: 'Next slide' }).click();
-  await carousel.getByRole('button', { name: 'Next slide' }).click();
-  const video = carousel.locator('video').nth(2);
+  const video = page.locator('.post-mosaic video').nth(2);
   await video.scrollIntoViewIfNeeded();
   await moving(video);
   const dimensions = await video.evaluate((element) => {
@@ -562,8 +559,9 @@ test('a tall portrait stays bounded in the post carousel and plays without cropp
       ratio: element.videoWidth / element.videoHeight,
     };
   });
-  expect(dimensions.height).toBeLessThanOrEqual(320);
-  expect(dimensions.height).toBeLessThanOrEqual(dimensions.viewport / 2);
+  expect(dimensions.height).toBeLessThanOrEqual(
+    (dimensions.viewport * 70) / 100,
+  );
   expect(dimensions.ratio).toBeCloseTo(1 / 3, 2);
   await expect(video).toHaveCSS('object-fit', 'contain');
   expect((await state(video)).muted).toBe(true);

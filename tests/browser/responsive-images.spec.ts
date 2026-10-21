@@ -306,10 +306,10 @@ test('public photo call sites deliver bounded responsive images without losing p
               ? page.locator(
                   `[data-feedback-id="post-${current.item.id}"] .post-carousel`,
                 )
-              : page.locator('.single-post .post-carousel');
+              : page.locator('.single-post .post-mosaic');
           await carousel.screenshot({
             caret: 'initial',
-            path: `${evidence}/${String(width)}-${colorScheme}-${path === '/' ? 'home' : 'post'}-carousel.png`,
+            path: `${evidence}/${String(width)}-${colorScheme}-${path === '/' ? 'home' : 'post'}-media.png`,
           });
         }
         if (path === '/gallery' && evidence) {

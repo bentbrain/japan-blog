@@ -337,7 +337,8 @@ async function scrollOverMedia(page: Page, frame: Locator, route: string) {
     .toBeGreaterThan(80);
 }
 
-for (const route of ['home', 'post']) {
+// Individual posts use the inline mosaic covered by post-mosaic.spec.ts.
+for (const route of ['home']) {
   for (const { width, scheme } of [
     { width: 390, scheme: 'light' },
     { width: 390, scheme: 'dark' },
