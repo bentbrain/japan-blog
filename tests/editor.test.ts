@@ -348,3 +348,42 @@ void test('editing detects ignored properties inside otherwise supported gallery
     true,
   );
 });
+
+void test('Instagram handle links retain bold formatting when saved and reopened', () => {
+  const schema = getSchema(editorExtensions);
+  const node = schema.nodeFromJSON({
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          {
+            type: 'text',
+            text: '@sample.travels',
+            marks: [
+              { type: 'bold' },
+              {
+                type: 'link',
+                attrs: { href: 'https://www.instagram.com/sample.travels/' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  node.check();
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  const restored = schema.nodeFromJSON(
+    toEditorDocument(contentForSave(document)),
+  );
+  assert.equal(restored.textContent, '@sample.travels');
+  const text = restored.firstChild?.firstChild;
+  assert.ok(text?.marks.some((mark) => mark.type.name === 'bold'));
+  assert.equal(
+    text?.marks.find((mark) => mark.type.name === 'link')?.attrs.href,
+    'https://www.instagram.com/sample.travels/',
+  );
+});
