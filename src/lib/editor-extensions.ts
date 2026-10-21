@@ -3,6 +3,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Code from '@tiptap/extension-code';
 import Image from '@tiptap/extension-image';
 import { z } from 'zod';
+import { InstagramProfilePaste } from './instagram-profile-paste';
 
 // Keep EmDash's span identity alongside code while excluding visual marks.
 const TripInlineCode = Code.extend({
@@ -160,6 +161,7 @@ const SavedBlock = Node.create({
 });
 export const editorExtensions = [
   StarterKit.configure({ code: false }),
+  InstagramProfilePaste,
   TripInlineCode,
   TripImage,
   TripVideo,
