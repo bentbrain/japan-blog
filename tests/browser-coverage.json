@@ -245,11 +245,16 @@
         "beers.spec.ts",
         "beer saves preserve entries with older non-date slugs and create new days"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "scripts/integration-browser-contracts.ts",
+          "test": "runBeerContracts"
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 3: actual native HTTP/CMS contract runs per PR; complete original browser retained in full regression"
     },
     {
       "caseId": "f74228b4642996b6d7ff-8fb835e91dd4806d1780",
@@ -271,11 +276,16 @@
         "beers.spec.ts",
         "overlapping beer saves keep one active day with trash=false"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "scripts/integration-browser-contracts.ts",
+          "test": "runBeerContracts"
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 3: actual native HTTP/CMS contract runs per PR; complete original browser retained in full regression"
     },
     {
       "caseId": "f74228b4642996b6d7ff-1a5abeb3fafa6dbf9b28",
@@ -284,11 +294,16 @@
         "beers.spec.ts",
         "overlapping beer saves keep one active day with trash=true"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "scripts/integration-browser-contracts.ts",
+          "test": "runBeerContracts"
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 3: actual native HTTP/CMS contract runs per PR; complete original browser retained in full regression"
     },
     {
       "caseId": "a378e5ce917615b4b643-0c0fcaab00e4410c071f",
@@ -619,11 +634,16 @@
         "categories.spec.ts",
         "category tools require the owner and reject forged creation requests"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "scripts/integration-browser-contracts.ts",
+          "test": "runCategoryContracts"
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 6: actual native HTTP/CMS contract runs per PR; complete original browser retained in full regression"
     },
     {
       "caseId": "262c5455b60c16e7a404-75bea7fa2231f71e5625",
@@ -736,11 +756,41 @@
         "category-icons.spec.ts",
         "owner sees pending, unknown, failed and ready icons and makes explicit bounded retries"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "tests/category-icon-status.test.ts",
+          "test": "mounted icon status ${state} honors canRetry=${String(canRetry)}",
+          "cases": [
+            "mounted icon status default honors canRetry=false",
+            "mounted icon status default honors canRetry=true",
+            "mounted icon status pending honors canRetry=false",
+            "mounted icon status pending honors canRetry=true",
+            "mounted icon status ready honors canRetry=false",
+            "mounted icon status ready honors canRetry=true",
+            "mounted icon status failed honors canRetry=false",
+            "mounted icon status failed honors canRetry=true",
+            "mounted icon status uncertain honors canRetry=false",
+            "mounted icon status uncertain honors canRetry=true",
+            "mounted icon status setup honors canRetry=false",
+            "mounted icon status setup honors canRetry=true",
+            "mounted icon status configuration honors canRetry=false",
+            "mounted icon status configuration honors canRetry=true",
+            "mounted icon status distinguishes built-in defaults, filters names and renders icon masks",
+            "mounted icon default action sends explicit charge acknowledgement then refreshes pending",
+            "mounted icon pending action sends explicit charge acknowledgement then refreshes pending",
+            "mounted icon ready action sends explicit charge acknowledgement then refreshes pending",
+            "mounted icon failed action sends explicit charge acknowledgement then refreshes pending",
+            "mounted icon uncertain action sends explicit charge acknowledgement then refreshes pending",
+            "mounted icon setup action sends explicit charge acknowledgement then refreshes pending",
+            "mounted icon configuration action sends explicit charge acknowledgement then refreshes pending",
+            "mounted icon retry reports a rejected request and restores the action"
+          ]
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 9: actual mounted React status/actions/payload contracts; real D1 unknown-result consent/caps/public-private journeys stay per PR"
     },
     {
       "caseId": "b09a55bb7e7e50e14a40-75ec90efab0088230bc1",
@@ -1509,11 +1559,36 @@
         "instagram-profile.spec.ts",
         "non-profile paste, rich content, ordinary links and code keep normal behavior"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "tests/editor-paste.test.ts",
+          "test": "actual paste plugin preserves non-profile input: ${text}",
+          "cases": [
+            "actual paste plugin preserves non-profile input: https://www.instagram.com/p/ABC/",
+            "actual paste plugin preserves non-profile input: https://instagram.com/reel/ABC/",
+            "actual paste plugin preserves non-profile input: https://instagram.com/stories/sample/123/",
+            "actual paste plugin preserves non-profile input: https://instagram.com/explore/",
+            "actual paste plugin preserves non-profile input: https://instagram.com.evil.test/sample/",
+            "actual paste plugin preserves non-profile input: https://evil.test@instagram.com/sample/",
+            "actual paste plugin preserves non-profile input: https://example.com/sample/",
+            "actual paste plugin preserves non-profile input: ordinary text",
+            "actual paste plugin preserves non-profile input: See https://instagram.com/sample/ later",
+            "actual paste plugin preserves rich HTML bold and italic marks",
+            "actual paste plugin preserves rich profile URLs and multiple paragraphs",
+            "actual paste plugin replaces selection with a canonical link",
+            "actual paste plugin retains active bold italic marks without extending the link",
+            "actual paste plugin opts out of inline code",
+            "actual paste plugin opts out of stored inline code marks",
+            "actual paste plugin opts out when a selection endpoint is in a code block: 3-11",
+            "actual paste plugin opts out when a selection endpoint is in a code block: 11-17",
+            "actual paste plugin opts out of code blocks"
+          ]
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 8: actual mounted Tiptap parser/plugin contracts; native clipboard/undo/redo/save/reopen stays per PR"
     },
     {
       "caseId": "1dcc4c997e0a8fbd7e4f-078cc124939ca2a90f5b",
@@ -2895,11 +2970,16 @@
         "map-responsive-images.spec.ts",
         "a 600-photo published library retains the last native photo and its first measured candidate"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "scripts/integration-browser-contracts.ts",
+          "test": "runNativeLibraryContract"
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 10: actual native HTTP/CMS contract runs per PR; complete original browser retained in full regression"
     },
     {
       "caseId": "3dc1fedddf21201f1107-bfa05018fda602870048",
@@ -2973,11 +3053,16 @@
         "media-editing.spec.ts",
         "edit API requires owner and CSRF protection and rejects capture metadata"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "scripts/integration-browser-contracts.ts",
+          "test": "runMediaEditContracts"
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 4: actual native HTTP/CMS contract runs per PR; complete original browser retained in full regression"
     },
     {
       "caseId": "139101f58d59e4fa1d59-06de995ef1a244932068",
@@ -3155,11 +3240,16 @@
         "newsletter.spec.ts",
         "published uploaded photos reach the native image binding and stop serving when the post is unpublished"
       ],
-      "perPrBrowser": true,
+      "perPrBrowser": false,
       "fullBrowser": true,
-      "perPrContracts": [],
+      "perPrContracts": [
+        {
+          "file": "scripts/integration-browser-contracts.ts",
+          "test": "runNewsletterPhotoContract"
+        }
+      ],
       "representatives": [],
-      "disposition": "retain native assertions per PR"
+      "disposition": "priority 5: actual native HTTP/CMS contract runs per PR; complete original browser retained in full regression"
     },
     {
       "caseId": "bf56ae4106871f847130-5419bea0d42d5957e50a",

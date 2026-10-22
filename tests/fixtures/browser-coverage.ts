@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 
-const contract = z.object({ file: z.string(), test: z.string() });
+const contract = z.object({
+  file: z.string(),
+  test: z.string(),
+  cases: z.array(z.string()).optional(),
+});
 const original = z.object({
   caseId: z.string(),
   file: z.string(),

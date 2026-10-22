@@ -57,7 +57,7 @@ export default class BrowserReporter implements Reporter {
       retry: result.retry,
     });
   }
-  async onEnd(result: FullResult): Promise<void | { status: 'failed' }> {
+  async onEnd(result: FullResult): Promise<{ status: 'failed' } | undefined> {
     if (process.argv.includes('--list')) return;
     this.invalid ||= this.cases.length !== this.collected;
     const directory = resolve(
@@ -70,6 +70,13 @@ export default class BrowserReporter implements Reporter {
       JSON.stringify(
         {
           schemaVersion: 1,
+          commit: process.env.GITHUB_SHA ?? null,
+          cachePreparation:
+            process.env.BROWSER_CACHE_STATE ??
+            (process.env.CI
+              ? 'fresh CI checkout'
+              : 'uncontrolled local optimizer cache'),
+          measurementSpansMayOverlap: true,
           synthetic: true,
           tier: process.env.E2E_TIER || 'critical',
           status: this.invalid ? 'failed' : result.status,

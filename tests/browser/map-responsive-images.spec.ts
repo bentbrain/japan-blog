@@ -963,6 +963,56 @@ for (const librarySize of [102, 600])
               .parse(await seeded.json());
             return [id, ...ids];
           });
+        const nativeIds: string[] = [];
+        const pageSizes: number[] = [];
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const response = await request.get(
+            `/_emdash/api/content/media_items?status=published&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+          );
+          expect(response.ok()).toBe(true);
+          const page = z
+            .object({
+              data: z.object({
+                items: z.array(
+                  z.object({ id: z.string(), status: z.literal('published') }),
+                ),
+                nextCursor: z.string().nullish(),
+              }),
+            })
+            .parse(await response.json()).data;
+          nativeIds.push(...page.items.map((item) => item.id));
+          pageSizes.push(page.items.length);
+          cursor = page.nextCursor ?? undefined;
+          if (cursor) {
+            expect(cursors.has(cursor)).toBe(false);
+            cursors.add(cursor);
+          }
+        } while (cursor);
+        expect(nativeIds).toHaveLength(librarySize);
+        expect(new Set(nativeIds)).toEqual(new Set(libraryIds));
+        expect(pageSizes).toEqual(
+          librarySize === 600 ? [100, 100, 100, 100, 100, 100] : [100, 2],
+        );
+        const finalId = libraryIds.at(-1);
+        const final = await request.get(
+          `/_emdash/api/content/media_items/${finalId || ''}`,
+        );
+        expect(final.ok()).toBe(true);
+        const identity = z
+          .object({
+            data: z.object({
+              item: z.object({
+                id: z.string(),
+                status: z.literal('published'),
+                data: z.object({ asset: z.unknown() }),
+              }),
+            }),
+          })
+          .parse(await final.json()).data.item;
+        expect(identity.id).toBe(finalId);
+        expect(identity.data.asset).toEqual(media.asset);
         await context.route('https://toolbar.bent.build/embed.js', (route) =>
           route.fulfill({ contentType: 'application/javascript', body: '' }),
         );
