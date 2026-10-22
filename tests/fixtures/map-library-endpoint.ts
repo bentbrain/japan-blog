@@ -30,8 +30,15 @@ export const POST: APIRoute = async (context) => {
       throw new Error('Unexpected fixture column');
     return `"${name}"`;
   });
+  const copies = z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(599)
+    .default(599)
+    .parse(context.url.searchParams.get('copies') ?? undefined);
   const ids = Array.from(
-    { length: 599 },
+    { length: copies },
     (_, index) => `01${String(index + 1).padStart(24, '0')}`,
   );
   const selected = names.map((name) => {
@@ -77,6 +84,8 @@ export const POST: APIRoute = async (context) => {
     ).bind(JSON.stringify(ids), sourceId),
   ]);
   if ((await count()) !== ids.length)
-    throw new Error('The native published source did not seed all 599 photos');
+    throw new Error(
+      'The native published source did not seed every requested photo',
+    );
   return Response.json({ ids });
 };

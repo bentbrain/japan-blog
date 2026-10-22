@@ -33,6 +33,10 @@ pnpm knip
 pnpm build
 ```
 
+`pnpm test:e2e` runs the per-PR browser cases. `pnpm test:e2e:full` runs every browser case, including the original 333 and the representative library journey. Quality runs the full regression on Monday at 05:00 UTC. A failed scheduled run fails the `browser` job with the failing case in its log.
+
+`pnpm test:e2e:coverage` verifies the original canonical IDs and exact full/per-PR collections against `tests/browser-coverage.json`. The manifest records retained native cases, representative browser cases and contracts executed by `pnpm test` or `pnpm test:integration`. Collection equality does not establish assertion equivalence. Review the assertions when changing a disposition. The browser reporter rejects skipped or incomplete execution and writes sanitized case and fixture timing to `artifacts/browser/`. Quality uploads those artifacts for 14 days. Measurement spans can overlap; do not sum nested spans or infer Linux runtime savings from development-machine timings.
+
 ## Owner tools
 
 - `/owner`: posts and daily beer entries.

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { mapPhoto } from '../lib/responsive-image';
+import { resolveMapPhoto } from '../lib/map-photo-controller';
 import {
   Popover,
   PopoverContent,
@@ -38,55 +38,14 @@ function MapPhoto({ item }: { item: MapItem }) {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!item.photoResolution) return;
-    const controller = new AbortController();
-    let current = true;
-    // Cover response headers and JSON parsing, including transports slow to abort.
-    const deadline = setTimeout(() => {
-      current = false;
-      controller.abort();
-      setFailed(true);
-    }, 8000);
-    async function resolve() {
-      try {
-        const response = await fetch(item.photoResolution || '', {
-          signal: controller.signal,
-          cache: 'no-store',
-        });
-        if (!response.ok) throw new Error('Photo dimensions unavailable');
-        const value: unknown = await response.json();
-        let dimensions: { width: number; height: number } | undefined;
-        if (value !== null) {
-          if (
-            typeof value !== 'object' ||
-            !('width' in value) ||
-            !('height' in value) ||
-            typeof value.width !== 'number' ||
-            typeof value.height !== 'number' ||
-            !Number.isSafeInteger(value.width) ||
-            !Number.isSafeInteger(value.height) ||
-            value.width <= 0 ||
-            value.height <= 0
-          )
-            throw new Error('Invalid photo dimensions');
-          dimensions = { width: value.width, height: value.height };
-        }
-        if (current) setPhoto(mapPhoto(item.poster, dimensions));
-      } catch {
-        if (current) setFailed(true);
-      } finally {
-        clearTimeout(deadline);
-      }
-    }
-    // Coalesce rapid next/previous actions without starting obsolete lookups.
-    const timer = setTimeout(() => {
-      void resolve();
-    }, 60);
-    return () => {
-      current = false;
-      clearTimeout(timer);
-      clearTimeout(deadline);
-      controller.abort();
-    };
+    return resolveMapPhoto({
+      url: item.photoResolution,
+      poster: item.poster,
+      ready: setPhoto,
+      failed: () => {
+        setFailed(true);
+      },
+    });
   }, [item, attempt]);
   if (photo)
     return (

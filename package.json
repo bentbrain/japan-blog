@@ -13,14 +13,16 @@
     "preview": "astro preview",
     "deploy": "astro build && wrangler deploy",
     "typecheck": "astro check",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --tsconfig tests/tsconfig.json --test tests/*.test.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm knip && pnpm build",
     "demo": "tsx scripts/seed-demo.ts",
     "lint": "astro sync && eslint . --max-warnings 0 && prettier --check .",
     "format": "prettier --write .",
     "knip": "knip",
     "test:integration": "tsx scripts/integration-test.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:full": "E2E_TIER=full playwright test",
+    "test:e2e:coverage": "tsx scripts/verify-browser-coverage.ts"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^14.3.1",
