@@ -1,13 +1,38 @@
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer } from 'node:net';
+import { runBrowserContracts } from './integration-browser-contracts';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import { assertStatus, serverSignals } from './integration-diagnostics';
 
-const base = 'http://127.0.0.1:4390';
+const reservation = createServer();
+reservation.listen(0, '127.0.0.1');
+await once(reservation, 'listening');
+const address = reservation.address();
+if (!address || typeof address === 'string')
+  throw new Error('Integration port required');
+const port = String(address.port);
+await new Promise<void>((resolve, reject) =>
+  reservation.close((error) => {
+    if (error) reject(error);
+    else resolve();
+  }),
+);
+const base = `http://127.0.0.1:${port}`;
 const server = spawn(
   'pnpm',
-  ['dev', '--host', '127.0.0.1', '--port', '4390', '--ignore-lock'],
+  [
+    'dev',
+    '--config',
+    'tests/fixtures/map-library.config.mjs',
+    '--host',
+    '127.0.0.1',
+    '--port',
+    port,
+    '--ignore-lock',
+  ],
   {
     env: { ...process.env, TEST_EPHEMERAL: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -46,7 +71,13 @@ async function request(
       path,
     );
   for (let attempt = 0; ; attempt++) {
-    const response = await fetch(base + path, {
+    const url = new URL(path, base);
+    assert.equal(
+      url.origin,
+      base,
+      'Integration request must stay on the local server',
+    );
+    const response = await fetch(url, {
       method,
       redirect: 'manual',
       headers: {
@@ -90,6 +121,19 @@ async function request(
     });
   }
 }
+const transport = {
+  request,
+  raw: async (path: string, init: RequestInit, signed = true) => {
+    const headers = new Headers(init.headers);
+    if (signed) headers.set('Cookie', cookie);
+    // Multipart uploads still pass the ordinary same-origin owner checks.
+    if (init.body instanceof FormData) {
+      headers.set('Origin', base);
+      headers.set('X-EmDash-Request', '1');
+    }
+    return fetch(base + path, { ...init, headers, redirect: 'manual' });
+  },
+};
 async function publish(collection: string, id: string) {
   const current = item.parse(
     await (await request(`/_emdash/api/content/${collection}/${id}`)).json(),
@@ -98,7 +142,7 @@ async function publish(collection: string, id: string) {
     _rev: current.data._rev,
   });
 }
-try {
+async function run() {
   let ready = false;
   for (let i = 0; i < 60; i++) {
     try {
@@ -111,6 +155,12 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.ok(ready, logs);
+  console.log(
+    JSON.stringify({
+      phase: 'integration-server-ready',
+      elapsedMs: Date.now() - started,
+    }),
+  );
   const setup = await request(
     '/_emdash/api/setup/dev-bypass',
     {},
@@ -184,6 +234,16 @@ try {
       'PUT',
     );
     assert.equal(updated.status, 200, await updated.text());
+  }
+  console.log(
+    JSON.stringify({
+      phase: 'integration-setup-ready',
+      elapsedMs: Date.now() - started,
+    }),
+  );
+  if (process.argv.includes('--browser-contracts-only')) {
+    await runBrowserContracts(transport);
+    return;
   }
   assert.equal(
     (await request('/api/trip/media', undefined, 'GET', false)).status,
@@ -554,7 +614,11 @@ try {
   ).data._rev;
   const renamed = await request(
     `/_emdash/api/content/media_items/${id}`,
-    { slug: `renamed-${crypto.randomUUID()}`, data: {}, _rev: renameRevision },
+    {
+      slug: `renamed-${crypto.randomUUID()}`,
+      data: {},
+      _rev: renameRevision,
+    },
     'PUT',
   );
   assert.equal(renamed.status, 200, await renamed.text());
@@ -1000,7 +1064,11 @@ try {
         },
         {
           type: 'videoBlock',
-          attrs: { src: draftAsset.url, mediaId: asset.id, provider: 'local' },
+          attrs: {
+            src: draftAsset.url,
+            mediaId: asset.id,
+            provider: 'local',
+          },
         },
         {
           type: 'image',
@@ -1164,8 +1232,11 @@ try {
   assert.ok(!(await afterHome.text()).includes('Full post body verification'));
   assert.equal((await request(`/api/trip/posts?id=${postId}`)).status, 200);
   assert.equal(
-    (await request(`${postPath}/unpublish`, { _rev: beforeActions.data._rev }))
-      .status,
+    (
+      await request(`${postPath}/unpublish`, {
+        _rev: beforeActions.data._rev,
+      })
+    ).status,
     409,
   );
   const scheduled = await request(`${postPath}/schedule`, {
@@ -1175,8 +1246,11 @@ try {
   assert.equal(scheduled.status, 200, await scheduled.text());
   const scheduledPost = item.parse(await (await request(postPath)).json());
   assert.equal(
-    (await request(`${postPath}/unpublish`, { _rev: scheduledPost.data._rev }))
-      .status,
+    (
+      await request(`${postPath}/unpublish`, {
+        _rev: scheduledPost.data._rev,
+      })
+    ).status,
     200,
   );
   const unscheduled = z
@@ -1270,6 +1344,27 @@ try {
   console.log(
     'Full flow passed: owner auth, CSRF, original privacy, R2 upload/ranges, GPS publication, categories, beer revisions, day exports and rich-text publication.',
   );
+  await runBrowserContracts(transport);
+}
+try {
+  await run();
+  console.log(
+    JSON.stringify({
+      phase: 'integration-complete',
+      elapsedMs: Date.now() - started,
+    }),
+  );
 } finally {
-  if (server.pid) process.kill(-server.pid, 'SIGTERM');
+  if (server.pid) {
+    try {
+      process.kill(-server.pid, 'SIGTERM');
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !('code' in error) ||
+        error.code !== 'ESRCH'
+      )
+        throw error;
+    }
+  }
 }
