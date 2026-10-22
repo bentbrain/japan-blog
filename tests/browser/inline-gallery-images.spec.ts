@@ -34,41 +34,44 @@ test('native inline galleries select fresh candidates for their actual slots', a
     [1600, 1200],
   ]) {
     if (!width || !height) throw new Error('Fixture dimensions required');
-    const jpeg = await page.evaluate(
-      ({ width, height }) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Canvas required');
-        const pixels = context.createImageData(width, height);
-        let seed = 12345;
-        for (let y = 0; y < height; y++)
-          for (let x = 0; x < width; x++) {
-            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-            const noise = (seed >>> 24) / 8;
-            const index = (y * width + x) * 4;
-            pixels.data[index] =
-              (x / width) * 180 + noise + (y % 80 < 3 ? 45 : 0);
-            pixels.data[index + 1] = (y / height) * 190 + noise;
-            pixels.data[index + 2] = 80 + noise + (x % 100 < 3 ? 70 : 0);
-            pixels.data[index + 3] = 255;
-          }
-        context.putImageData(pixels, 0, 0);
-        return canvas.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
-      },
-      { width, height },
-    );
+    const jpeg =
+      await test.step(`measure: inline JPEG generation ${String(width)}x${String(height)}`, () =>
+        page.evaluate(
+          ({ width, height }) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error('Canvas required');
+            const pixels = context.createImageData(width, height);
+            let seed = 12345;
+            for (let y = 0; y < height; y++)
+              for (let x = 0; x < width; x++) {
+                seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+                const noise = (seed >>> 24) / 8;
+                const index = (y * width + x) * 4;
+                pixels.data[index] =
+                  (x / width) * 180 + noise + (y % 80 < 3 ? 45 : 0);
+                pixels.data[index + 1] = (y / height) * 190 + noise;
+                pixels.data[index + 2] = 80 + noise + (x % 100 < 3 ? 70 : 0);
+                pixels.data[index + 3] = 255;
+              }
+            context.putImageData(pixels, 0, 0);
+            return canvas.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
+          },
+          { width, height },
+        ));
     const buffer = Buffer.from(jpeg, 'base64');
     const file = {
       name: 'synthetic-responsive.jpg',
       mimeType: 'image/jpeg',
       buffer,
     };
-    const uploaded = await request.post('/api/trip/upload', {
-      headers,
-      multipart: { original: file, display: file, poster: file },
-    });
+    const uploaded = await test.step('measure: inline media upload', () =>
+      request.post('/api/trip/upload', {
+        headers,
+        multipart: { original: file, display: file, poster: file },
+      }));
     expect(uploaded.status()).toBe(201);
     const id = z
       .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
@@ -120,29 +123,30 @@ test('native inline galleries select fresh candidates for their actual slots', a
     ids.push(id);
   }
   const postSlug = `synthetic-images-${run}`;
-  const post = await request.post('/_emdash/api/content/posts', {
-    headers,
-    data: {
-      slug: postSlug,
+  const post = await test.step('measure: inline post fixture creation', () =>
+    request.post('/_emdash/api/content/posts', {
+      headers,
       data: {
-        title: 'Synthetic responsive images',
-        day: '2099-10-15',
-        content: [2, 3].map((columns, index) => ({
-          _type: 'gallery',
-          _key: `synthetic-gallery-${String(columns)}`,
-          columns,
-          images: Array.from({ length: columns }, (_, image) => ({
-            _type: 'image',
-            _key: `synthetic-${String(columns)}-${String(image)}`,
-            asset: { _ref: assetIds[index] },
-            alt: `Synthetic ${String(columns)} column photo ${String(image)}`,
+        slug: postSlug,
+        data: {
+          title: 'Synthetic responsive images',
+          day: '2099-10-15',
+          content: [2, 3].map((columns, index) => ({
+            _type: 'gallery',
+            _key: `synthetic-gallery-${String(columns)}`,
+            columns,
+            images: Array.from({ length: columns }, (_, image) => ({
+              _type: 'image',
+              _key: `synthetic-${String(columns)}-${String(image)}`,
+              asset: { _ref: assetIds[index] },
+              alt: `Synthetic ${String(columns)} column photo ${String(image)}`,
+            })),
           })),
-        })),
-        gallery: [],
-        demo: true,
+          gallery: [],
+          demo: true,
+        },
       },
-    },
-  });
+    }));
   const current = result.parse(await post.json()).data;
   fixturePostId = current.item.id;
   expect(
@@ -170,6 +174,10 @@ test('native inline galleries select fresh candidates for their actual slots', a
         // New contexts isolate source selection from previously loaded larger
         // resources. The control below also uses a distinct native asset URL.
         const fresh = await context.newPage();
+        const requests: string[] = [];
+        fresh.on('request', (request) => {
+          requests.push(request.url());
+        });
         await fresh.goto(
           `${baseURL || ''}${route === 'home' ? '/' : `/posts/${postSlug}`}`,
         );
@@ -213,14 +221,32 @@ test('native inline galleries select fresh candidates for their actual slots', a
               candidate: image.currentSrc.split('/').at(-2),
               expected,
               sizes: image.sizes,
+              srcset: image.srcset,
+              source: image.src,
+              firstImageStartMs: performance.getEntriesByName(
+                image.currentSrc,
+              )[0]?.startTime,
             };
           }, assetIds[index] || '');
+          const candidates = measured.srcset
+            .split(',')
+            .map((candidate) => candidate.trim().split(' ')[0])
+            .filter((value) => Boolean(value));
+          const imageRequests = requests.filter(
+            (url) =>
+              url === measured.source ||
+              candidates.some(
+                (candidate) => candidate && url.endsWith(candidate),
+              ),
+          );
+          expect(imageRequests).toHaveLength(1);
           measurements.push({
             route,
             viewport: width,
             deviceScaleFactor,
             columns,
             ...measured,
+            firstRequestCount: imageRequests.length,
           });
           if (Math.abs(measured.width - measured.declaredWidth) > 1)
             failures.push(

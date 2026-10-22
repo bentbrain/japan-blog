@@ -1,6 +1,14 @@
 import { defineConfig } from '@playwright/test';
+import { fullOnlyPattern } from './tests/fixtures/browser-coverage.ts';
+
+const tier = process.env.E2E_TIER || 'critical';
+if (!['critical', 'full'].includes(tier))
+  throw new Error('E2E_TIER must be critical or full');
 export default defineConfig({
   testDir: 'tests/browser',
+  forbidOnly: true,
+  grepInvert: tier === 'full' ? undefined : fullOnlyPattern,
+  reporter: [['list'], ['./tests/fixtures/browser-reporter.ts']],
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,

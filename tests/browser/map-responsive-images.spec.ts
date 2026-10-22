@@ -43,31 +43,33 @@ test.beforeAll(async ({ request, baseURL, browser }) => {
     [1200, 1200],
   ]) {
     if (!width || !height) throw new Error('Fixture dimensions required');
-    const jpeg = await page.evaluate(
-      ({ width, height }) => {
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Canvas required');
-        const pixels = context.createImageData(width, height);
-        let seed = 12345;
-        for (let y = 0; y < height; y++)
-          for (let x = 0; x < width; x++) {
-            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-            const noise = (seed >>> 24) / 8;
-            const index = (y * width + x) * 4;
-            pixels.data[index] =
-              (x / width) * 180 + noise + (y % 80 < 3 ? 45 : 0);
-            pixels.data[index + 1] = (y / height) * 190 + noise;
-            pixels.data[index + 2] = 80 + noise + (x % 100 < 3 ? 70 : 0);
-            pixels.data[index + 3] = 255;
-          }
-        context.putImageData(pixels, 0, 0);
-        return canvas.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
-      },
-      { width, height },
-    );
+    const jpeg =
+      await test.step(`measure: map JPEG generation ${String(width)}x${String(height)}`, () =>
+        page.evaluate(
+          ({ width, height }) => {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error('Canvas required');
+            const pixels = context.createImageData(width, height);
+            let seed = 12345;
+            for (let y = 0; y < height; y++)
+              for (let x = 0; x < width; x++) {
+                seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+                const noise = (seed >>> 24) / 8;
+                const index = (y * width + x) * 4;
+                pixels.data[index] =
+                  (x / width) * 180 + noise + (y % 80 < 3 ? 45 : 0);
+                pixels.data[index + 1] = (y / height) * 190 + noise;
+                pixels.data[index + 2] = 80 + noise + (x % 100 < 3 ? 70 : 0);
+                pixels.data[index + 3] = 255;
+              }
+            context.putImageData(pixels, 0, 0);
+            return canvas.toDataURL('image/jpeg', 0.9).split(',')[1] || '';
+          },
+          { width, height },
+        ));
     const buffer = Buffer.from(jpeg, 'base64');
     sourceBytes.push(buffer.length);
     const file = {
@@ -75,10 +77,11 @@ test.beforeAll(async ({ request, baseURL, browser }) => {
       mimeType: 'image/jpeg',
       buffer,
     };
-    const uploaded = await request.post('/api/trip/upload', {
-      headers,
-      multipart: { original: file, display: file, poster: file },
-    });
+    const uploaded = await test.step('measure: map media upload', () =>
+      request.post('/api/trip/upload', {
+        headers,
+        multipart: { original: file, display: file, poster: file },
+      }));
     expect(uploaded.status()).toBe(201);
     const id = z
       .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
@@ -759,259 +762,345 @@ for (const action of ['selection', 'close', 'unmount'])
     }
   });
 
-test('a 600-photo published library retains the last native photo and its first measured candidate', async ({
-  request: sharedRequest,
-  browser,
-  playwright,
-  baseURL: sharedBaseURL,
-}) => {
-  test.setTimeout(120_000);
-  // A representative library owns its runtime, including CMS background work.
-  // Disposing it avoids leaking hundreds of fixture lifecycle jobs into other tests.
-  await sharedRequest.get('/_emdash/api/auth/dev-bypass');
-  const original = z
-    .object({
-      data: z.object({
-        item: z.object({ data: z.record(z.string(), z.unknown()) }),
-      }),
-    })
-    .parse(
-      await (
-        await sharedRequest.get(
-          `/_emdash/api/content/media_items/${fixtureIds[0] || ''}`,
-        )
-      ).json(),
-    ).data.item.data;
-  const sourcePage = await browser.newPage();
-  await sourcePage.route('https://toolbar.bent.build/embed.js', (route) =>
-    route.fulfill({ contentType: 'application/javascript', body: '' }),
-  );
-  await sourcePage.goto(
-    `${sharedBaseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`,
-  );
-  const sourceImage = sourcePage.locator(
-    '[data-feedback-id="map-preview"] img',
-  );
-  await expect(sourceImage).toBeVisible();
-  const source = await sourceImage.getAttribute('src');
-  expect(source).toMatch(/^\/_emdash\/api\/media\/file\/trip\//);
-  const display = await sharedRequest.get(source || '');
-  expect(display.ok()).toBe(true);
-  const bytes = await display.body();
-  await sourcePage.close();
-  const reservation = createServer();
-  reservation.listen(0, '127.0.0.1');
-  await once(reservation, 'listening');
-  const address = reservation.address();
-  if (!address || typeof address === 'string')
-    throw new Error('Fixture port required');
-  const port = String(address.port);
-  await new Promise<void>((resolve, reject) =>
-    reservation.close((error) => {
-      if (error) reject(error);
-      else resolve();
-    }),
-  );
-  const baseURL = `http://127.0.0.1:${port}`;
-  const server = spawn(
-    process.execPath,
-    [
-      fileURLToPath(
-        new URL('../../node_modules/astro/bin/astro.mjs', import.meta.url),
-      ),
-      'dev',
-      '--config',
-      'tests/fixtures/map-library.config.mjs',
-      '--host',
-      '127.0.0.1',
-      '--port',
-      port,
-      '--ignore-lock',
-    ],
-    {
-      cwd: fileURLToPath(new URL('../..', import.meta.url)),
-      env: { ...process.env, TEST_EPHEMERAL: '1' },
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+for (const librarySize of [102, 600])
+  test(
+    librarySize === 600
+      ? 'a 600-photo published library retains the last native photo and its first measured candidate'
+      : 'a final-page native photo retains its first measured candidate in a representative library',
+    async ({
+      request: sharedRequest,
+      browser,
+      playwright,
+      baseURL: sharedBaseURL,
+    }) => {
+      test.setTimeout(120_000);
+      // A representative library owns its runtime, including CMS background work.
+      // Disposing it avoids leaking hundreds of fixture lifecycle jobs into other tests.
+      await sharedRequest.get('/_emdash/api/auth/dev-bypass');
+      const original = z
+        .object({
+          data: z.object({
+            item: z.object({ data: z.record(z.string(), z.unknown()) }),
+          }),
+        })
+        .parse(
+          await (
+            await sharedRequest.get(
+              `/_emdash/api/content/media_items/${fixtureIds[0] || ''}`,
+            )
+          ).json(),
+        ).data.item.data;
+      const sourcePage = await browser.newPage();
+      await sourcePage.route('https://toolbar.bent.build/embed.js', (route) =>
+        route.fulfill({ contentType: 'application/javascript', body: '' }),
+      );
+      await sourcePage.goto(
+        `${sharedBaseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`,
+      );
+      const sourceImage = sourcePage.locator(
+        '[data-feedback-id="map-preview"] img',
+      );
+      await expect(sourceImage).toBeVisible();
+      const source = await sourceImage.getAttribute('src');
+      expect(source).toMatch(/^\/_emdash\/api\/media\/file\/trip\//);
+      const display = await sharedRequest.get(source || '');
+      expect(display.ok()).toBe(true);
+      const bytes = await display.body();
+      await sourcePage.close();
+      const reservation = createServer();
+      reservation.listen(0, '127.0.0.1');
+      await once(reservation, 'listening');
+      const address = reservation.address();
+      if (!address || typeof address === 'string')
+        throw new Error('Fixture port required');
+      const port = String(address.port);
+      await new Promise<void>((resolve, reject) =>
+        reservation.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        }),
+      );
+      const baseURL = `http://127.0.0.1:${port}`;
+      const server = spawn(
+        process.execPath,
+        [
+          fileURLToPath(
+            new URL('../../node_modules/astro/bin/astro.mjs', import.meta.url),
+          ),
+          'dev',
+          '--config',
+          'tests/fixtures/map-library.config.mjs',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          port,
+          '--ignore-lock',
+        ],
+        {
+          cwd: fileURLToPath(new URL('../..', import.meta.url)),
+          env: { ...process.env, TEST_EPHEMERAL: '1' },
+          detached: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      );
+      const stop = (signal: NodeJS.Signals) => {
+        if (!server.pid) return;
+        try {
+          process.kill(-server.pid, signal);
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            !('code' in error) ||
+            error.code !== 'ESRCH'
+          )
+            throw error;
+        }
+      };
+      let serverLog = '';
+      const record = (chunk: Buffer) => {
+        serverLog = (serverLog + chunk.toString()).slice(-200_000);
+      };
+      server.stdout.on('data', record);
+      server.stderr.on('data', record);
+      const request = await playwright.request.newContext({ baseURL });
+      const context = await browser.newContext({
+        viewport: { width: 1991, height: 844 },
+        deviceScaleFactor: 2,
+        colorScheme: 'dark',
+      });
+      try {
+        await expect
+          .poll(
+            async () => {
+              try {
+                return (await request.get('/_emdash/api/health')).ok();
+              } catch {
+                return false;
+              }
+            },
+            { timeout: 60_000 },
+          )
+          .toBe(true);
+        const headers = { 'X-EmDash-Request': '1', Origin: baseURL };
+        expect(
+          (
+            await request.post('/_emdash/api/setup/dev-bypass', {
+              headers,
+              data: {},
+            })
+          ).ok(),
+        ).toBe(true);
+        await request.get('/_emdash/api/auth/dev-bypass');
+        const file = {
+          name: 'synthetic-library.jpg',
+          mimeType: 'image/jpeg',
+          buffer: bytes,
+        };
+        const uploaded = await request.post('/api/trip/upload', {
+          headers,
+          multipart: { original: file, display: file, poster: file },
+        });
+        expect(uploaded.status()).toBe(201);
+        const id = z
+          .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
+          .parse(await uploaded.json()).data.item.id;
+        const loaded = await request.get(
+          `/_emdash/api/content/media_items/${id}`,
+        );
+        const native = result.parse(await loaded.json()).data;
+        const media = z
+          .object({
+            data: z.object({
+              item: z.object({ data: z.record(z.string(), z.unknown()) }),
+            }),
+          })
+          .parse(await loaded.json()).data.item.data;
+        const data = {
+          ...media,
+          title: 'Synthetic library photo',
+          captured_at: original.captured_at,
+          latitude: original.latitude,
+          longitude: original.longitude,
+          place: original.place,
+          categories: [],
+          demo: true,
+        };
+        expect(
+          (
+            await request.put(`/_emdash/api/content/media_items/${id}`, {
+              headers,
+              data: { _rev: native._rev, data },
+            })
+          ).ok(),
+        ).toBe(true);
+        const revision = result.parse(
+          await (
+            await request.get(`/_emdash/api/content/media_items/${id}`)
+          ).json(),
+        ).data._rev;
+        expect(
+          (
+            await request.post(
+              `/_emdash/api/content/media_items/${id}/publish`,
+              {
+                headers,
+                data: { _rev: revision },
+              },
+            )
+          ).ok(),
+        ).toBe(true);
+        const libraryIds =
+          await test.step(`measure: seed ${String(librarySize)}-photo library in ephemeral D1`, async () => {
+            const seeded = await request.post(
+              `/__synthetic/map-library?sourceId=${id}&copies=${String(librarySize - 1)}`,
+              {
+                headers,
+              },
+            );
+            expect(seeded.ok()).toBe(true);
+            const { ids } = z
+              .object({ ids: z.array(z.string()).length(librarySize - 1) })
+              .parse(await seeded.json());
+            return [id, ...ids];
+          });
+        const nativeIds: string[] = [];
+        const pageSizes: number[] = [];
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const response = await request.get(
+            `/_emdash/api/content/media_items?status=published&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+          );
+          expect(response.ok()).toBe(true);
+          const page = z
+            .object({
+              data: z.object({
+                items: z.array(
+                  z.object({ id: z.string(), status: z.literal('published') }),
+                ),
+                nextCursor: z.string().nullish(),
+              }),
+            })
+            .parse(await response.json()).data;
+          nativeIds.push(...page.items.map((item) => item.id));
+          pageSizes.push(page.items.length);
+          cursor = page.nextCursor ?? undefined;
+          if (cursor) {
+            expect(cursors.has(cursor)).toBe(false);
+            cursors.add(cursor);
+          }
+        } while (cursor);
+        expect(nativeIds).toHaveLength(librarySize);
+        expect(new Set(nativeIds)).toEqual(new Set(libraryIds));
+        expect(pageSizes).toEqual(
+          librarySize === 600 ? [100, 100, 100, 100, 100, 100] : [100, 2],
+        );
+        const finalId = libraryIds.at(-1);
+        const final = await request.get(
+          `/_emdash/api/content/media_items/${finalId || ''}`,
+        );
+        expect(final.ok()).toBe(true);
+        const identity = z
+          .object({
+            data: z.object({
+              item: z.object({
+                id: z.string(),
+                status: z.literal('published'),
+                data: z.object({ asset: z.unknown() }),
+              }),
+            }),
+          })
+          .parse(await final.json()).data.item;
+        expect(identity.id).toBe(finalId);
+        expect(identity.data.asset).toEqual(media.asset);
+        await context.route('https://toolbar.bent.build/embed.js', (route) =>
+          route.fulfill({ contentType: 'application/javascript', body: '' }),
+        );
+        const page = await context.newPage();
+        const resolutions: string[] = [];
+        const requests: string[] = [];
+        page.on('request', (r) => {
+          if (r.url().includes('/map-photo/')) resolutions.push(r.url());
+          if (r.url().includes('/media-preview/')) requests.push(r.url());
+        });
+        const response = await page.goto(
+          `${baseURL}/?media=${libraryIds.at(-1) || ''}#japan-map`,
+        );
+        expect(response?.headers()['cache-control']).toContain('no-store');
+        const serializedPoints = await page
+          .locator('astro-island[component-export="JapanMapView"]')
+          .getAttribute('props');
+        for (const entryId of libraryIds)
+          expect(serializedPoints).toContain(entryId);
+        const popup = page.locator('[data-feedback-id="map-preview"]');
+        const image = popup.locator('img');
+        await expect(image).toBeVisible();
+        const photo = await image.evaluate(async (image) => {
+          if (!(image instanceof HTMLImageElement))
+            throw new Error('Photo required');
+          await image.decode();
+          return {
+            srcset: image.srcset,
+            source: image.src,
+            selected: image.currentSrc,
+          };
+        });
+        expect(photo.selected).toMatch(/\/800\/auto$/);
+        const controlContext = await browser.newContext({
+          deviceScaleFactor: 2,
+        });
+        try {
+          const control = await controlContext.newPage();
+          await control.goto(`${baseURL}/_emdash/api/health`);
+          const measuredWidth = await image.evaluate(
+            (image) => image.getBoundingClientRect().width,
+          );
+          const selected = await control.evaluate(
+            async ({ width, srcset }) => {
+              const image = new Image();
+              image.sizes = `${String(width)}px`;
+              image.srcset = srcset;
+              await image.decode();
+              return image.currentSrc;
+            },
+            { width: measuredWidth, srcset: photo.srcset },
+          );
+          expect(photo.selected).toBe(selected);
+        } finally {
+          await controlContext.close();
+        }
+        expect(resolutions).toHaveLength(1);
+        expect(
+          requestsForPhoto(photo.srcset, photo.source, requests),
+        ).toHaveLength(1);
+        expect(await popup.getByRole('heading').innerText()).toContain(
+          String(librarySize),
+        );
+      } finally {
+        await context.close();
+        await request.dispose();
+        const exited = once(server, 'exit');
+        stop('SIGTERM');
+        await Promise.race([
+          exited,
+          new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              stop('SIGKILL');
+              resolve();
+            }, 3000);
+            timer.unref();
+          }),
+        ]);
+        if (process.env.MAP_IMAGE_EVIDENCE_DIR) {
+          await mkdir(process.env.MAP_IMAGE_EVIDENCE_DIR, { recursive: true });
+          await writeFile(
+            `${process.env.MAP_IMAGE_EVIDENCE_DIR}/library-server.log`,
+            serverLog,
+          );
+        }
+      }
     },
   );
-  const stop = (signal: NodeJS.Signals) => {
-    if (!server.pid) return;
-    try {
-      process.kill(-server.pid, signal);
-    } catch (error) {
-      if (
-        !(error instanceof Error) ||
-        !('code' in error) ||
-        error.code !== 'ESRCH'
-      )
-        throw error;
-    }
-  };
-  let serverLog = '';
-  const record = (chunk: Buffer) => {
-    serverLog = (serverLog + chunk.toString()).slice(-200_000);
-  };
-  server.stdout.on('data', record);
-  server.stderr.on('data', record);
-  const request = await playwright.request.newContext({ baseURL });
-  const context = await browser.newContext({
-    viewport: { width: 1991, height: 844 },
-    deviceScaleFactor: 2,
-    colorScheme: 'dark',
-  });
-  try {
-    await expect
-      .poll(
-        async () => {
-          try {
-            return (await request.get('/_emdash/api/health')).ok();
-          } catch {
-            return false;
-          }
-        },
-        { timeout: 60_000 },
-      )
-      .toBe(true);
-    const headers = { 'X-EmDash-Request': '1', Origin: baseURL };
-    expect(
-      (
-        await request.post('/_emdash/api/setup/dev-bypass', {
-          headers,
-          data: {},
-        })
-      ).ok(),
-    ).toBe(true);
-    await request.get('/_emdash/api/auth/dev-bypass');
-    const file = {
-      name: 'synthetic-library.jpg',
-      mimeType: 'image/jpeg',
-      buffer: bytes,
-    };
-    const uploaded = await request.post('/api/trip/upload', {
-      headers,
-      multipart: { original: file, display: file, poster: file },
-    });
-    expect(uploaded.status()).toBe(201);
-    const id = z
-      .object({ data: z.object({ item: z.object({ id: z.string() }) }) })
-      .parse(await uploaded.json()).data.item.id;
-    const loaded = await request.get(`/_emdash/api/content/media_items/${id}`);
-    const native = result.parse(await loaded.json()).data;
-    const media = z
-      .object({
-        data: z.object({
-          item: z.object({ data: z.record(z.string(), z.unknown()) }),
-        }),
-      })
-      .parse(await loaded.json()).data.item.data;
-    const data = {
-      ...media,
-      title: 'Synthetic library photo',
-      captured_at: original.captured_at,
-      latitude: original.latitude,
-      longitude: original.longitude,
-      place: original.place,
-      categories: [],
-      demo: true,
-    };
-    expect(
-      (
-        await request.put(`/_emdash/api/content/media_items/${id}`, {
-          headers,
-          data: { _rev: native._rev, data },
-        })
-      ).ok(),
-    ).toBe(true);
-    const revision = result.parse(
-      await (
-        await request.get(`/_emdash/api/content/media_items/${id}`)
-      ).json(),
-    ).data._rev;
-    expect(
-      (
-        await request.post(`/_emdash/api/content/media_items/${id}/publish`, {
-          headers,
-          data: { _rev: revision },
-        })
-      ).ok(),
-    ).toBe(true);
-    const libraryIds =
-      await test.step('seed the full 600-photo library in ephemeral D1', async () => {
-        const seeded = await request.post(
-          `/__synthetic/map-library?sourceId=${id}`,
-          {
-            headers,
-          },
-        );
-        expect(seeded.ok()).toBe(true);
-        const { ids } = z
-          .object({ ids: z.array(z.string()).length(599) })
-          .parse(await seeded.json());
-        return [id, ...ids];
-      });
-    await context.route('https://toolbar.bent.build/embed.js', (route) =>
-      route.fulfill({ contentType: 'application/javascript', body: '' }),
-    );
-    const page = await context.newPage();
-    const resolutions: string[] = [];
-    const requests: string[] = [];
-    page.on('request', (r) => {
-      if (r.url().includes('/map-photo/')) resolutions.push(r.url());
-      if (r.url().includes('/media-preview/')) requests.push(r.url());
-    });
-    const response = await page.goto(
-      `${baseURL}/?media=${libraryIds.at(-1) || ''}#japan-map`,
-    );
-    expect(response?.headers()['cache-control']).toContain('no-store');
-    const serializedPoints = await page
-      .locator('astro-island[component-export="JapanMapView"]')
-      .getAttribute('props');
-    for (const entryId of libraryIds)
-      expect(serializedPoints).toContain(entryId);
-    const popup = page.locator('[data-feedback-id="map-preview"]');
-    const image = popup.locator('img');
-    await expect(image).toBeVisible();
-    const photo = await image.evaluate(async (image) => {
-      if (!(image instanceof HTMLImageElement))
-        throw new Error('Photo required');
-      await image.decode();
-      return {
-        srcset: image.srcset,
-        source: image.src,
-        selected: image.currentSrc,
-      };
-    });
-    expect(photo.selected).toMatch(/\/800\/auto$/);
-    expect(resolutions).toHaveLength(1);
-    expect(requestsForPhoto(photo.srcset, photo.source, requests)).toHaveLength(
-      1,
-    );
-    expect(await popup.getByRole('heading').innerText()).toContain('600');
-  } finally {
-    await context.close();
-    await request.dispose();
-    const exited = once(server, 'exit');
-    stop('SIGTERM');
-    await Promise.race([
-      exited,
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          stop('SIGKILL');
-          resolve();
-        }, 3000);
-        timer.unref();
-      }),
-    ]);
-    if (process.env.MAP_IMAGE_EVIDENCE_DIR) {
-      await mkdir(process.env.MAP_IMAGE_EVIDENCE_DIR, { recursive: true });
-      await writeFile(
-        `${process.env.MAP_IMAGE_EVIDENCE_DIR}/library-server.log`,
-        serverLog,
-      );
-    }
-  }
-});
 
 test.afterAll(async ({ request, baseURL }) => {
   await request.get('/_emdash/api/auth/dev-bypass');
