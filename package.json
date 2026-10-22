@@ -25,8 +25,8 @@
     "test:e2e:coverage": "tsx scripts/verify-browser-coverage.ts"
   },
   "dependencies": {
-    "@astrojs/cloudflare": "^14.3.1",
-    "@astrojs/react": "^6.0.5",
+    "@astrojs/cloudflare": "^14.4.0",
+    "@astrojs/react": "^7.1.0",
     "@base-ui/react": "^1.9.0",
     "@emdash-cms/cloudflare": "^1.0.1",
     "@fontsource/geist-mono": "^5.3.0",
@@ -39,7 +39,7 @@
     "@tiptap/pm": "3.31.4",
     "@tiptap/react": "3.31.4",
     "@tiptap/starter-kit": "3.31.4",
-    "astro": "^7.3.2",
+    "astro": "^7.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "d3-geo": "^3.1.1",
