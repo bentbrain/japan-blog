@@ -18,6 +18,7 @@ export function BulkMediaEditor({
   categories,
   places,
   busy,
+  canApply,
   status,
   onApply,
   onClose,
@@ -26,6 +27,7 @@ export function BulkMediaEditor({
   categories: string[];
   places: string[];
   busy: boolean;
+  canApply: boolean;
   status: string;
   onApply: (changes: MediaChanges) => Promise<void>;
   onClose: () => void;
@@ -56,14 +58,14 @@ export function BulkMediaEditor({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+        if (!open) onClose();
       }}
     >
       <DialogContent
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-none border sm:max-w-lg"
         data-feedback-private
         data-feedback-redact
-        showCloseButton={!busy}
+        showCloseButton
       >
         <DialogHeader>
           <DialogTitle>edit {count} photos</DialogTitle>
@@ -214,14 +216,13 @@ export function BulkMediaEditor({
             {error || status}
           </p>
           <div className="sticky -bottom-4 flex flex-wrap justify-end gap-3 border-t bg-popover py-3">
-            <Button disabled={busy} onClick={onClose}>
-              CANCEL
-            </Button>
+            <Button onClick={onClose}>{busy ? 'CLOSE' : 'CANCEL'}</Button>
             <Button
               type="submit"
               variant="default"
               disabled={
                 busy ||
+                !canApply ||
                 !count ||
                 !(changeTitle || changePlace || changeCategories) ||
                 (changeCategories && mode !== 'replace' && !names.length)

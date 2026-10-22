@@ -1,8 +1,10 @@
 ---
 import { z } from 'zod';
+import { responsiveImage, inlineImageSizes } from '../lib/responsive-image';
 import { mediaUrl } from '../lib/model';
 interface Props {
   node: unknown;
+  columns?: number;
 }
 const parsed = z
   .object({
@@ -26,6 +28,10 @@ if (node?.link) {
     if (['http:', 'https:'].includes(target.protocol)) href = node.link.href;
   } catch {}
 }
+const singlePost = Astro.url.pathname.startsWith('/posts/');
+const columns = Astro.props.columns || 1;
+const sizes = inlineImageSizes(singlePost, columns);
+const photo = responsiveImage(item ? mediaUrl(item) : '', sizes);
 const blank = node?.link?.blank && !href?.startsWith('#');
 ---
 
@@ -39,6 +45,8 @@ const blank = node?.link?.blank && !href?.startsWith('#');
       >
         <img
           src={mediaUrl(item)}
+          srcset={Astro.locals.privateMediaRender ? undefined : photo.srcSet}
+          sizes={photo.sizes}
           alt={node?.alt || item.title}
           loading="lazy"
           class="h-auto w-full"
@@ -47,6 +55,8 @@ const blank = node?.link?.blank && !href?.startsWith('#');
     ) : (
       <img
         src={mediaUrl(item)}
+        srcset={Astro.locals.privateMediaRender ? undefined : photo.srcSet}
+        sizes={photo.sizes}
         alt={node?.alt || item.title}
         loading="lazy"
         class="h-auto w-full"

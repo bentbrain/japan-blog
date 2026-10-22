@@ -3,6 +3,7 @@ import { daySchema, metadataSchema, mediaSchema } from '../lib/model';
 import { z } from 'zod';
 import { normalizeCategory } from '../lib/category-icons';
 import { shopDesignSchema } from '../lib/shop-design';
+import { isShortVideoDuration } from '../lib/video-duration';
 
 const publishableMediaSchema = mediaSchema.omit({ id: true, slug: true });
 
@@ -26,12 +27,7 @@ export function validateMedia(
     return 'Add capture time and valid coordinates before publishing.';
   if (!publishableMediaSchema.safeParse(content).success)
     return 'Choose photo or video and complete the media details before publishing.';
-  if (
-    content.kind === 'video' &&
-    (typeof content.duration !== 'number' ||
-      content.duration <= 0 ||
-      content.duration > 10.1)
-  )
+  if (content.kind === 'video' && !isShortVideoDuration(content.duration))
     return 'Videos must be 10 seconds or shorter.';
   if (
     content.demo !== true &&

@@ -6,14 +6,14 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 
 function photoBounds(png: Uint8Array) {
-  const { width, height, data } = decode(png);
+  const { width, height, data, channels } = decode(png);
   let left = width,
     right = 0,
     top = height,
     bottom = 0;
   for (let y = 0; y < height; y++)
     for (let x = 0; x < width; x++) {
-      const offset = (y * width + x) * 4;
+      const offset = (y * width + x) * channels;
       if ((data[offset] || 0) > 200 && (data[offset + 1] || 0) < 80) {
         left = Math.min(left, x);
         right = Math.max(right, x);
@@ -28,8 +28,22 @@ async function openSampleExport(page: Page) {
   await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/export');
   await page.waitForURL('**/owner/export');
   await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
-  await page.getByRole('combobox', { name: 'day', exact: true }).click();
-  await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
+  const day = page.getByRole('combobox', { name: 'day', exact: true });
+  if ((await day.innerText()).trim() !== '2026-10-15') {
+    const changed = page.waitForResponse((response) => {
+      if (!response.url().endsWith('/api/trip/story') || !response.ok())
+        return false;
+      const body = z
+        .object({ day: z.string() })
+        .safeParse(response.request().postDataJSON());
+      return body.success && body.data.day === '2026-10-15';
+    });
+    await day.click();
+    await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
+    await changed;
+  }
+  // The previous day's enabled export button can survive until React's next
+  // effect. Wait for the selected day's response before measuring drag bounds.
   await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
 }
 
@@ -77,7 +91,44 @@ for (const width of [390, 1280]) {
       page,
     }) => {
       await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(path);
+      await expect(
+        page.locator('astro-island[component-export="PostMedia"][ssr]'),
+      ).toHaveCount(0);
+      if (path === '/') {
+        for (const card of await page.locator('article').all()) {
+          const slides = card.locator('[data-slot="carousel-item"]');
+          for (let index = 0; index < (await slides.count()); index++) {
+            const photo = slides.nth(index).locator('.media-tile img');
+            if (await photo.count()) {
+              await photo.scrollIntoViewIfNeeded();
+              await expect(slides.nth(index)).toBeInViewport({ ratio: 0.99 });
+              await photo.evaluate(async (image) => {
+                if (image instanceof HTMLImageElement) {
+                  image.loading = 'eager';
+                  await image.decode();
+                }
+              });
+              const natural = await photo.evaluate((image) =>
+                image instanceof HTMLImageElement
+                  ? image.naturalWidth / image.naturalHeight
+                  : 0,
+              );
+              const paint = photoBounds(
+                await photo.screenshot({ caret: 'initial' }),
+              );
+              expect(paint.width / paint.height).toBeCloseTo(natural, 2);
+            }
+            if (index < (await slides.count()) - 1)
+              await card.getByRole('button', { name: 'Next slide' }).click();
+          }
+        }
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth),
+        ).toBe(width);
+        return;
+      }
       const images = page.locator('.media-tile img');
       expect(await images.count()).toBeGreaterThan(1);
       const ratios = await images.evaluateAll(async (images) =>
@@ -99,9 +150,19 @@ for (const width of [390, 1280]) {
           }),
         ),
       );
-      for (const ratio of ratios) {
-        expect(ratio.actual).toBeCloseTo(ratio.natural, 2);
-        expect(ratio.tileHeight).toBeCloseTo(ratio.imageHeight, 0);
+      for (const [index, ratio] of ratios.entries()) {
+        if (path === '/gallery') {
+          expect(ratio.actual).toBeCloseTo(ratio.natural, 2);
+          expect(ratio.tileHeight).toBeCloseTo(ratio.imageHeight, 0);
+        } else {
+          const paint = photoBounds(
+            await images.nth(index).screenshot({ caret: 'initial' }),
+          );
+          // Raster edges round independently when a grid slot is fractional.
+          expect(
+            Math.abs(paint.width - paint.height * ratio.natural),
+          ).toBeLessThanOrEqual(2);
+        }
       }
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
@@ -109,36 +170,26 @@ for (const width of [390, 1280]) {
     });
   }
 
-  for (const path of ['/', '/posts/tokyo-after-dark']) {
-    test(`post carousel advances and clips its slides on ${path} at ${String(width)}px`, async ({
-      page,
-    }) => {
-      await page.setViewportSize({ width, height: 844 });
-      await page.goto(path);
-      const carousel = page
-        .locator('.post-carousel[aria-label="tokyo media"]')
-        .first();
-      const viewport = carousel.locator('[data-slot="carousel-content"]');
-      await expect(viewport).toHaveCSS('overflow-x', 'hidden');
-      const first = carousel.locator('[data-slot="carousel-item"]').first();
-      const before = await first.evaluate(
-        (element) => element.getBoundingClientRect().left,
-      );
-      await carousel.getByRole('button', { name: 'Next slide' }).click();
-      await expect(carousel.getByText('2 / 3', { exact: true })).toBeVisible();
-      await expect
-        .poll(
-          async () =>
-            before -
-            (await first.evaluate(
-              (element) => element.getBoundingClientRect().left,
-            )),
-        )
-        .toBeGreaterThan(100);
-      await carousel.getByRole('button', { name: 'Previous slide' }).click();
-      await expect(carousel.getByText('1 / 3', { exact: true })).toBeVisible();
+  test(`post mosaic exposes every photo and video without carousel controls at ${String(width)}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/posts/tokyo-after-dark');
+    const mosaic = page.getByRole('region', {
+      name: 'tokyo media',
+      exact: true,
     });
-  }
+    await expect(mosaic.locator('.media-tile')).toHaveCount(3);
+    await expect(mosaic.locator('img')).toHaveCount(2);
+    await expect(mosaic.locator('video[controls]')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Next slide' })).toHaveCount(
+      0,
+    );
+    for (const tile of await mosaic.locator('.media-tile').all()) {
+      await tile.scrollIntoViewIfNeeded();
+      await expect(tile).toBeInViewport();
+    }
+  });
 }
 
 test('post layout responds to its container without changing the viewport', async ({
@@ -147,74 +198,98 @@ test('post layout responds to its container without changing the viewport', asyn
   await page.goto('/posts/tokyo-after-dark');
   const article = page.locator('.single-post');
   const heading = article.locator('.post-heading');
-  const first = article.locator('[data-slot="carousel-item"]').first();
+  const tiles = article.locator('.post-mosaic .media-tile');
+  await expect(tiles).toHaveCount(3);
   await expect(heading).toHaveCSS('flex-direction', 'row');
-  const wide = await first.evaluate(
-    (element) =>
-      element.getBoundingClientRect().width /
-      (element.closest('.post-carousel')?.getBoundingClientRect().width || 1),
-  );
-  expect(wide).toBeCloseTo(0.7, 1);
+  const wide = await tiles.nth(1).boundingBox();
+  const articleBox = await article.boundingBox();
+  if (!wide || !articleBox) throw new Error('Post media bounds required');
+  expect(wide.width).toBeCloseTo((articleBox.width - 7) / 2, 0);
   await article.evaluate((element) => {
     element.style.width = '320px';
   });
   await expect(heading).toHaveCSS('flex-direction', 'column');
-  const narrow = await first.evaluate(
-    (element) =>
-      element.getBoundingClientRect().width /
-      (element.closest('.post-carousel')?.getBoundingClientRect().width || 1),
-  );
-  expect(narrow).toBeCloseTo(0.88, 1);
+  const narrow = await tiles.nth(1).boundingBox();
+  if (!narrow) throw new Error('Narrow post media required');
+  expect(narrow.width).toBeCloseTo(320, 0);
 });
 
 for (const { title, ratio, shape } of [
   { title: 'tokyo / 7', ratio: 2 / 3, shape: 'portrait' },
   { title: 'tokyo / 8', ratio: 2, shape: 'landscape' },
 ]) {
-  test(`story preview and PNG retain ${shape} proportions`, async ({
-    page,
-  }, info) => {
-    await openSampleExport(page);
-    const selection = page.locator('#export-selection');
-    while (await selection.getByRole('checkbox', { checked: true }).count())
+  for (const angle of ['no skew', 'right edge up']) {
+    test(`story preview and PNG retain ${shape} proportions with ${angle}`, async ({
+      page,
+    }, info) => {
+      await openSampleExport(page);
+      const selection = page.locator('#export-selection');
+      while (await selection.getByRole('checkbox', { checked: true }).count())
+        await selection
+          .getByRole('checkbox', { checked: true })
+          .first()
+          .uncheck();
       await selection
-        .getByRole('checkbox', { checked: true })
-        .first()
-        .uncheck();
-    await selection
-      .locator('.select-media')
-      .filter({
-        has: page.getByRole('img', { name: title, exact: true }),
-      })
-      .getByRole('checkbox')
-      .check();
-    await page.getByRole('combobox', { name: 'card angle' }).click();
-    await page.getByRole('option', { name: 'no skew', exact: true }).click();
-    await expect(
-      page.getByRole('button', { name: 'EXPORT PNG' }),
-    ).toBeEnabled();
-    const preview = await page
-      .locator('#story-preview canvas')
-      .evaluate((canvas) => {
-        if (!(canvas instanceof HTMLCanvasElement))
-          throw new Error('Preview required');
-        return canvas.toDataURL('image/png').split(',')[1] || '';
+        .locator('.select-media')
+        .filter({
+          has: page.getByRole('img', { name: title, exact: true }),
+        })
+        .getByRole('checkbox')
+        .check();
+      await page.getByRole('combobox', { name: 'card angle' }).click();
+      await page.getByRole('option', { name: angle, exact: true }).click();
+      await expect(
+        page.getByRole('button', { name: 'EXPORT PNG' }),
+      ).toBeEnabled();
+      const preview = await page
+        .locator('#story-preview canvas')
+        .evaluate((canvas) => {
+          if (!(canvas instanceof HTMLCanvasElement))
+            throw new Error('Preview required');
+          return canvas.toDataURL('image/png').split(',')[1] || '';
+        });
+      await page.locator('[data-feedback-id="story-composition"]').screenshot({
+        path: info.outputPath('preview.png'),
       });
-    const bounds = photoBounds(Buffer.from(preview, 'base64'));
-    // The two-pixel border stroke covers one pixel along each photo edge.
-    expect(Math.abs(bounds.width - bounds.height * ratio)).toBeLessThanOrEqual(
-      3,
-    );
-    const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'EXPORT PNG' }).click();
-    const file = await download;
-    const path = info.outputPath('proportions.png');
-    await file.saveAs(path);
-    const exported = photoBounds(await readFile(path));
-    expect(
-      Math.abs(exported.width - exported.height * ratio),
-    ).toBeLessThanOrEqual(3);
-  });
+      const bounds = photoBounds(Buffer.from(preview, 'base64'));
+      if (angle === 'no skew')
+        expect(
+          Math.abs(bounds.width - bounds.height * ratio),
+        ).toBeLessThanOrEqual(3);
+      const download = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'EXPORT PNG' }).click();
+      const file = await download;
+      const path = info.outputPath('proportions.png');
+      await file.saveAs(path);
+      const previewBytes = Buffer.from(preview, 'base64');
+      const exportedBytes = await readFile(path);
+      const exported = photoBounds(exportedBytes);
+      if (angle === 'no skew')
+        expect(
+          Math.abs(exported.width - exported.height * ratio),
+        ).toBeLessThanOrEqual(3);
+      expect(
+        Buffer.compare(
+          Buffer.from(decode(exportedBytes).data),
+          Buffer.from(decode(previewBytes).data),
+        ),
+      ).toBe(0);
+      for (const bytes of [previewBytes, exportedBytes]) {
+        const { width, data } = decode(bytes);
+        // This row crosses both photo edges, away from the title and counter.
+        const white = Array.from({ length: width }, (_, x) => {
+          const offset = (850 * width + x) * 4;
+          return (
+            (data[offset] || 0) > 200 &&
+            (data[offset + 1] || 0) > 200 &&
+            (data[offset + 2] || 0) > 200
+          );
+        }).filter(Boolean).length;
+        expect(white).toBeGreaterThanOrEqual(2);
+        expect(white).toBeLessThanOrEqual(4);
+      }
+    });
+  }
 }
 
 for (const width of [390, 1280]) {
@@ -272,30 +347,81 @@ for (const width of [390, 1280]) {
 
 test('story day numbering starts with the first photo capture day, not earlier posts or beers', async ({
   page,
+  baseURL,
 }) => {
   await openSampleExport(page);
-  const response = page.waitForResponse(
-    (response) => response.url().endsWith('/api/trip/story') && response.ok(),
-  );
-  await page.getByRole('combobox', { name: 'day', exact: true }).click();
-  await page.getByRole('option', { name: '2026-10-14', exact: true }).click();
-  const manifest = z
-    .object({ day: z.string(), title: z.string() })
-    .parse(await (await response).json());
-  expect(manifest.day).toBe('2026-10-14');
-  expect(manifest.title).toBe('day 1: kyoto');
-  await expect(page.getByRole('button', { name: 'EXPORT PNG' })).toBeEnabled();
-  const nextResponse = page.waitForResponse(
-    (response) => response.url().endsWith('/api/trip/story') && response.ok(),
-  );
-  await page.clock.setFixedTime(new Date('2030-01-01T12:00:00Z'));
-  await page.getByRole('combobox', { name: 'day', exact: true }).click();
-  await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
-  const next = z
-    .object({ day: z.string(), title: z.string() })
-    .parse(await (await nextResponse).json());
-  expect(next.day).toBe('2026-10-15');
-  expect(next.title).toMatch(/^day 2: /);
+  // Other browser files can publish uploads. Give this test its own real capture
+  // anchor so older sample photos do not define the production trip timeline.
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL || '' };
+  const file = {
+    name: 'synthetic-day-anchor.jpg',
+    mimeType: 'image/jpeg',
+    buffer: await readFile('public/demo/japan.jpg'),
+  };
+  const created = await page.request.post('/api/trip/upload', {
+    headers,
+    multipart: { original: file, display: file, poster: file },
+  });
+  expect(created.status()).toBe(201);
+  const { item, _rev } = z
+    .object({
+      data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
+    })
+    .parse(await created.json()).data;
+  try {
+    const published = await page.request.patch('/api/trip/media', {
+      headers,
+      data: {
+        id: item.id,
+        revision: _rev,
+        publish: true,
+        metadata: {
+          title: 'Synthetic day numbering anchor',
+          captured_at: '2026-10-14T15:00:00+09:00',
+          latitude: 35.68,
+          longitude: 139.76,
+          place: 'synthetic',
+          categories: [],
+        },
+      },
+    });
+    expect(published.status(), await published.text()).toBe(200);
+    const response = page.waitForResponse(
+      (response) => response.url().endsWith('/api/trip/story') && response.ok(),
+    );
+    await page.getByRole('combobox', { name: 'day', exact: true }).click();
+    await page.getByRole('option', { name: '2026-10-14', exact: true }).click();
+    const manifest = z
+      .object({ day: z.string(), title: z.string() })
+      .parse(await (await response).json());
+    expect(manifest.day).toBe('2026-10-14');
+    expect(manifest.title).toBe('day 1: kyoto');
+    await expect(
+      page.getByRole('button', { name: 'EXPORT PNG' }),
+    ).toBeEnabled();
+    const nextResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/api/trip/story') && response.ok(),
+    );
+    await page.clock.setFixedTime(new Date('2030-01-01T12:00:00Z'));
+    await page.getByRole('combobox', { name: 'day', exact: true }).click();
+    await page.getByRole('option', { name: '2026-10-15', exact: true }).click();
+    const next = z
+      .object({ day: z.string(), title: z.string() })
+      .parse(await (await nextResponse).json());
+    expect(next.day).toBe('2026-10-15');
+    expect(next.title).toMatch(/^day 2: /);
+  } finally {
+    expect(
+      (
+        await page.request.delete(
+          `/_emdash/api/content/media_items/${item.id}`,
+          {
+            headers,
+          },
+        )
+      ).ok(),
+    ).toBe(true);
+  }
 });
 
 for (const width of [390, 1280]) {

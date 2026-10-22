@@ -143,6 +143,13 @@ type Call = {
 function fixture() {
   const calls: Call[] = [];
   const posts: ContentItem[] = [];
+  const media: ContentItem[] = [];
+  const beers: ContentItem[] = [];
+  const collections: Record<string, ContentItem[]> = {
+    posts,
+    media_items: media,
+    beers,
+  };
   const storage = {
     subscribers: new MemoryCollection(),
     confirmations: new MemoryCollection(),
@@ -177,11 +184,16 @@ function fixture() {
       },
     },
     content: {
-      get(_collection, id) {
-        return Promise.resolve(posts.find((post) => post.id === id) ?? null);
+      get(collection, id) {
+        return Promise.resolve(
+          collections[collection]?.find((post) => post.id === id) ?? null,
+        );
       },
-      list() {
-        return Promise.resolve({ items: posts, hasMore: false });
+      list(collection) {
+        return Promise.resolve({
+          items: collections[collection] ?? [],
+          hasMore: false,
+        });
       },
     },
   };
@@ -189,6 +201,8 @@ function fixture() {
     ctx,
     calls,
     posts,
+    media,
+    beers,
     storage,
     setRespond(value: typeof respond) {
       respond = value;
@@ -218,6 +232,30 @@ function post(id: string, status = 'published', demo = false): ContentItem {
     },
   };
 }
+
+void test('first arrival newsletter is day 1 despite an earlier beer entry', async () => {
+  const f = fixture();
+  const arrival = post('arrival');
+  arrival.data.title = 'arrival';
+  f.posts.push(arrival);
+  f.media.push({
+    ...post('photo'),
+    type: 'media_items',
+    data: { captured_at: '2026-10-14T15:05:00.000Z' },
+  });
+  f.beers.push({
+    ...post('beer'),
+    type: 'beers',
+    data: { day: '2026-10-14', count: 1 },
+  });
+  const withBeer = (await pendingDigestPosts(f.ctx))[0]?.title;
+  f.beers.length = 0;
+  const withoutBeer = (await pendingDigestPosts(f.ctx))[0]?.title;
+  assert.deepEqual(
+    { withBeer, withoutBeer },
+    { withBeer: 'day 1: arrival', withoutBeer: 'day 1: arrival' },
+  );
+});
 async function configured(f: ReturnType<typeof fixture>) {
   await f.ctx.settings.set('apiKey', 'synthetic-key');
   await f.ctx.settings.set('segmentId', 'japan-only');
@@ -390,6 +428,40 @@ void test('only public live entries are compiled, including late older days, wit
     '',
   );
 });
+void test('long stories stay complete in previews, owner tests and subscriber emails', async () => {
+  const f = fixture();
+  await due(f);
+  const story = post('long-story');
+  const paragraphs = [
+    'A complete first paragraph. '.repeat(30).trim(),
+    'A complete second paragraph. '.repeat(30).trim(),
+    'The final paragraph must reach the reader.',
+  ];
+  story.data.content = paragraphs.map((text) => ({
+    _type: 'block',
+    children: [{ _type: 'span', text }],
+  }));
+  f.posts.push(story);
+
+  const posts = await pendingDigestPosts(f.ctx);
+  assert.equal(posts[0]?.excerpt, paragraphs.join('\n\n'));
+  const preview = await digestEmail(posts, 'https://jp.bent.build', true);
+  await configureNewsletter(f.ctx, { action: 'test' }, 'owner@example.com');
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  const emailSchema = z.object({ html: z.string(), text: z.string() });
+  const ownerEmail = emailSchema.parse(
+    f.calls.find((call) => call.path === '/emails')?.body,
+  );
+  const subscriberEmail = emailSchema.parse(
+    f.calls.find((call) => call.path === '/broadcasts')?.body,
+  );
+  for (const email of [preview, ownerEmail, subscriberEmail]) {
+    for (const paragraph of paragraphs) {
+      assert.ok(email.html.includes(paragraph));
+      assert.ok(email.text.includes(paragraph));
+    }
+  }
+});
 void test('concurrent schedules create and send one broadcast to the dedicated segment', async () => {
   const f = fixture();
   await due(f);
@@ -533,7 +605,7 @@ void test('digests preserve every photo, place the linked shirt after photos and
   assert.ok(!withoutDesign.html.includes('SHOP DESIGN'));
   assert.ok(withoutDesign.html.includes('shop.bent.build ↗'));
 });
-void test('digest headings retain trip numbering across already-sent entries and preserve existing day titles', async () => {
+void test('digest headings retain trip numbering across sent entries and correct stale day prefixes', async () => {
   const f = fixture();
   const first = post('first');
   first.data.day = '2026-10-10';
@@ -546,8 +618,52 @@ void test('digest headings retain trip numbering across already-sent entries and
   later.data.title = 'day 9: owner title';
   assert.equal(
     (await pendingDigestPosts(f.ctx))[0]?.title,
-    'day 9: owner title',
+    'day 6: owner title',
   );
+});
+
+void test('newsletter numbering uses paged Japan captures and ignores earlier unrelated posts and beer entries', async () => {
+  const f = fixture();
+  const arrival = post('arrival');
+  arrival.data.title = 'day 8: Arrival';
+  f.posts.push(arrival);
+  f.ctx.content = {
+    get: (_collection, id) =>
+      Promise.resolve(f.posts.find((item) => item.id === id) ?? null),
+    list: (collection, options) =>
+      Promise.resolve(
+        collection === 'media_items'
+          ? options?.cursor
+            ? {
+                items: [
+                  {
+                    ...post('photo'),
+                    type: 'media_items',
+                    data: { captured_at: '2026-10-14T15:00:00.001Z' },
+                  },
+                ],
+                hasMore: false,
+              }
+            : {
+                items: [
+                  {
+                    ...post('draft photo', 'draft'),
+                    type: 'media_items',
+                    data: { captured_at: '2026-10-01T00:00:00Z' },
+                  },
+                ],
+                hasMore: true,
+                cursor: 'next',
+              }
+          : { items: f.posts, hasMore: false },
+      ),
+  };
+  assert.equal((await pendingDigestPosts(f.ctx))[0]?.title, 'day 1: Arrival');
+  const email = await digestEmail(await pendingDigestPosts(f.ctx));
+  assert.ok(email.html.includes('day 1: Arrival'));
+  assert.ok(!email.html.includes('day 8: Arrival'));
+  assert.match(email.text, /day 1: arrival/i);
+  assert.doesNotMatch(email.text, /day 8: arrival/i);
 });
 
 void test('photo changes after broadcast preparation prevent sending the saved snapshot', async () => {

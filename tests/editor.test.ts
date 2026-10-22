@@ -12,6 +12,35 @@ import {
   toEditorDocument,
 } from '../src/lib/editor-conversion';
 
+void test('inline code and code blocks retain formatting, language and whitespace when saved and reopened', () => {
+  const original = [
+    {
+      _type: 'block',
+      _key: 'paragraph',
+      style: 'normal',
+      children: [
+        { _type: 'span', _key: 'plain', text: 'Run ', marks: [] },
+        { _type: 'span', _key: 'inline', text: 'pnpm build', marks: ['code'] },
+      ],
+    },
+    {
+      _type: 'code',
+      _key: 'code-block',
+      language: 'javascript',
+      code: 'const html = "<script>example</script>";\n\n  console.log(html);\n',
+    },
+    { _type: 'code', _key: 'empty-code', code: '' },
+  ];
+  const node = getSchema(editorExtensions).nodeFromJSON(
+    toEditorDocument(original),
+  );
+  node.check();
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  assert.equal(preservesContent(original, contentForSave(document)), true);
+});
+
 void test('blank paragraphs survive saving and reopening through the actual editor schema', () => {
   const original = prosemirrorToPortableText({
     type: 'doc',
@@ -317,5 +346,44 @@ void test('editing detects ignored properties inside otherwise supported gallery
       [{ asset: { _ref: 'photo' } }],
     ),
     true,
+  );
+});
+
+void test('Instagram handle links retain bold formatting when saved and reopened', () => {
+  const schema = getSchema(editorExtensions);
+  const node = schema.nodeFromJSON({
+    type: 'doc',
+    content: [
+      {
+        type: 'paragraph',
+        content: [
+          {
+            type: 'text',
+            text: '@sample.travels',
+            marks: [
+              { type: 'bold' },
+              {
+                type: 'link',
+                attrs: { href: 'https://www.instagram.com/sample.travels/' },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  node.check();
+  const document = editorPostSchema.shape.data.shape.document.parse(
+    node.toJSON(),
+  );
+  const restored = schema.nodeFromJSON(
+    toEditorDocument(contentForSave(document)),
+  );
+  assert.equal(restored.textContent, '@sample.travels');
+  const text = restored.firstChild?.firstChild;
+  assert.ok(text?.marks.some((mark) => mark.type.name === 'bold'));
+  assert.equal(
+    text?.marks.find((mark) => mark.type.name === 'link')?.attrs.href,
+    'https://www.instagram.com/sample.travels/',
   );
 });

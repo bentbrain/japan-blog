@@ -110,7 +110,7 @@ export function newsletterExcerpt(value: unknown): string {
     )
     .join('\n\n')
     .trim();
-  return text.length > 650 ? `${text.slice(0, 647).trimEnd()}…` : text;
+  return text;
 }
 
 export async function newsletterHash(value: string): Promise<string> {

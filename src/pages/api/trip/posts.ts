@@ -11,6 +11,16 @@ import {
 } from '../../../lib/editor-conversion';
 import { publishItem, savedItemSchema } from '../../../lib/publish';
 import { shopDesignSchema } from '../../../lib/shop-design';
+import { tripStartDayFromContent } from '../../../lib/content';
+import { correctTripTitle, isNumberedTripTitle } from '../../../lib/trip-days';
+async function editorTitle(
+  cms: App.Locals['emdash'],
+  day: string,
+  title: string,
+) {
+  if (!isNumberedTripTitle(title)) return title;
+  return correctTripTitle(day, await tripStartDayFromContent(cms), title);
+}
 const portableBlocks = z.array(
   z.looseObject({ _type: z.string(), _key: z.string() }),
 );
@@ -57,7 +67,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
     revision: result.data._rev,
     status: result.data.item.status,
     data: {
-      title: data.title,
+      title: await editorTitle(locals.emdash, data.day, data.title),
       day: data.day,
       place: data.place || '',
       gallery: data.gallery || [],
@@ -115,7 +125,11 @@ export const POST: APIRoute = async ({ locals, request }) => {
       id: postId,
       revision: current.data._rev,
       status: current.data.item.status,
-      data: { ...fields, document },
+      data: {
+        ...fields,
+        title: await editorTitle(locals.emdash, fields.day, fields.title),
+        document,
+      },
     },
     publicationError,
   });
