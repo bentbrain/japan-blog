@@ -1,5 +1,81 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { Input, BlobSource, ALL_FORMATS } from 'mediabunny';
+
+test('detailed portrait video uploads below the preview size limit with its original intact', async ({
+  page,
+}) => {
+  await page.goto('/_emdash/api/setup/dev-bypass?redirect=/owner/media');
+  await page.waitForURL('**/owner/media');
+  await expect(
+    page.getByRole('button', { name: 'UPLOAD', exact: true }),
+  ).toBeEnabled();
+  await page.evaluate(async (path) => {
+    await import(path);
+  }, '/src/lib/prepare-media.ts');
+  let uploadBody: Buffer | undefined;
+  let uploadHeaders: Record<string, string> = {};
+  await page.route('**/api/trip/upload', async (route) => {
+    uploadBody = route.request().postDataBuffer() ?? undefined;
+    uploadHeaders = route.request().headers();
+    await route.continue();
+  });
+  const uploaded = page.waitForResponse((response) =>
+    response.url().endsWith('/api/trip/upload'),
+  );
+  const originalHash = await page.evaluate(async (path) => {
+    await import(path);
+    const input = document.querySelector('#upload');
+    if (!(input instanceof HTMLInputElement) || !input.dataset.originalHash)
+      throw new Error('synthetic original hash unavailable');
+    return input.dataset.originalHash;
+  }, '/tests/fixtures/portrait-upload.ts');
+  const response = await uploaded;
+  expect(response.status()).toBe(201);
+  const request = response.request();
+  const body = uploadBody;
+  if (!body) throw new Error('upload body unavailable');
+  const form = await new Request(request.url(), {
+    method: 'POST',
+    headers: uploadHeaders,
+    body: new Uint8Array(body),
+  }).formData();
+  const original = form.get('original');
+  const display = form.get('display');
+  expect(original).toBeInstanceOf(File);
+  expect(display).toBeInstanceOf(File);
+  if (!(original instanceof File) || !(display instanceof File))
+    throw new Error('upload files unavailable');
+  expect(
+    createHash('sha256')
+      .update(new Uint8Array(await original.arrayBuffer()))
+      .digest('hex'),
+  ).toBe(originalHash);
+  expect(display.type).toBe('video/mp4');
+  const input = new Input({
+    source: new BlobSource(display),
+    formats: ALL_FORMATS,
+  });
+  try {
+    const track = await input.getPrimaryVideoTrack();
+    if (!track) throw new Error('converted video track unavailable');
+    expect(await track.getDisplayWidth()).toBe(360);
+    expect(await track.getDisplayHeight()).toBe(640);
+    expect(await input.computeDuration()).toBeCloseTo(305 / 30, 2);
+  } finally {
+    input.dispose();
+  }
+
+  expect(display.size).toBeLessThan(32 * 1024 * 1024);
+  await expect(page.locator('#upload-status')).toHaveText('uploaded');
+  await expect(
+    page.getByRole('button', {
+      name: 'sample bitrate.mov, draft',
+      exact: true,
+    }),
+  ).toBeVisible();
+});
 
 test('a stalled MOV times out, later photos upload, and retry sends only the failed file', async ({
   page,
