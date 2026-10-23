@@ -96,7 +96,9 @@ const feedback = feedbackConfiguration(
         data-feedback-id="beer-counter"
       >
         <Pixel compact />
-        <span>{counts.total} beers*</span>
+        <span class="relative">
+          {counts.total} beers<span class="absolute left-full top-0">*</span>
+        </span>
       </div>
     </header>
     <main
