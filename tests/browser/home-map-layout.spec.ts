@@ -120,9 +120,12 @@ for (const scheme of ['light', 'dark'] satisfies ('light' | 'dark')[]) {
         const previous = boxes[index - 1];
         const current = boxes[index];
         if (!previous || !current) throw new Error('Post sequence required');
-        expect(current.y).toBeGreaterThanOrEqual(previous.y);
-        if (Math.abs(current.y - previous.y) < 1)
-          expect(current.x).toBeGreaterThan(previous.x);
+        if (Math.abs(current.x - previous.x) < 1)
+          expect(current.y - previous.y - previous.height).toBeCloseTo(16, 0);
+        else {
+          expect(current.x - previous.x - previous.width).toBeCloseTo(16, 0);
+          expect(current.y).toBeCloseTo(first.y, 0);
+        }
       }
       expect(
         await articles

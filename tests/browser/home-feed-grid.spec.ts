@@ -52,6 +52,13 @@ async function measure(page: Page) {
     return {
       left: rect.left,
       right: rect.right,
+      map: (() => {
+        const map = grid.querySelector('.journal-map-card');
+        if (!map) throw new Error('Map required');
+        const box = map.getBoundingClientRect();
+        return { x: box.x, y: box.y, width: box.width, height: box.height };
+      })(),
+      footerTop: document.querySelector('footer')?.getBoundingClientRect().top,
       cards: Array.from(grid.querySelectorAll('article')).map((article) => {
         const card = article.querySelector('.journal-card-inner');
         if (!card) throw new Error('Card border required');
@@ -340,7 +347,10 @@ for (const javaScriptEnabled of [true, false]) {
           );
           const expected = expectedPosts();
           for (const width of [1991, 390, 601, 901, 1991]) {
-            await page.setViewportSize({ width, height: 1138 });
+            await page.setViewportSize({
+              width,
+              height: width === 390 ? 844 : 1138,
+            });
             await page.goto('/');
             for (let offset = 0; offset < expected.length; offset += 24) {
               if (javaScriptEnabled)
@@ -367,38 +377,71 @@ for (const javaScriptEnabled of [true, false]) {
               );
               expect(metrics.overflow).toBe(0);
               const columns = width > 900 ? 3 : width > 600 ? 2 : 1;
+              expect(metrics.map.x).toBeCloseTo(metrics.left, 1);
+              expect(metrics.map.width).toBeCloseTo(
+                metrics.right - metrics.left,
+                1,
+              );
+              const columnWidth =
+                (metrics.right - metrics.left - 16 * (columns - 1)) / columns;
+              const first = metrics.cards[0];
+              if (!first) throw new Error('Newest card required');
+              expect(first.x).toBeCloseTo(metrics.left, 1);
+              expect(first.y - metrics.map.y - metrics.map.height).toBeCloseTo(
+                16,
+                1,
+              );
+              const occupiedColumns = new Set<number>();
               for (let index = 0; index < metrics.cards.length; index++) {
                 const card = metrics.cards[index];
                 if (!card) throw new Error('Card required');
-                const rowStart = metrics.cards[index - (index % columns)];
-                if (!rowStart) throw new Error('Row start required');
-                expect(card.y).toBeCloseTo(rowStart.y, 1);
-                expect(card.height).toBeCloseTo(rowStart.height, 1);
-                if (index % columns === 0)
-                  expect(card.x).toBeCloseTo(metrics.left, 1);
+                const column = Math.round(
+                  (card.x - metrics.left) / (columnWidth + 16),
+                );
+                occupiedColumns.add(column);
+                expect(card.width).toBeCloseTo(columnWidth, 1);
+                expect(card.x).toBeCloseTo(
+                  metrics.left + column * (columnWidth + 16),
+                  1,
+                );
+                expect(card.y).toBeGreaterThanOrEqual(
+                  metrics.map.y + metrics.map.height + 15,
+                );
                 const previous = metrics.cards[index - 1];
-                if (index % columns && previous)
-                  expect(card.x - previous.x - previous.width).toBeCloseTo(
-                    16,
-                    1,
-                  );
-                const above = metrics.cards[index - columns];
-                if (above)
-                  expect(card.y - above.y - above.height).toBeCloseTo(16, 1);
+                if (previous) {
+                  if (Math.abs(card.x - previous.x) < 1) {
+                    expect(card.y - previous.y - previous.height).toBeCloseTo(
+                      16,
+                      1,
+                    );
+                  } else {
+                    expect(card.x - previous.x - previous.width).toBeCloseTo(
+                      16,
+                      1,
+                    );
+                    expect(card.y - first.y).toBeCloseTo(0, 1);
+                  }
+                }
                 expect(card.x + card.width).toBeLessThanOrEqual(
                   metrics.right + 1,
                 );
               }
+              expect(occupiedColumns.size).toBe(columns);
+              expect(
+                new Set(metrics.cards.map((card) => Math.round(card.height)))
+                  .size,
+              ).toBeGreaterThan(1);
+              if (metrics.footerTop === undefined)
+                throw new Error('Footer required');
+              expect(metrics.footerTop).toBeGreaterThan(
+                Math.max(...metrics.cards.map((card) => card.y + card.height)),
+              );
               if (offset + metrics.cards.length === expected.length) {
-                // Verify the actual last row, including every baseline card.
+                // Include every baseline card, including the incomplete final group.
                 expect(metrics.cards.length % 6).toBe(1);
                 const final = metrics.cards.at(-1);
-                if (!final) throw new Error('Incomplete row required');
-                expect(final.x).toBeCloseTo(metrics.left, 1);
-                if (columns > 1)
-                  expect(metrics.right - final.x - final.width).toBeGreaterThan(
-                    final.width - 1,
-                  );
+                if (!final) throw new Error('Final card required');
+                expect(final.x + final.width).toBeCloseTo(metrics.right, 1);
                 await expect(
                   page.getByRole('link', { name: 'EARLIER →' }),
                 ).toHaveCount(0);
