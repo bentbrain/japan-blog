@@ -5346,6 +5346,18 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "priority 10: 102 published records cross the real CMS 100-record cursor boundary; final native selection keeps the bounded first request and fresh measured currentSrc control"
+    },
+    {
+      "file": "tests/browser/upload-recovery.spec.ts",
+      "titlePath": [
+        "upload-recovery.spec.ts",
+        "detailed portrait video uploads below the preview size limit with its original intact"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Real browser conversion of deterministic synthetic portrait noise stays below the upload preview limit, preserves every original byte and creates a private draft."
     }
   ]
 }

@@ -1,8 +1,13 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { setImmediate } from 'node:timers/promises';
 import { Conversion, Input } from 'mediabunny';
 import { prepareMedia } from '../src/lib/prepare-media';
+
+const sampleVideo = await readFile(
+  new URL('./fixtures/frame-timed-video.mp4', import.meta.url),
+);
 
 function mockDocument(
   t: TestContext,
@@ -34,7 +39,7 @@ void test('a video stuck reading its duration times out and releases its input',
   const dispose = t.mock.method(Input.prototype, 'dispose', () => {});
   let outcome = 'pending';
   void prepareMedia(
-    new File(['sample'], 'sample stalled.mov', { type: 'video/quicktime' }),
+    new File([sampleVideo], 'sample stalled.mov', { type: 'video/quicktime' }),
   ).then(
     () => {
       outcome = 'prepared';
@@ -74,7 +79,7 @@ void test('conversion initialization finishing after timeout is cancelled', asyn
     if (descriptor) Object.defineProperty(Conversion, 'init', descriptor);
   });
   const prepared = prepareMedia(
-    new File(['sample'], 'sample late.mov', { type: 'video/quicktime' }),
+    new File([sampleVideo], 'sample late.mov', { type: 'video/quicktime' }),
   );
   const rejected = assert.rejects(
     prepared,
@@ -113,7 +118,7 @@ void test('a stalled conversion is cancelled without waiting for cancellation to
   });
   const rejected = assert.rejects(
     prepareMedia(
-      new File(['sample'], 'sample conversion.mov', {
+      new File([sampleVideo], 'sample conversion.mov', {
         type: 'video/quicktime',
       }),
     ),

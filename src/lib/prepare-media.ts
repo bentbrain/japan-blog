@@ -83,6 +83,20 @@ async function prepare(
       );
       if (!isShortVideoDuration(duration))
         throw new Error('Videos must be 10 seconds or shorter');
+      const track = await waitForPreparation(
+        input.getPrimaryVideoTrack(),
+        signal,
+      );
+      if (!track) throw new Error('Could not read video');
+      const [width, height] = await waitForPreparation(
+        Promise.all([track.getDisplayWidth(), track.getDisplayHeight()]),
+        signal,
+      );
+      // Bound the longest edge in either orientation without enlarging small clips.
+      const resize =
+        width >= height
+          ? { width: Math.min(1280, Math.max(2, 2 * Math.round(width / 2))) }
+          : { height: Math.min(1280, Math.max(2, 2 * Math.round(height / 2))) };
       const output = new Output({
         format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
         target: new BufferTarget(),
@@ -93,8 +107,10 @@ async function prepare(
         output,
         video: {
           codec: 'avc',
-          width: 1280,
-          quality: new Quality('high'),
+          ...resize,
+          // Leave room below the API's 32 MiB preview limit for every
+          // supported duration, including detailed portrait captures.
+          quality: new Quality({ bitrate: 8_000_000, bitrateMode: 'variable' }),
           forceTranscode: true,
           frameRate: 30,
         },
