@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   categoryIconStatusSchema,
   categoryNames,
@@ -22,53 +23,47 @@ function statusLabel(icon: Status) {
   return icon.state;
 }
 export function CategoryIconStatus({ names }: { names: string[] }) {
-  const [icons, setIcons] = useState<Status[]>([]);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState<string>();
+  const client = useQueryClient();
   const identity = categoryNames(names)
     .map((name) => name.normalized)
-    .sort()
-    .join('\n');
+    .sort();
+  const queryKey = ['owner', 'category-icons', identity];
+  const query = useQuery({
+    queryKey,
+    enabled: identity.length > 0,
+    queryFn: async ({ signal }) =>
+      responseSchema.parse(
+        await api('/api/trip/category-icons', undefined, 'GET', signal),
+      ).icons,
+    refetchInterval: (query) =>
+      query.state.data?.some((icon) => icon.state === 'pending')
+        ? 15_000
+        : false,
+  });
+  const icons = query.data ?? [];
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState<string>();
+  const mutation = useMutation({
+    mutationFn: (icon: Status) =>
+      api('/api/trip/category-icons', {
+        category: icon.label,
+        acknowledgeCharge: icon.state === 'uncertain',
+      }),
+  });
   useEffect(() => {
-    let active = true;
-    const load = async () => {
-      try {
-        const result = responseSchema.parse(
-          await api('/api/trip/category-icons'),
-        );
-        if (active) {
-          setIcons(result.icons);
-          setError('');
-        }
-      } catch {
-        if (active) setError('could not load icon status');
-      }
-    };
-    void load();
     const refresh = () => {
-      void load();
+      void client.invalidateQueries({ queryKey: ['owner', 'category-icons'] });
     };
     window.addEventListener('category-icons:changed', refresh);
-    const timer = setInterval(() => {
-      void load();
-    }, 15_000);
     return () => {
-      active = false;
-      clearInterval(timer);
       window.removeEventListener('category-icons:changed', refresh);
     };
-  }, [identity]);
+  }, [client]);
   const selected = new Set(categoryNames(names).map((name) => name.normalized));
   async function retry(icon: Status) {
     setBusy(icon.normalized);
     try {
-      await api('/api/trip/category-icons', {
-        category: icon.label,
-        acknowledgeCharge: icon.state === 'uncertain',
-      });
-      setIcons(
-        responseSchema.parse(await api('/api/trip/category-icons')).icons,
-      );
+      await mutation.mutateAsync(icon);
       setError('');
       window.dispatchEvent(new Event('category-icons:changed'));
     } catch (error) {
@@ -101,7 +96,7 @@ export function CategoryIconStatus({ names }: { names: string[] }) {
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={Boolean(busy)}
+                disabled={Boolean(busy) || query.isFetching}
                 onClick={() => {
                   void retry(icon);
                 }}
@@ -118,7 +113,7 @@ export function CategoryIconStatus({ names }: { names: string[] }) {
           </div>
         ))}
       <p role="status" className="empty:hidden">
-        {error}
+        {error || (query.isError ? 'could not load icon status' : '')}
       </p>
     </div>
   );

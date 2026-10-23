@@ -1,7 +1,8 @@
 type KVNamespace = import('@cloudflare/workers-types').KVNamespace;
 type R2Bucket = import('@cloudflare/workers-types').R2Bucket;
 type D1Database = import('@cloudflare/workers-types').D1Database;
-type ImagesBinding = import('./lib/newsletter-image').NewsletterImagesBinding;
+type ImagesBinding =
+  import('./lib/serve-responsive-image').DisplayImagesBinding;
 
 declare module 'cloudflare:workers' {
   export const env: Cloudflare.Env;
@@ -14,6 +15,7 @@ type ExportedHandlerScheduledHandler<
 
 declare namespace App {
   interface Locals {
+    privateMediaRender?: boolean;
     publishedTripMedia?: import('./lib/model').TripMedia[];
   }
 }

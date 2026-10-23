@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { extractMetadata } from '../../../lib/metadata';
+import { isShortVideoDuration } from '../../../lib/video-duration';
 
 const itemResult = z.object({
   item: z.object({ id: z.string(), storageKey: z.string() }),
@@ -42,10 +43,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     const metadata = await extractMetadata(original, video);
     if (
       video &&
-      (!('duration' in metadata) ||
-        typeof metadata.duration !== 'number' ||
-        metadata.duration > 10.1 ||
-        metadata.duration <= 0)
+      (!('duration' in metadata) || !isShortVideoDuration(metadata.duration))
     )
       return Response.json(
         { error: 'Videos must be 10 seconds or shorter' },

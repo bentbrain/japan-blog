@@ -32,7 +32,11 @@ export const POST: APIRoute = async ({ request }) => {
     );
   return Response.json({
     day,
-    title: storyTitle(day, tripStartDay(all) || day, media[0]?.place || ''),
+    title: storyTitle(
+      day,
+      (await tripStartDay(all)) || day,
+      media[0]?.place || '',
+    ),
     counter,
     perspective,
     beers: await beerCounts(day),

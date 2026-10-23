@@ -15,8 +15,8 @@ import {
   nextNewsletterSend,
   type DigestPost,
 } from './newsletter-model';
-import { daySchema, tokyoDay } from './model';
-import { storyTitle } from './story';
+import { daySchema } from './model';
+import { numberedTripTitle, readTripStartDay } from './trip-days';
 import type { NewsletterAssets } from './newsletter-assets';
 
 const hour = 3600_000;
@@ -329,40 +329,20 @@ export async function confirmSubscription(
 }
 
 async function newsletterFirstDay(ctx: NewsletterContext) {
-  const days: string[] = [];
-  for (const collection of ['posts', 'media_items', 'beers']) {
-    let cursor: string | undefined;
-    do {
-      const page = await ctx.content?.list(collection, {
-        where: { status: 'published' },
-        limit: 100,
-        cursor,
-        orderBy: {
-          [collection === 'media_items' ? 'captured_at' : 'day']: 'asc',
-        },
-      });
-      if (!page) break;
-      const count = days.length;
-      for (const item of page.items) {
-        if (item.status !== 'published' || item.data.demo) continue;
-        const value =
-          collection === 'media_items'
-            ? z
-                .union([z.iso.datetime({ offset: true }), z.date()])
-                .safeParse(item.data.captured_at)
-            : daySchema.safeParse(item.data.day);
-        if (value.success)
-          days.push(
-            collection === 'media_items'
-              ? tokyoDay(new Date(value.data))
-              : String(value.data),
-          );
-      }
-      if (days.length > count) break;
-      cursor = page.hasMore ? page.cursor : undefined;
-    } while (cursor);
-  }
-  return days.sort()[0];
+  return readTripStartDay(async (collection, cursor) => {
+    const page = await ctx.content?.list(collection, {
+      where: { status: 'published' },
+      limit: 100,
+      cursor,
+      orderBy: {
+        [collection === 'media_items' ? 'captured_at' : 'day']: 'asc',
+      },
+    });
+    return {
+      items: page?.items ?? [],
+      nextCursor: page?.hasMore ? page.cursor : undefined,
+    };
+  });
 }
 
 async function newsletterPost(
@@ -378,9 +358,7 @@ async function newsletterPost(
   const { day, title } = parsed.data;
   return {
     id: item.id,
-    title: /^day \d+: /i.test(title)
-      ? title
-      : storyTitle(day, firstDay || day, title),
+    title: numberedTripTitle(day, firstDay || day, title),
     day,
     url: `${newsletterUrl}/posts/${encodeURIComponent(item.slug)}`,
     excerpt: newsletterExcerpt(item.data.content),

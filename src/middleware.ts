@@ -1,8 +1,13 @@
 import { defineMiddleware } from 'astro:middleware';
 import { env } from 'cloudflare:workers';
-import { z } from 'zod';
 import { getRequestContext } from 'emdash';
 import { ensureLocalIconSchema } from './lib/category-icon-dev';
+import {
+  imageUnavailable,
+  serveResponsiveImage,
+} from './lib/serve-responsive-image';
+import { serveMapPhoto } from './lib/map-image';
+import { publishedMediaAccess } from './lib/published-media-access';
 
 export const onRequest = defineMiddleware(async (context, next) => {
   if (import.meta.env.DEV) await ensureLocalIconSchema(env.DB);
@@ -11,10 +16,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
     try {
       path = decodeURIComponent(path);
     } catch {
-      return new Response('Not found', { status: 404 });
+      return path.startsWith('/media-preview/') ||
+        path.startsWith('/map-photo/')
+        ? imageUnavailable()
+        : new Response('Not found', { status: 404 });
     }
   }
-  if (path.includes('%')) return new Response('Not found', { status: 404 });
+  if (path.includes('%'))
+    return path.startsWith('/media-preview/') || path.startsWith('/map-photo/')
+      ? imageUnavailable()
+      : new Response('Not found', { status: 404 });
   if (!import.meta.env.DEV) {
     if (path === '/owner/setup') {
       const key = context.url.searchParams.get('key');
@@ -60,8 +71,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const privateRender =
     previewRequest ||
     (owner && context.cookies.get('emdash-edit-mode')?.value === 'true');
-  // Uploaded previews are already resized; refuse the transform endpoint so it
-  // cannot read private storage directly or cache unpublished derivatives.
+  context.locals.privateMediaRender = privateRender;
+  if (path === '/map-photo' || path.startsWith('/map-photo/')) {
+    context.cache.set(false);
+    return serveMapPhoto(context.request, path, env, privateRender);
+  }
+  if (path === '/media-preview' || path.startsWith('/media-preview/')) {
+    context.cache.set(false);
+    return serveResponsiveImage(context.request, path, env, privateRender);
+  }
+  // Refuse the generic transform endpoint. Only bounded live display previews
+  // may be transformed through the dedicated route above.
   if (path === '/_image') return new Response('Not found', { status: 404 });
   if (
     path.startsWith('/_emdash/api/media/file/trip-private/') ||
@@ -73,52 +93,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
     context.cache.set(false);
     if (!owner) {
       const key = mediaFile[2] || '';
-      const assetId =
-        mediaFile[1] === 'asset'
-          ? key.split('/')[0]
-          : (
-              await context.locals.emdash.db
-                .selectFrom('media')
-                .select('id')
-                .where('storage_key', '=', key)
-                .executeTakeFirst()
-            )?.id;
-      if (!assetId)
-        return new Response('Not found', {
-          status: 404,
-          headers: { 'Cache-Control': 'private, no-store' },
-        });
-      let allowed = false;
-      let cursor: string | undefined;
-      do {
-        const result = await context.locals.emdash.handleContentList(
-          'media_items',
-          {
-            status: 'published',
-            limit: 100,
-            cursor,
-          },
-        );
-        if (!result.success) break;
-        const page = z
-          .object({
-            items: z.array(
-              z.object({
-                data: z.object({
-                  asset: z.object({ id: z.string() }).nullish(),
-                  poster: z.object({ id: z.string() }).nullish(),
-                }),
-              }),
-            ),
-            nextCursor: z.string().nullish(),
-          })
-          .parse(result.data);
-        allowed = page.items.some(
-          ({ data }) =>
-            data.asset?.id === assetId || data.poster?.id === assetId,
-        );
-        cursor = page.nextCursor ?? undefined;
-      } while (!allowed && cursor);
+      const allowed = await publishedMediaAccess(
+        env.DB,
+        mediaFile[1] === 'asset' ? 'asset' : 'file',
+        mediaFile[1] === 'asset' ? key.split('/')[0] || '' : key,
+      );
       if (!allowed)
         return new Response('Not found', {
           status: 404,

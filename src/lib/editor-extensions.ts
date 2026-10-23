@@ -1,7 +1,14 @@
 import { Extension, Mark, Node, mergeAttributes } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import Code from '@tiptap/extension-code';
 import Image from '@tiptap/extension-image';
 import { z } from 'zod';
+import { InstagramProfilePaste } from './instagram-profile-paste';
+
+// Keep EmDash's span identity alongside code while excluding visual marks.
+const TripInlineCode = Code.extend({
+  excludes: 'bold italic strike underline link code',
+});
 
 const TripImage = Image.extend({
   addAttributes() {
@@ -153,7 +160,9 @@ const SavedBlock = Node.create({
   },
 });
 export const editorExtensions = [
-  StarterKit,
+  StarterKit.configure({ code: false }),
+  InstagramProfilePaste,
+  TripInlineCode,
   TripImage,
   TripVideo,
   TripGallery,
