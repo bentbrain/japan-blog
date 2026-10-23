@@ -240,10 +240,15 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
         if (first && second) {
           if (width < 601)
             expect(second.y).toBeGreaterThan(first.y + first.height);
-          else if (post.count % 2 === 1 && third) {
+          else if (
+            (post.count + (post.count === 7 ? 1 : 0)) % 2 === 1 &&
+            third
+          ) {
             expect(first.width).toBeGreaterThan(second.width * 1.9);
             expect(second.y).toBeGreaterThanOrEqual(first.y + first.height + 6);
             expect(third.width).toBeCloseTo(second.width, 0);
+          } else {
+            expect(first.width).toBeCloseTo(second.width, 0);
           }
         }
         if (post.count === 0 || post.count === 7) {
@@ -252,12 +257,26 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
           });
           await expect(shop).toHaveAttribute('href', /Color=White/);
           if (boxes.length) {
-            const box = await shop.boundingBox();
+            const design = mosaic.locator('.post-design');
+            const box = await design.boundingBox();
             const last = boxes.at(-1);
             if (!box || !last) throw new Error('Design bounds required');
-            expect(box.y).toBeGreaterThan(
-              Math.max(...boxes.map((media) => media.y + media.height)),
+            expect(box.width).toBeCloseTo(last.width, 0);
+            expect(box.x).toBeCloseTo(last.x, 0);
+            expect(box.y - last.y - last.height).toBeCloseTo(7, 0);
+            const columnOrder = await design.evaluate((element) =>
+              Array.from(
+                element.parentElement?.parentElement?.children ?? [],
+              ).map((tile) =>
+                tile
+                  .querySelector('[data-feedback-id]')
+                  ?.getAttribute('data-feedback-id'),
+              ),
             );
+            expect(columnOrder).toEqual([
+              ...expected.map((item) => `media-${item.id}`),
+              'post-design',
+            ]);
           }
         }
         expect(
@@ -395,7 +414,7 @@ for (const width of [390, 1991]) {
             .toBeGreaterThanOrEqual(2);
         }
         const geometry = await mosaic
-          .locator('.media-tile')
+          .locator('.media-tile, .post-design')
           .evaluateAll((tiles) => {
             const boxes = tiles.map((tile) => {
               const { x, y, width, height } = tile.getBoundingClientRect();

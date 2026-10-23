@@ -12,34 +12,38 @@ interface Props {
 const { items, title } = Astro.props;
 const parsed = shopDesignSchema.safeParse(Astro.props.design);
 const design = parsed.success ? parsed.data : undefined;
+const tileCount = items.length + (design ? 1 : 0);
 ---
 
 {(items.length > 0 || design) && (
   <section class="post-mosaic" aria-label={`${title} media`}>
-    {items.length > 0 && (
-      <div class="columns-1 gap-[7px] min-[601px]:@min-[553px]/post:columns-2">
-        {items.map((item, index) => {
-          const fullWidth = items.length % 2 === 1 && index === 0;
-          return (
-            <div
-              class:list={[
-                'mb-[7px] min-w-0 break-inside-avoid [&_.media-tile_img]:max-h-[70svh] [&_.media-tile_img]:object-contain [&_.media-tile_video]:max-h-[70svh] [&_.media-tile_video]:object-contain',
-                fullWidth && '[column-span:all]',
-              ]}
-            >
-              <MediaTile
-                item={item}
-                sizes={fullWidth ? postImageSizes : postMosaicImageSizes}
-              />
-            </div>
-          );
-        })}
-      </div>
-    )}
-    {design && (
-      <div class="mx-auto mt-4 max-w-[452px] pb-4">
-        <PostDesign design={design} />
-      </div>
-    )}
+    <div class="columns-1 gap-[7px] min-[601px]:@min-[553px]/post:columns-2">
+      {items.map((item, index) => {
+        const fullWidth = tileCount % 2 === 1 && index === 0;
+        return (
+          <div
+            class:list={[
+              'mb-[7px] min-w-0 break-inside-avoid [&_.media-tile_img]:max-h-[70svh] [&_.media-tile_img]:object-contain [&_.media-tile_video]:max-h-[70svh] [&_.media-tile_video]:object-contain',
+              fullWidth && '[column-span:all]',
+            ]}
+          >
+            <MediaTile
+              item={item}
+              sizes={fullWidth ? postImageSizes : postMosaicImageSizes}
+            />
+          </div>
+        );
+      })}
+      {design && (
+        <div
+          class:list={[
+            'mb-[7px] min-w-0 break-inside-avoid',
+            tileCount === 1 && '[column-span:all]',
+          ]}
+        >
+          <PostDesign design={design} />
+        </div>
+      )}
+    </div>
   </section>
 )}
