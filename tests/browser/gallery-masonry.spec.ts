@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { z } from 'zod';
 
+const run = crypto.randomUUID();
 const mediaIds: string[] = [];
 const created = z.object({
   data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
@@ -18,7 +19,7 @@ test.beforeAll(async ({ request, baseURL }) => {
     const response = await request.post('/_emdash/api/content/media_items', {
       headers,
       data: {
-        slug: `masonry-${String(index)}`,
+        slug: `synthetic-masonry-${run}-${String(index)}`,
         data: {
           title: `Synthetic masonry ${String(index)}`,
           kind: index === 4 ? 'video' : 'photo',
@@ -126,10 +127,12 @@ for (const width of [390, 601, 901, 1280]) {
           element.remove();
         });
     }
-    expect(await grid.locator('video').getAttribute('controls')).not.toBeNull();
+    expect(
+      await tiles.locator('video').getAttribute('controls'),
+    ).not.toBeNull();
     await expect(
       grid.getByRole('link', { name: 'View Synthetic masonry 4' }),
-    ).toHaveAttribute('href', '/media/masonry-4');
+    ).toHaveAttribute('href', `/media/synthetic-masonry-${run}-4`);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBe(width);
