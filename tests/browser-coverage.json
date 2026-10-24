@@ -5358,6 +5358,54 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Real browser conversion of deterministic synthetic portrait noise stays below the upload preview limit, preserves every original byte and creates a private draft."
+    },
+    {
+      "file": "tests/browser/gallery-masonry.spec.ts",
+      "titlePath": [
+        "gallery-masonry.spec.ts",
+        "gallery masonry preserves media and filters at 390px"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Verify mixed-height masonry placement, 7px gaps, native video controls, media links, category filtering and history without replacing the document."
+    },
+    {
+      "file": "tests/browser/gallery-masonry.spec.ts",
+      "titlePath": [
+        "gallery-masonry.spec.ts",
+        "gallery masonry preserves media and filters at 601px"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Verify mixed-height masonry placement, 7px gaps, native video controls, media links, category filtering and history without replacing the document."
+    },
+    {
+      "file": "tests/browser/gallery-masonry.spec.ts",
+      "titlePath": [
+        "gallery-masonry.spec.ts",
+        "gallery masonry preserves media and filters at 901px"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Verify mixed-height masonry placement, 7px gaps, native video controls, media links, category filtering and history without replacing the document."
+    },
+    {
+      "file": "tests/browser/gallery-masonry.spec.ts",
+      "titlePath": [
+        "gallery-masonry.spec.ts",
+        "gallery masonry preserves media and filters at 1280px"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Verify mixed-height masonry placement, 7px gaps, native video controls, media links, category filtering and history without replacing the document."
     }
   ]
 }
