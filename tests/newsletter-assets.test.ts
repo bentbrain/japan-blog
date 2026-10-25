@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import type { ContentAccess, MediaAccess } from 'emdash';
 import {
   createNewsletterAssets,
@@ -33,7 +34,7 @@ function item(id: string, type: string, data: Record<string, unknown>): Item {
     publishedAt: '',
   };
 }
-function fixture() {
+function fixture(beforeAsset: () => Promise<void> = () => Promise.resolve()) {
   const posts = new Map<string, Item>();
   const media = new Map<string, Item>();
   const assets = new Map<string, Asset>();
@@ -85,8 +86,9 @@ function fixture() {
       },
     },
     media: {
-      get(id) {
-        return Promise.resolve(assets.get(id) ?? null);
+      async get(id) {
+        await beforeAsset();
+        return assets.get(id) ?? null;
       },
       readBytes(id) {
         reads.push(id);
@@ -155,6 +157,25 @@ function fixture() {
     },
   };
 }
+
+void test('photo preparation overlaps a bounded batch and preserves gallery order', async () => {
+  let active = 0;
+  let peak = 0;
+  const f = fixture(async () => {
+    active++;
+    peak = Math.max(peak, active);
+    await setImmediate();
+    active--;
+  });
+  const prepared = await f.service.prepare(f.post);
+  assert.ok(peak > 1, 'Photo requests should overlap');
+  assert.ok(peak <= 4, 'Photo requests should stay bounded');
+  assert.deepEqual(
+    prepared.images?.map((image) => image.alt),
+    [...f.media.keys()],
+  );
+  assert.equal(f.transforms(), 5);
+});
 
 void test('all published inline and gallery photos keep order, reuse derivatives and revoke when publication changes', async () => {
   const f = fixture();
