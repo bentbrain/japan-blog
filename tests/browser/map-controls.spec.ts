@@ -35,7 +35,8 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
       data: {
         title: 'Synthetic map selection photo',
         kind: 'photo',
-        captured_at: '2099-10-15T12:00:00+09:00',
+        // Keep this fixture first in its cluster, ahead of shared suite media.
+        captured_at: '2099-10-17T12:00:00+09:00',
         latitude: 35.6762,
         longitude: 139.6503,
         place: 'synthetic tokyo',
@@ -132,7 +133,8 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
     await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
     await fit.click();
     const marker = map.getByRole('button', {
-      name: 'synthetic tokyo, 1 items',
+      // Earlier browser tests can publish nearby media into the same cluster.
+      name: /^synthetic tokyo, [1-9]\d* items$/,
     });
     await marker.focus();
     await page.keyboard.press('Enter');
