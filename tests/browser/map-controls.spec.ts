@@ -26,14 +26,22 @@ test('map controls retain zoom and geographic context without the location butto
     ).toHaveCount(2);
     const initial = Number(await map.getAttribute('data-zoom'));
     await zoomIn.click();
-    await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial * 2);
     await zoomOut.click();
-    await expect(map).toHaveAttribute('data-zoom', String(initial));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial);
     await zoomIn.focus();
     await page.keyboard.press('Enter');
-    await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial * 2);
     await zoomOut.click();
-    await expect(map).toHaveAttribute('data-zoom', String(initial));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial);
     const svg = map.getByRole('group', { name: 'Japan media map' });
     await svg.dispatchEvent('wheel', {
       deltaY: -120,
@@ -60,9 +68,13 @@ test('map controls retain zoom and geographic context without the location butto
     await expect(map.locator('[data-map-context]')).not.toHaveCount(0);
     await svg.focus();
     await page.keyboard.press('+');
-    await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial * 2);
     await page.keyboard.press('-');
-    await expect(map).toHaveAttribute('data-zoom', String(initial));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial);
     const land = svg.locator('path').first();
     const beforePan = await land.getAttribute('transform');
     await page.keyboard.press('ArrowRight');
