@@ -87,3 +87,16 @@ void test('empty and outside-only maps retain the Japan overview without invalid
   );
   for (const item of outside) assert.equal(empty.projectMedia(item), null);
 });
+
+void test('geographic reference labels share media projection without changing bounds', () => {
+  const map = tripMap([]);
+  const tokyo = map.references.find((reference) => reference.name === 'tokyo');
+  assert.ok(tokyo);
+  assert.deepEqual(
+    [tokyo.x, tokyo.y],
+    map.projectMedia({ latitude: 35.68, longitude: 139.69 }),
+  );
+  for (const reference of map.references) {
+    assert.ok(Number.isFinite(reference.x) && Number.isFinite(reference.y));
+  }
+});

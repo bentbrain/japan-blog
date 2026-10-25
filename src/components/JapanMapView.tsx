@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { LocateFixed, Minus, Plus } from 'lucide-react';
+import type { MapReference } from '../lib/map';
 import { resolveMapPhoto } from '../lib/map-photo-controller';
 import {
   Popover,
@@ -12,6 +14,7 @@ import {
   fitMapPoints,
   MAX_MAP_ZOOM,
   MIN_MAP_ZOOM,
+  zoomMapAt,
   type MapCamera,
   type MapPoint,
 } from '../lib/map-view';
@@ -75,9 +78,11 @@ function MapPhoto({ item }: { item: MapItem }) {
 export function JapanMapView({
   land,
   points,
+  references = [],
 }: {
   land: string;
   points: MapItem[];
+  references?: MapReference[];
 }) {
   const container = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, MapPoint>());
@@ -135,15 +140,36 @@ export function JapanMapView({
     };
   }, [points, size]);
 
-  function zoomBy(factor: number) {
+  useEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    function wheel(event: WheelEvent) {
+      // Preserve ordinary page scrolling; Ctrl/Command + scroll zooms the map.
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      if (!element) return;
+      const bounds = element.getBoundingClientRect();
+      const unit =
+        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1;
+      const factor =
+        2 ** (-Math.max(-240, Math.min(240, event.deltaY * unit)) / 240);
+      setActive(null);
+      setCamera((current) =>
+        zoomMapAt(current, factor, {
+          x: event.clientX - bounds.left - size.width / 2,
+          y: event.clientY - bounds.top - size.height / 2,
+        }),
+      );
+    }
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => {
+      element.removeEventListener('wheel', wheel);
+    };
+  }, [size]);
+
+  function zoomBy(factor: number, anchor?: MapPoint) {
     setActive(null);
-    setCamera((current) => ({
-      ...current,
-      zoom: Math.max(
-        MIN_MAP_ZOOM,
-        Math.min(MAX_MAP_ZOOM, current.zoom * factor),
-      ),
-    }));
+    setCamera((current) => zoomMapAt(current, factor, anchor));
   }
 
   return (
@@ -251,8 +277,13 @@ export function JapanMapView({
             event.target instanceof Element &&
             event.currentTarget.contains(event.target) &&
             !event.target.closest('button')
-          )
-            zoomBy(2);
+          ) {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            zoomBy(2, {
+              x: event.clientX - bounds.left - size.width / 2,
+              y: event.clientY - bounds.top - size.height / 2,
+            });
+          }
         }}
       >
         <path
@@ -262,6 +293,44 @@ export function JapanMapView({
           strokeLinejoin="round"
           d={land}
         />
+        {references.map((reference) => {
+          const x = (reference.x - camera.x) * camera.zoom + size.width / 2;
+          const y = (reference.y - camera.y) * camera.zoom + size.height / 2;
+          if (
+            camera.zoom < reference.minZoom ||
+            x < 55 ||
+            x > size.width - 85 ||
+            y < 18 ||
+            y > size.height - 18
+          )
+            return null;
+          // Media pins and their place names take priority over reference labels.
+          if (
+            groups.some(
+              (group) =>
+                Math.abs((group.x - reference.x) * camera.zoom) < 95 &&
+                Math.abs((group.y - reference.y) * camera.zoom) < 30,
+            )
+          )
+            return null;
+          return (
+            <g
+              key={reference.name}
+              data-map-context={reference.kind}
+              className="pointer-events-none fill-foreground/60"
+            >
+              {reference.kind === 'city' && <circle cx={x} cy={y} r="2" />}
+              <text
+                x={x + (reference.kind === 'city' ? 7 : 0)}
+                y={y + 3}
+                textAnchor={reference.kind === 'city' ? 'start' : 'middle'}
+                className="stroke-background font-mono text-[10px] [paint-order:stroke] [stroke-width:3]"
+              >
+                {reference.name}
+              </text>
+            </g>
+          );
+        })}
         {groups.map((group) => {
           const x = (group.x - camera.x) * camera.zoom + size.width / 2;
           const y = (group.y - camera.y) * camera.zoom + size.height / 2;
@@ -393,10 +462,53 @@ export function JapanMapView({
           );
         })}
       </svg>
+      <div
+        className="absolute right-3 bottom-3 flex flex-col gap-2"
+        role="group"
+        aria-label="Map controls"
+      >
+        <Button
+          className={`${controlClass} rounded-none border-border shadow-sm`}
+          disabled={!ready}
+          aria-label="Fit all media"
+          title="Fit all media"
+          onClick={() => {
+            setActive(null);
+            setCamera(fitMapPoints(points, size));
+          }}
+        >
+          <LocateFixed aria-hidden="true" />
+        </Button>
+        <div className="flex flex-col border border-border bg-background shadow-sm">
+          <Button
+            className={`${controlClass} rounded-none border-0 border-b border-border`}
+            disabled={!ready || camera.zoom >= MAX_MAP_ZOOM}
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() => {
+              zoomBy(2);
+            }}
+          >
+            <Plus aria-hidden="true" />
+          </Button>
+          <Button
+            className={`${controlClass} rounded-none border-0`}
+            disabled={!ready || camera.zoom <= MIN_MAP_ZOOM}
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() => {
+              zoomBy(0.5);
+            }}
+          >
+            <Minus aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+      <span className="pointer-events-none absolute bottom-3 left-3 hidden text-[10px] text-foreground/60 min-[601px]:block">
+        ctrl / ⌘ + scroll to zoom
+      </span>
       {!points.length && (
-        <span className="absolute bottom-3 left-3">
-          no photos near japan yet
-        </span>
+        <span className="absolute top-3 left-3">no photos near japan yet</span>
       )}
     </div>
   );
