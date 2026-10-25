@@ -506,6 +506,140 @@ void test('quiet periods skip sending and uncertain sends block automatic duplic
   await checkNewsletterRun(f.ctx);
   assert.equal(await f.storage.sent.exists('one'), true);
 });
+void test('scheduled checks reconcile an interrupted send without creating or sending another broadcast', async () => {
+  const f = fixture();
+  await due(f);
+  await f.storage.runs.put('interrupted', {
+    status: 'sending',
+    createdAt: Date.now() - 180_000,
+    postIds: ['one'],
+    broadcastId: 'saved-draft',
+  });
+  await f.ctx.kv.set('state', {
+    nextSend: Date.now() + 86_400_000,
+    lastRun: 'interrupted',
+  });
+  f.setRespond(() => Promise.resolve(Response.json({ status: 'draft' })));
+  await newsletterCron(() => 'owner@example.com').handler(
+    { name: 'digest' },
+    f.ctx,
+  );
+  assert.equal(
+    z
+      .object({ status: z.string() })
+      .parse(await f.storage.runs.get('interrupted')).status,
+    'draft',
+  );
+  assert.deepEqual(
+    f.calls.map(({ path, method }) => ({ path, method })),
+    [{ path: '/broadcasts/saved-draft', method: 'GET' }],
+  );
+});
+
+void test('a photo-heavy digest can finish its publication checks after two minutes', async (t) => {
+  const f = fixture();
+  await due(f);
+  let clock = now;
+  t.mock.method(Date, 'now', () => clock);
+  for (let i = 0; i < 6; i++) f.posts.push(post(`entry-${String(i)}`));
+  f.ctx.assets = {
+    prepare() {
+      clock += 11_000;
+      return Promise.resolve({ images: [] });
+    },
+    read: () => Promise.resolve(null),
+  };
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  assert.equal(f.calls.filter((call) => call.path.endsWith('/send')).length, 1);
+  assert.equal(await f.storage.sent.count(), 6);
+  assert.ok(clock - now < newsletterCron(() => 'owner@example.com').timeout);
+});
+
+void test('expired preparation cannot create a broadcast or consume posts', async (t) => {
+  const f = fixture();
+  await due(f);
+  let clock = now;
+  t.mock.method(Date, 'now', () => clock);
+  f.posts.push(post('one'));
+  f.ctx.assets = {
+    prepare() {
+      clock += 10 * 60_000;
+      return Promise.resolve({ images: [] });
+    },
+    read: () => Promise.resolve(null),
+  };
+  await assert.rejects(
+    runNewsletter(f.ctx, 'owner@example.com', now),
+    /Send lease expired/,
+  );
+  assert.equal(f.calls.length, 0);
+  assert.equal(await f.storage.sent.count(), 0);
+  assert.equal(await f.storage.runs.count(), 0);
+});
+
+void test('scheduled reconciliation respects an active lease and never retries unknown outcomes', async () => {
+  for (const status of ['active', 'sent', 'queued', 'missing']) {
+    const f = fixture();
+    await due(f);
+    await f.storage.runs.put('interrupted', {
+      status: 'sending',
+      createdAt: Date.now() - 180_000,
+      leaseUntil: status === 'active' ? Date.now() + 60_000 : 0,
+      postIds: ['one'],
+      broadcastId: 'saved-id',
+    });
+    await f.ctx.kv.set('state', {
+      nextSend: Date.now() + 86_400_000,
+      lastRun: 'interrupted',
+    });
+    f.setRespond(() =>
+      Promise.resolve(
+        status === 'missing'
+          ? new Response(null, { status: 404 })
+          : Response.json({ status }),
+      ),
+    );
+    await newsletterCron(() => 'owner@example.com').handler(
+      { name: 'digest' },
+      f.ctx,
+    );
+    assert.equal(f.calls.length, status === 'active' ? 0 : 1);
+    assert.ok(f.calls.every((call) => call.method === 'GET'));
+    assert.equal(await f.storage.sent.exists('one'), status === 'sent');
+    assert.equal(
+      z
+        .object({ status: z.string() })
+        .parse(await f.storage.runs.get('interrupted')).status,
+      status === 'sent' ? 'sent' : 'sending',
+    );
+  }
+});
+
+void test('publication checks that exhaust the send lease keep the saved draft unsent', async (t) => {
+  const f = fixture();
+  await due(f);
+  let clock = now;
+  let checks = 0;
+  t.mock.method(Date, 'now', () => clock);
+  f.posts.push(post('one'));
+  f.ctx.assets = {
+    prepare() {
+      if (++checks === 2) clock += 9 * 60_000;
+      return Promise.resolve({ images: [] });
+    },
+    read: () => Promise.resolve(null),
+  };
+  await runNewsletter(f.ctx, 'owner@example.com', now);
+  assert.equal(f.calls.filter((call) => call.path === '/broadcasts').length, 1);
+  assert.ok(!f.calls.some((call) => call.path.endsWith('/send')));
+  assert.equal(await f.storage.sent.count(), 0);
+  const [saved] = (await f.storage.runs.query()).items;
+  assert.equal(
+    z.object({ status: z.string() }).parse(saved?.data).status,
+    'uncertain',
+  );
+});
+
 void test('unpublication during preparation cancels dispatch and leaves an unsent provider draft', async () => {
   const f = fixture();
   await due(f);
@@ -863,9 +997,9 @@ void test('discard reconciles an already sent broadcast without deleting or rele
 });
 
 void test(
-  'the native cron pipeline awaits a provider response beyond its five-second default',
+  'the native cron pipeline awaits slow providers and photo-heavy publication checks',
   { timeout: 20_000 },
-  async () => {
+  async (t) => {
     const moduleHooks = registerHooks({
       resolve(specifier, context, next) {
         return specifier === 'virtual:emdash/config'
@@ -923,6 +1057,36 @@ void test(
       });
       assert.equal(result.success, true, result.error?.message);
       assert.equal(await f.storage.sent.exists('one'), true);
+
+      const heavy = fixture();
+      await due(heavy);
+      for (let i = 0; i < 6; i++) heavy.posts.push(post(`heavy-${String(i)}`));
+      t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+      heavy.ctx.assets = {
+        prepare() {
+          t.mock.timers.tick(11_000);
+          return Promise.resolve({ images: [] });
+        },
+        read: () => Promise.resolve(null),
+      };
+      const heavyPlugin = definePlugin({
+        id: 'japan-newsletter',
+        version: '1.0.0',
+        hooks: {
+          cron: { ...hook, handler: (event) => hook.handler(event, heavy.ctx) },
+        },
+      });
+      const heavyPipeline = createHookPipeline([heavyPlugin], { db: cms.db });
+      const heavyResult = await heavyPipeline.invokeCronHook(
+        'japan-newsletter',
+        {
+          name: 'digest',
+          scheduledAt: new Date(now).toISOString(),
+        },
+      );
+      assert.equal(heavyResult.success, true, heavyResult.error?.message);
+      assert.equal(await heavy.storage.sent.count(), 6);
+      t.mock.timers.reset();
     } finally {
       await destroy?.();
       moduleHooks.deregister();

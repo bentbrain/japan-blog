@@ -20,6 +20,10 @@ import { numberedTripTitle, readTripStartDay } from './trip-days';
 import type { NewsletterAssets } from './newsletter-assets';
 
 const hour = 3600_000;
+// Leave a minute for recording an interrupted run before the hook times out.
+const sendLeaseMs = 9 * 60_000;
+const cronTimeoutMs = 10 * 60_000;
+const providerTimeoutMs = 12_000;
 const subscriberSchema = z.object({
   email: z.email(),
   confirmed: z.boolean(),
@@ -109,7 +113,7 @@ async function provider(
       ...(idempotency ? { 'Idempotency-Key': idempotency } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(12_000),
+    signal: AbortSignal.timeout(providerTimeoutMs),
   });
   if (response.status === 404 && method === 'GET') return null;
   if (!response.ok)
@@ -472,7 +476,7 @@ async function resumeNewsletterRun(ctx: NewsletterContext) {
   const claim = await runs.compareAndSet(state.lastRun, stored.revision, {
     ...run,
     status: 'sending',
-    leaseUntil: Date.now() + 120_000,
+    leaseUntil: startedAt + sendLeaseMs,
   });
   if (!claim.applied)
     throw new Error('This newsletter is already being checked');
@@ -507,7 +511,7 @@ async function resumeNewsletterRun(ctx: NewsletterContext) {
       const current = await runs.getVersioned(state.lastRun);
       if (
         current?.revision !== claim.revision ||
-        Date.now() - startedAt >= 120_000
+        Date.now() - startedAt >= sendLeaseMs - providerTimeoutMs
       )
         throw new Error('Send lease expired');
       await provider(
@@ -597,11 +601,13 @@ export function newsletterCron(
   prepare: (ctx: NewsletterContext) => NewsletterContext = (ctx) => ctx,
 ) {
   return {
-    timeout: 90_000,
+    timeout: cronTimeoutMs,
     async handler(event: { name: string }, ctx: NewsletterContext) {
       if (event.name !== 'digest') return;
       try {
-        await runNewsletter(prepare(ctx), ownerEmail());
+        const prepared = prepare(ctx);
+        if (await prepared.kv.get('state')) await checkNewsletterRun(prepared);
+        await runNewsletter(prepared, ownerEmail());
         await cleanupNewsletter(ctx);
       } catch {
         ctx.log.warn('newsletter_schedule_failed');
@@ -625,9 +631,18 @@ export async function runNewsletter(
   const lock = await ctx.kv.compareAndSet(
     'send-lock',
     previousLock?.revision ?? null,
-    now + 120_000,
+    now + sendLeaseMs,
   );
   if (!lock.applied) return;
+  const lockRevision = lock.revision;
+  async function requireSendLease() {
+    const currentLock = await ctx.kv.getVersioned('send-lock');
+    if (
+      currentLock?.revision !== lockRevision ||
+      Date.now() - startedAt >= sendLeaseMs - providerTimeoutMs
+    )
+      throw new Error('Send lease expired');
+  }
   try {
     const state = stateSchema.parse(
       (await ctx.kv.get('state')) ?? {
@@ -645,6 +660,7 @@ export async function runNewsletter(
     }
     if (now < state.nextSend) return;
     const posts = await pendingDigestPosts(ctx);
+    await requireSendLease();
     const id = crypto.randomUUID();
     if (!posts.length) {
       await ctx.kv.set('state', {
@@ -660,6 +676,7 @@ export async function runNewsletter(
     const run = {
       status: 'preparing',
       createdAt: now,
+      leaseUntil: now + sendLeaseMs,
       postIds: posts.map((post) => post.id),
       postHashes,
     };
@@ -668,12 +685,14 @@ export async function runNewsletter(
       nextSend: nextNewsletterSend(settings, now, now),
       lastRun: id,
     });
+    let stage = 'creating';
     try {
       const segmentId = z
         .string()
         .min(1)
         .parse(await ctx.settings.get('segmentId'));
       const body = await digestEmail(posts);
+      await requireSendLease();
       const created = z.object({ id: z.string() }).parse(
         await provider(ctx, '/broadcasts', 'POST', {
           from: newsletterFrom,
@@ -686,6 +705,7 @@ export async function runNewsletter(
       );
       const sending = { ...run, status: 'sending', broadcastId: created.id };
       await runs.put(id, sending);
+      stage = 'validating';
       // Recheck the live records immediately before dispatch. Staged revisions
       // and entries unpublished during preparation never enter a send.
       const firstDay = await newsletterFirstDay(ctx);
@@ -702,23 +722,20 @@ export async function runNewsletter(
       }
       if (!(await newsletterSettings(ctx)).enabled)
         throw new Error('Newsletter paused');
-      const currentLock = await ctx.kv.getVersioned('send-lock');
-      if (
-        currentLock?.revision !== lock.revision ||
-        Date.now() - startedAt >= 120_000
-      )
-        throw new Error('Send lease expired');
+      await requireSendLease();
+      stage = 'sending';
       await provider(
         ctx,
         `/broadcasts/${encodeURIComponent(created.id)}/send`,
         'POST',
         {},
       );
+      stage = 'recording';
       await completeRun(ctx, id, runSchema.parse(sending));
     } catch {
       const existing = runSchema.parse(await runs.get(id));
       await runs.put(id, { ...existing, status: 'uncertain' });
-      ctx.log.warn('newsletter_send_needs_review');
+      ctx.log.warn('newsletter_send_needs_review', { stage });
     }
   } finally {
     await ctx.kv.compareAndDelete('send-lock', lock.revision);
