@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { LocateFixed, Minus, Plus } from 'lucide-react';
+import { Minus, Plus } from 'lucide-react';
 import type { MapReference } from '../lib/map';
 import { resolveMapPhoto } from '../lib/map-photo-controller';
 import {
@@ -467,18 +467,6 @@ export function JapanMapView({
         role="group"
         aria-label="Map controls"
       >
-        <Button
-          className={`${controlClass} rounded-none border-border shadow-sm`}
-          disabled={!ready}
-          aria-label="Fit all media"
-          title="Fit all media"
-          onClick={() => {
-            setActive(null);
-            setCamera(fitMapPoints(points, size));
-          }}
-        >
-          <LocateFixed aria-hidden="true" />
-        </Button>
         <div className="flex flex-col border border-border bg-background shadow-sm">
           <Button
             className={`${controlClass} rounded-none border-0 border-b border-border`}
