@@ -9,7 +9,7 @@ interface Props {
   media: TripMedia[];
 }
 const { media } = Astro.props;
-const { projectMedia, land } = tripMap(media);
+const { projectMedia, land, references } = tripMap(media);
 import { JapanMapView } from './JapanMapView';
 const points = media.flatMap((item) => {
   const point = projectMedia(item);
@@ -44,4 +44,9 @@ const points = media.flatMap((item) => {
 });
 ---
 
-<JapanMapView land={land || ''} points={points} client:load />
+<JapanMapView
+  land={land || ''}
+  points={points}
+  references={references}
+  client:load
+/>

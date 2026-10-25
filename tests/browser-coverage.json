@@ -5358,6 +5358,18 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Real browser conversion of deterministic synthetic portrait noise stays below the upload preview limit, preserves every original byte and creates a private draft."
+    },
+    {
+      "file": "tests/browser/map-controls.spec.ts",
+      "titlePath": [
+        "map-controls.spec.ts",
+        "map controls zoom, fit and retain geographic context on desktop and mobile"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "retain native map control and geographic context assertions per PR"
     }
   ]
 }

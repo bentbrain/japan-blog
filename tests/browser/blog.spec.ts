@@ -18,7 +18,9 @@ async function expectSystemTheme(page: Page, scheme: 'light' | 'dark') {
   );
   await expect(page.locator('html')).toHaveCSS('color-scheme', scheme);
   if (new URL(page.url()).pathname === '/') {
-    await expect(page.locator('#japan-map svg > path')).toHaveCSS(
+    await expect(
+      page.locator('#japan-map svg[aria-label="Japan media map"] > path'),
+    ).toHaveCSS(
       'fill',
       scheme === 'dark' ? 'rgb(11, 19, 41)' : 'rgb(255, 255, 255)',
     );
