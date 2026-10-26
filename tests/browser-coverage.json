@@ -5423,13 +5423,13 @@
       "file": "tests/browser/map-roads.spec.ts",
       "titlePath": [
         "map-roads.spec.ts",
-        "road context stays aligned through zoom, pan, themes and preview gestures"
+        "map has no highway overlay through zoom, pan, themes and preview gestures"
       ],
       "perPrBrowser": true,
       "fullBrowser": true,
       "perPrContracts": [],
       "representatives": [],
-      "disposition": "Viewport-only road tiles align with synthetic locations and preserve native map interactions, attribution, anonymous requests and failure recovery."
+      "disposition": "Highway overlays and provider requests stay absent at every zoom while local geographic context, markers, pan and previews remain available across themes and viewports."
     },
     {
       "file": "tests/browser/map-roads.spec.ts",
