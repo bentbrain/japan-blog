@@ -286,3 +286,109 @@ test('road context stays aligned through zoom, pan, themes and preview gestures'
     ).toBe(true);
   }
 });
+
+test('private GPS revisions never request external tiles in edit mode or native preview', async ({
+  page,
+  baseURL,
+}) => {
+  const api = page.request;
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL ?? '' };
+  await api.post('/_emdash/api/setup/dev-bypass', { headers, data: {} });
+  await api.get('/_emdash/api/auth/dev-bypass');
+  const response = await api.post('/_emdash/api/content/media_items', {
+    headers,
+    data: {
+      slug: `synthetic-private-roads-${crypto.randomUUID()}`,
+      data: {
+        title: 'Synthetic private road location',
+        kind: 'photo',
+        captured_at: '2099-10-18T12:00:00+09:00',
+        latitude: 35.681236,
+        longitude: 139.767125,
+        place: 'synthetic live tokyo',
+        categories: [],
+        demo: true,
+        source_url: '/demo/japan.jpg',
+      },
+    },
+  });
+  expect(response.status()).toBe(201);
+  const record = z.object({
+    data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
+  });
+  const { item, _rev } = record.parse(await response.json()).data;
+  const path = `/_emdash/api/content/media_items/${item.id}`;
+  try {
+    expect(
+      (await api.post(`${path}/publish`, { headers, data: { _rev } })).ok(),
+    ).toBe(true);
+    const live = record.parse(await (await api.get(path)).json()).data;
+    expect(
+      (
+        await api.put(path, {
+          headers,
+          data: {
+            _rev: live._rev,
+            data: {
+              latitude: 43.0618,
+              longitude: 141.3545,
+              place: 'synthetic unpublished sapporo',
+            },
+          },
+        })
+      ).ok(),
+    ).toBe(true);
+    const preview = await api.post(`${path}/preview-url`, {
+      headers,
+      data: {},
+    });
+    expect(preview.ok()).toBe(true);
+    const previewUrl = z
+      .object({ data: z.object({ url: z.string() }) })
+      .parse(await preview.json()).data.url;
+    const query = new URL(previewUrl, baseURL).searchParams;
+    const tileRequests: string[] = [];
+    await page.route('https://toolbar.bent.build/embed.js', (route) =>
+      route.fulfill({ contentType: 'application/javascript', body: '' }),
+    );
+    await page.route('https://cyberjapandata.gsi.go.jp/**', (route) => {
+      tileRequests.push(route.request().url());
+      return route.abort();
+    });
+    for (const mode of ['edit', 'preview']) {
+      await page.context().addCookies([
+        {
+          name: 'emdash-edit-mode',
+          value: mode === 'edit' ? 'true' : 'false',
+          url: baseURL ?? 'http://127.0.0.1:4391',
+        },
+      ]);
+      const search =
+        mode === 'preview' ? new URLSearchParams(query) : new URLSearchParams();
+      search.set('media', item.id);
+      await page.goto(`/?${search.toString()}#japan-map`);
+      const map = page.locator('#japan-map');
+      await expect(
+        page.locator('[data-feedback-id="map-preview"]'),
+      ).toBeVisible();
+      await page.getByRole('button', { name: 'Close map preview' }).click();
+      const marker = map.getByRole('button', {
+        name: 'synthetic unpublished sapporo, 1 items',
+        exact: true,
+      });
+      await expect(marker).toBeVisible();
+      const zoom = map.getByRole('button', { name: 'Zoom in', exact: true });
+      while (Number(await map.getAttribute('data-zoom')) < 3072)
+        await zoom.click();
+      await expect(marker).toBeVisible();
+      await expect(map.locator('[data-map-tile]')).toHaveCount(0);
+      await marker.click();
+      await expect(
+        page.locator('[data-feedback-id="map-preview"]'),
+      ).toBeVisible();
+      expect(tileRequests).toEqual([]);
+    }
+  } finally {
+    expect((await api.delete(path, { headers })).ok()).toBe(true);
+  }
+});

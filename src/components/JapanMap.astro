@@ -49,5 +49,6 @@ const points = media.flatMap((item) => {
   points={points}
   references={references}
   world={world}
+  privateMediaRender={Boolean(Astro.locals.privateMediaRender)}
   client:load
 />

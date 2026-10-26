@@ -118,11 +118,13 @@ export function JapanMapView({
   points,
   references = [],
   world,
+  privateMediaRender,
 }: {
   land: string;
   points: MapItem[];
   references?: MapReference[];
   world: MapWorld;
+  privateMediaRender: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, MapPoint>());
@@ -339,7 +341,11 @@ export function JapanMapView({
           d={land}
         />
         <MapRoadTiles
-          tiles={ready ? visibleMapTiles(world, camera, size) : []}
+          tiles={
+            ready && !privateMediaRender
+              ? visibleMapTiles(world, camera, size)
+              : []
+          }
           width={size.width}
           height={size.height}
         />
