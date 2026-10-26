@@ -346,12 +346,18 @@ test('public photo call sites deliver bounded responsive images without losing p
       await page.goto(`/?media=${ids[0] || ''}#japan-map`);
       const preview = page.locator('[data-feedback-id="map-preview"]');
       await expect(preview).toBeVisible();
-      const mapPhoto = preview.locator('img');
-      await mapPhoto.evaluate(async (image) => {
-        if (image instanceof HTMLImageElement) await image.decode();
-      });
-      if (!(await mapPhoto.getAttribute('srcset')))
-        failures.push('map missing responsive candidates');
+      const mapPhotos = preview.locator('img');
+      await expect(mapPhotos).toHaveCount(ids.length);
+      for (const mapPhoto of await mapPhotos.all()) {
+        await mapPhoto.evaluate(async (image) => {
+          if (image instanceof HTMLImageElement) await image.decode();
+        });
+        if (
+          !(await mapPhoto.getAttribute('srcset')) ||
+          !(await mapPhoto.getAttribute('sizes'))
+        )
+          failures.push('map missing responsive candidates');
+      }
       if (evidence)
         await preview.screenshot({
           caret: 'initial',
