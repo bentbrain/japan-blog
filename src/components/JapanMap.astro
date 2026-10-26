@@ -9,7 +9,7 @@ interface Props {
   media: TripMedia[];
 }
 const { media } = Astro.props;
-const { projectMedia, land, references } = tripMap(media);
+const { projectMedia, land, references, world } = tripMap(media);
 import { JapanMapView } from './JapanMapView';
 const points = media.flatMap((item) => {
   const point = projectMedia(item);
@@ -48,5 +48,7 @@ const points = media.flatMap((item) => {
   land={land || ''}
   points={points}
   references={references}
+  world={world}
+  privateMediaRender={Boolean(Astro.locals.privateMediaRender)}
   client:load
 />

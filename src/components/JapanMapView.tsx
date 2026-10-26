@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { LocateFixed, Minus, Plus } from 'lucide-react';
+import { MapRoadTiles } from './MapRoadTiles';
+import { visibleMapTiles, type MapWorld } from '../lib/map-tiles';
 import type { MapReference } from '../lib/map';
 import { resolveMapPhoto } from '../lib/map-photo-controller';
 import {
@@ -115,10 +117,14 @@ export function JapanMapView({
   land,
   points,
   references = [],
+  world,
+  privateMediaRender,
 }: {
   land: string;
   points: MapItem[];
   references?: MapReference[];
+  world: MapWorld;
+  privateMediaRender: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, MapPoint>());
@@ -249,7 +255,7 @@ export function JapanMapView({
             event.button !== 0 ||
             !(event.target instanceof Element) ||
             !event.currentTarget.contains(event.target) ||
-            event.target.closest('button')
+            event.target.closest('button, a')
           )
             return;
           // Pointer capture keeps panning active but does not stop native text
@@ -317,7 +323,7 @@ export function JapanMapView({
             !moved.current &&
             event.target instanceof Element &&
             event.currentTarget.contains(event.target) &&
-            !event.target.closest('button')
+            !event.target.closest('button, a')
           ) {
             const bounds = event.currentTarget.getBoundingClientRect();
             zoomBy(2, {
@@ -333,6 +339,15 @@ export function JapanMapView({
           transform={`translate(${String(size.width / 2)} ${String(size.height / 2)}) scale(${String(camera.zoom)}) translate(${String(-camera.x)} ${String(-camera.y)})`}
           strokeLinejoin="round"
           d={land}
+        />
+        <MapRoadTiles
+          tiles={
+            ready && !privateMediaRender
+              ? visibleMapTiles(world, camera, size)
+              : []
+          }
+          width={size.width}
+          height={size.height}
         />
         {references.map((reference) => {
           const x = (reference.x - camera.x) * camera.zoom + size.width / 2;
