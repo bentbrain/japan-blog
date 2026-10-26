@@ -5394,6 +5394,30 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Bounded nearby native photo preloading, decoded DOM reuse, stable navigation geometry and close cleanup."
+    },
+    {
+      "file": "tests/browser/gallery-masonry.spec.ts",
+      "titlePath": [
+        "gallery-masonry.spec.ts",
+        "gallery packs mixed photo heights with JavaScript true"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Mixed intrinsic photo heights pack without row gaps at all gallery breakpoints; filtering, history, source order and no-JavaScript navigation remain intact."
+    },
+    {
+      "file": "tests/browser/gallery-masonry.spec.ts",
+      "titlePath": [
+        "gallery-masonry.spec.ts",
+        "gallery packs mixed photo heights with JavaScript false"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Mixed intrinsic photo heights pack without row gaps at all gallery breakpoints; filtering, history, source order and no-JavaScript navigation remain intact."
     }
   ]
 }
