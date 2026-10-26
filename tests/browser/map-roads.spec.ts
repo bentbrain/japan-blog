@@ -47,6 +47,39 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
       )
     ).ok(),
   ).toBe(true);
+  // Match the shared suite's nearby gallery fixture even in an isolated run.
+  // It must cluster at country/broad zoom and split at regional/street zoom.
+  const nearby = await request.post('/_emdash/api/content/media_items', {
+    headers,
+    data: {
+      slug: `synthetic-road-nearby-${crypto.randomUUID()}`,
+      data: {
+        title: 'Synthetic nearby photo',
+        kind: 'photo',
+        captured_at: '2099-10-15T12:00:00+09:00',
+        latitude: 35.6895,
+        longitude: 139.6917,
+        place: 'synthetic nearby tokyo',
+        categories: [],
+        demo: true,
+        source_url: '/demo/japan.jpg',
+      },
+    },
+  });
+  expect(nearby.status()).toBe(201);
+  const nearbyRecord = z
+    .object({
+      data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
+    })
+    .parse(await nearby.json()).data;
+  expect(
+    (
+      await request.post(
+        `/_emdash/api/content/media_items/${nearbyRecord.item.id}/publish`,
+        { headers, data: { _rev: nearbyRecord._rev } },
+      )
+    ).ok(),
+  ).toBe(true);
   await page.route('https://toolbar.bent.build/embed.js', (route) =>
     route.fulfill({ contentType: 'application/javascript', body: '' }),
   );
@@ -103,13 +136,18 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
             await expect(
               map.locator('[data-map-context="island"]').first(),
             ).toBeVisible();
-          if (state === 'regional')
+          // At regional zoom, nearby media can correctly suppress Tokyo's
+          // reference label to avoid overlap. Check city context at broad zoom.
+          if (state === 'broad')
             await expect(
               map.locator('[data-map-context="city"]').first(),
             ).toBeVisible();
           await expect(
             map.getByRole('button', {
-              name: 'synthetic tokyo station, 1 items',
+              name:
+                state === 'country' || state === 'broad'
+                  ? /^synthetic tokyo station, (?:[2-9]|[1-9]\d+) items$/
+                  : 'synthetic tokyo station, 1 items',
               exact: true,
             }),
           ).toBeVisible();
@@ -140,21 +178,24 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
         expect(afterPan?.y).toBeCloseTo(beforePan.y + 30, 0);
         await expect(svg).toBeFocused();
         await marker.click();
-        await expect(
-          page.locator('[data-feedback-id="map-preview"]'),
-        ).toBeVisible();
+        const preview = page.locator('[data-feedback-id="map-preview"]');
+        await expect(preview).toBeVisible();
+        await expect(preview.getByRole('heading')).toHaveText(
+          'synthetic tokyo station / 1 of 1',
+        );
         await page.getByRole('button', { name: 'Close map preview' }).click();
       }
     }
     expect(tileRequests).toEqual([]);
   } finally {
-    expect(
-      (
-        await request.delete(`/_emdash/api/content/media_items/${item.id}`, {
-          headers,
-        })
-      ).ok(),
-    ).toBe(true);
+    for (const id of [item.id, nearbyRecord.item.id])
+      expect(
+        (
+          await request.delete(`/_emdash/api/content/media_items/${id}`, {
+            headers,
+          })
+        ).ok(),
+      ).toBe(true);
   }
 });
 
