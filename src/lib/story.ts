@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { daySchema } from './model';
+import { numberedTripTitle } from './trip-days';
 export const storySchema = z.object({
   day: daySchema,
   title: z.string(),
@@ -21,12 +22,7 @@ export const storySchema = z.object({
 });
 export type Story = z.infer<typeof storySchema>;
 export function storyTitle(day: string, firstDay: string, place: string) {
-  const number =
-    Math.round(
-      (Date.parse(`${day}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) /
-        86_400_000,
-    ) + 1;
-  return `day ${String(number)}: ${place.toLowerCase() || 'japan'}`;
+  return numberedTripTitle(day, firstDay, place.toLowerCase() || 'japan');
 }
 export function tileCenters(count: number) {
   const steps = Math.max(1, count - 1);
@@ -88,13 +84,6 @@ export function drawStory(
     ctx.translate(center.x, center.y + Math.sin(time * 1.5 + index) * 8);
     // Upright panels, drawn from the upper-left back card to the lower-right front.
     if (story.perspective === 'angled') ctx.transform(0.78, -0.23, 0, 1, 0, 0);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(
-      -tileWidth / 2 - 8,
-      -tileHeight / 2 - 8,
-      tileWidth + 16,
-      tileHeight + 16,
-    );
     ctx.drawImage(
       image,
       -tileWidth / 2,
@@ -102,7 +91,7 @@ export function drawStory(
       tileWidth,
       tileHeight,
     );
-    ctx.strokeStyle = '#0647ff';
+    ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.strokeRect(-tileWidth / 2, -tileHeight / 2, tileWidth, tileHeight);
     ctx.restore();

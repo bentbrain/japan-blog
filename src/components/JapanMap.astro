@@ -1,11 +1,15 @@
 ---
+import {
+  displayPreviewReference,
+  responsiveImage,
+} from '../lib/responsive-image';
 import { tripMap } from '../lib/map';
-import { posterUrl, type TripMedia } from '../lib/model';
+import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
 interface Props {
   media: TripMedia[];
 }
 const { media } = Astro.props;
-const { projectMedia, land } = tripMap(media);
+const { projectMedia, land, references, world } = tripMap(media);
 import { JapanMapView } from './JapanMapView';
 const points = media.flatMap((item) => {
   const point = projectMedia(item);
@@ -19,10 +23,32 @@ const points = media.flatMap((item) => {
       slug: item.slug,
       title: item.title,
       place: item.place,
-      src: posterUrl(item),
+      kind: item.kind,
+      src: mediaUrl(item),
+      poster: posterUrl(item),
+      photo:
+        Astro.locals.privateMediaRender || item.kind === 'video'
+          ? { src: posterUrl(item) }
+          : responsiveImage(
+              posterUrl(item),
+              '(min-width: 672px) 614px, calc(100vw - 58px)',
+            ),
+      photoResolution:
+        !Astro.locals.privateMediaRender &&
+        item.kind === 'photo' &&
+        displayPreviewReference(posterUrl(item))
+          ? `/map-photo/${item.id}/${displayPreviewReference(posterUrl(item)) || ''}`
+          : undefined,
     },
   ];
 });
 ---
 
-<JapanMapView land={land || ''} points={points} client:load />
+<JapanMapView
+  land={land || ''}
+  points={points}
+  references={references}
+  world={world}
+  privateMediaRender={Boolean(Astro.locals.privateMediaRender)}
+  client:load
+/>

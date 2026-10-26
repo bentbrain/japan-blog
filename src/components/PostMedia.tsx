@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { mediaUrl, posterUrl, type TripMedia } from '../lib/model';
+import { responsiveImage, cardImageSizes } from '../lib/responsive-image';
 import { shopDesignSchema } from '../lib/shop-design';
 import { PostDesign } from './PostDesign';
 import {
@@ -18,7 +19,11 @@ function CarouselControls({ count }: { count: number }) {
   useEffect(() => {
     if (!api) return;
     const update = () => {
-      setCurrent(api.selectedScrollSnap() + 1);
+      const selected = api.selectedScrollSnap();
+      setCurrent(selected + 1);
+      api.slideNodes().forEach((slide, index) => {
+        slide.dataset.videoActive = String(index === selected);
+      });
     };
     update();
     api.on('select', update);
@@ -44,18 +49,34 @@ function CarouselControls({ count }: { count: number }) {
 const carouselOptions: CarouselOptions = {
   align: 'start',
   containScroll: 'trimSnaps',
-  watchDrag: (_api, event) =>
-    !(event.target instanceof Element && event.target.closest('video')),
+  breakpoints: {
+    '(prefers-reduced-motion: reduce)': { duration: 0 },
+  },
+  watchDrag: (_api, event) => {
+    const video =
+      event.target instanceof Element ? event.target.closest('video') : null;
+    if (!(video instanceof HTMLVideoElement)) return true;
+    if (document.fullscreenElement) return false;
+    const point = 'touches' in event ? event.touches[0] : event;
+    // Leave the native control bar's pointer gestures to the video player.
+    return Boolean(
+      point && point.clientY < video.getBoundingClientRect().bottom - 56,
+    );
+  },
 };
 
 export function PostMedia({
   items,
   design: value,
   title,
+  sizes = cardImageSizes,
+  responsive = true,
 }: {
   items: TripMedia[];
   design?: unknown;
   title: string;
+  sizes?: string;
+  responsive?: boolean;
 }) {
   const parsed = shopDesignSchema.safeParse(value);
   const design = parsed.success ? parsed.data : undefined;
@@ -63,46 +84,52 @@ export function PostMedia({
   if (!count) return null;
   return (
     <Carousel
-      className="post-carousel @container/media min-w-0"
+      className="post-carousel min-w-0"
       aria-label={`${title} media`}
       opts={carouselOptions}
     >
-      <CarouselContent className="post-media -ml-[5px] touch-pan-y items-start select-none">
+      <CarouselContent className="post-media ml-0 h-[min(320px,50svh)] touch-pan-y items-start select-none">
         {items.map((item, index) => (
           <CarouselItem
             key={item.id}
             aria-label={`${String(index + 1)} of ${String(count)}`}
-            className={`pl-[5px] ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`}
+            data-video-active={index === 0 ? 'true' : 'false'}
+            className="h-full basis-full pl-0"
           >
             {item.kind === 'video' ? (
               <div
-                className="media-tile relative min-w-0 overflow-hidden bg-muted"
+                className="media-tile relative h-full min-w-0 overflow-hidden bg-muted"
                 data-feedback-id={`media-${item.id}`}
               >
                 <video
+                  data-visibility-video
+                  muted
+                  loop
                   src={mediaUrl(item)}
                   poster={posterUrl(item)}
                   controls
                   playsInline
                   preload="metadata"
                   aria-label={item.title}
-                  className="block h-auto w-full"
+                  className="block size-full object-contain"
                 />
               </div>
             ) : (
               <a
-                className="media-tile relative block min-w-0 overflow-hidden bg-muted"
+                className="media-tile relative block h-full min-w-0 overflow-hidden bg-muted"
                 href={`/media/${item.slug || item.id}`}
                 aria-label={item.title}
                 data-feedback-id={`media-${item.id}`}
                 draggable={false}
               >
                 <img
-                  src={posterUrl(item)}
+                  {...(responsive
+                    ? responsiveImage(posterUrl(item), sizes)
+                    : { src: posterUrl(item) })}
                   alt={item.title}
                   loading="lazy"
                   draggable={false}
-                  className="block h-auto w-full"
+                  className="block size-full object-contain"
                 />
               </a>
             )}
@@ -111,7 +138,7 @@ export function PostMedia({
         {design && (
           <CarouselItem
             aria-label={`${String(count)} of ${String(count)}, shop design`}
-            className={`post-design-slide px-4 pb-4 ${count > 1 ? 'basis-[88%] @min-[640px]/media:basis-[70%]' : 'basis-full'}`}
+            className="post-design-slide h-full basis-full px-4 pb-4 [&_.post-design]:h-full [&_.post-design_img]:h-full"
           >
             <PostDesign design={design} />
           </CarouselItem>

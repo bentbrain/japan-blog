@@ -42,3 +42,24 @@ void test('mobile camera frames photo locations closely while keeping every pin 
   assert.equal(fitMapPoints(points.slice(0, 1), size).zoom, 3);
   assert.ok(Number.isFinite(fitMapPoints([], size).zoom));
 });
+
+void test('pointer-centred zoom preserves the anchored map location at zoom limits', async () => {
+  const { zoomMapAt, MIN_MAP_ZOOM, MAX_MAP_ZOOM } =
+    await import('../src/lib/map-view');
+  for (const factor of [0.001, 0.5, 2, 100000]) {
+    const camera = { x: 420, y: 200, zoom: 3 };
+    const anchor = { x: 160, y: -70 };
+    const next = zoomMapAt(camera, factor, anchor);
+    assert.ok(next.zoom >= MIN_MAP_ZOOM && next.zoom <= MAX_MAP_ZOOM);
+    assert.ok(
+      Math.abs(
+        next.x + anchor.x / next.zoom - (camera.x + anchor.x / camera.zoom),
+      ) < 1e-9,
+    );
+    assert.ok(
+      Math.abs(
+        next.y + anchor.y / next.zoom - (camera.y + anchor.y / camera.zoom),
+      ) < 1e-9,
+    );
+  }
+});
