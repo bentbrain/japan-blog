@@ -5418,6 +5418,18 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Mixed intrinsic photo heights pack without row gaps at all gallery breakpoints; filtering, history, source order and no-JavaScript navigation remain intact."
+    },
+    {
+      "file": "tests/browser/map-roads.spec.ts",
+      "titlePath": [
+        "map-roads.spec.ts",
+        "road context stays aligned through zoom, pan, themes and preview gestures"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Viewport-only road tiles align with synthetic locations and preserve native map interactions, attribution, anonymous requests and failure recovery."
     }
   ]
 }
