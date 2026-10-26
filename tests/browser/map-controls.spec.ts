@@ -1,4 +1,21 @@
 import { test, expect } from '@playwright/test';
+import { z } from 'zod';
+
+let selectionFixtureId: string | undefined;
+test.afterEach(async ({ request, baseURL }) => {
+  if (!selectionFixtureId) return;
+  expect(
+    (
+      await request.delete(
+        `/_emdash/api/content/media_items/${selectionFixtureId}`,
+        {
+          headers: { 'X-EmDash-Request': '1', Origin: baseURL ?? '' },
+        },
+      )
+    ).ok(),
+  ).toBe(true);
+  selectionFixtureId = undefined;
+});
 
 test('map controls zoom, fit and retain geographic context on desktop and mobile', async ({
   page,
@@ -9,6 +26,44 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
     headers: { 'X-EmDash-Request': '1', Origin: baseURL ?? '' },
     data: {},
   });
+  await request.get('/_emdash/api/auth/dev-bypass');
+  const headers = { 'X-EmDash-Request': '1', Origin: baseURL ?? '' };
+  const created = await request.post('/_emdash/api/content/media_items', {
+    headers,
+    data: {
+      slug: `synthetic-map-selection-${crypto.randomUUID()}`,
+      data: {
+        title: 'Synthetic map selection photo',
+        kind: 'photo',
+        // Keep this fixture first in its cluster, ahead of shared suite media.
+        captured_at: '2099-10-17T12:00:00+09:00',
+        latitude: 35.6762,
+        longitude: 139.6503,
+        place: 'synthetic tokyo',
+        categories: [],
+        demo: true,
+        source_url: '/demo/japan.jpg',
+      },
+    },
+  });
+  expect(created.status()).toBe(201);
+  const { item, _rev } = z
+    .object({
+      data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
+    })
+    .parse(await created.json()).data;
+  selectionFixtureId = item.id;
+  expect(
+    (
+      await request.post(
+        `/_emdash/api/content/media_items/${item.id}/publish`,
+        {
+          headers,
+          data: { _rev },
+        },
+      )
+    ).ok(),
+  ).toBe(true);
   await page.route('https://toolbar.bent.build/embed.js', (route) =>
     route.fulfill({ contentType: 'application/javascript', body: '' }),
   );
@@ -48,6 +103,63 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
       clientY: 250,
     });
     await expect(map).toHaveAttribute('data-zoom', String(initial));
+    // A real mouse gesture must pan without selecting SVG labels or pin counts.
+    await fit.click();
+    const land = svg.locator(':scope > path');
+    const transform = await land.getAttribute('transform');
+    const label = svg.locator('text').filter({ hasText: 'synthetic tokyo' });
+    const labelBox = await label.boundingBox();
+    if (!labelBox) throw new Error('Map label bounds required');
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await page.mouse.move(labelBox.x + 2, labelBox.y + labelBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(labelBox.x + 72, labelBox.y + labelBox.height / 2, {
+      steps: 8,
+    });
+    if (process.env.MAP_SELECTION_EVIDENCE)
+      await map.screenshot({
+        path: `${process.env.MAP_SELECTION_EVIDENCE}-${String(width)}.png`,
+      });
+    await page.mouse.up();
+    expect(await land.getAttribute('transform')).not.toBe(transform);
+    expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(
+      '',
+    );
+    await expect(svg).toBeFocused();
+    const panned = await land.getAttribute('transform');
+    await page.keyboard.press('ArrowLeft');
+    expect(await land.getAttribute('transform')).not.toBe(panned);
+    await page.keyboard.press('+');
+    await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
+    await fit.click();
+    const marker = map.getByRole('button', {
+      // Earlier browser tests can publish nearby media into the same cluster.
+      name: /^synthetic tokyo, [1-9]\d* items$/,
+    });
+    await marker.focus();
+    await page.keyboard.press('Enter');
+    const preview = page.locator('[data-feedback-id="map-preview"]');
+    await expect(preview).toBeVisible();
+    // Preview text remains copyable, outside the panning canvas.
+    const title = preview.getByRole('heading');
+    const titleBox = await title.boundingBox();
+    if (!titleBox) throw new Error('Preview title bounds required');
+    await page.mouse.move(titleBox.x + 1, titleBox.y + titleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      titleBox.x + titleBox.width - 1,
+      titleBox.y + titleBox.height / 2,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+    expect(
+      await page.evaluate(() => window.getSelection()?.toString()),
+    ).toContain('synthetic tokyo');
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await preview.getByRole('button', { name: 'Close map preview' }).click();
+    await marker.click();
+    await expect(preview).toBeVisible();
+    await preview.getByRole('button', { name: 'Close map preview' }).click();
     for (let index = 0; index < 8 && (await zoomOut.isEnabled()); index++)
       await zoomOut.click();
     await expect(zoomOut).toBeDisabled();

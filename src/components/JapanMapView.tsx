@@ -216,6 +216,11 @@ export function JapanMapView({
             event.target.closest('button')
           )
             return;
+          // Pointer capture keeps panning active but does not stop native text
+          // selection. Cancel that default only for canvas gestures, then keep
+          // the map focusable for keyboard pan/zoom after a pointer interaction.
+          event.preventDefault();
+          event.currentTarget.focus({ preventScroll: true });
           event.currentTarget.setPointerCapture(event.pointerId);
           pointers.current.set(event.pointerId, {
             x: event.clientX,
@@ -368,7 +373,7 @@ export function JapanMapView({
               >
                 <PopoverTrigger
                   disabled={!ready}
-                  className="map-marker flex size-11 items-center justify-center rounded-full border-[1.5px] border-background bg-foreground p-0 text-xs text-white outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="map-marker flex size-11 items-center justify-center rounded-full border-[1.5px] border-background bg-foreground p-0 text-xs text-white outline-none select-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   aria-label={`${group.items[0]?.place || 'location'}, ${String(group.items.length)} items`}
                 >
                   {group.items.length}
