@@ -1,4 +1,10 @@
-import { test, expect } from '@playwright/test';
+import {
+  test,
+  expect,
+  type Request,
+  type Response,
+  type ConsoleMessage,
+} from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
@@ -318,9 +324,110 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
         elements.map((element) => element.getAttribute('aria-label')),
       ),
   ).toEqual([middle.title, late.title, early.title]);
-  await page.goto(editorUrl);
-  await page.goto(`/_emdash/admin/content/posts/${id}`);
-  await expect(page.locator('main h1')).toHaveText('Synthetic ordered gallery');
+  // Retain only allowlisted metadata, emitted only if the original transition fails.
+  const nativePath = `/_emdash/admin/content/posts/${id}`;
+  const origin = new URL(editorUrl).origin;
+  const started = Date.now();
+  const counts = { pageErrors: 0, consoleErrors: 0, requestFailures: 0 };
+  const requests = new Map<
+    Request,
+    {
+      label: string;
+      startedMs: number;
+      status: number | null;
+      responseMs: number | null;
+    }
+  >();
+  const onPageError = () => {
+    counts.pageErrors++;
+  };
+  const onConsole = (message: ConsoleMessage) => {
+    if (message.type() === 'error') counts.consoleErrors++;
+  };
+  const onRequestFailure = () => {
+    counts.requestFailures++;
+  };
+  const onRequest = (request: Request) => {
+    const url = new URL(request.url());
+    if (url.origin !== origin || request.method() !== 'GET') return;
+    const label = new Map([
+      ['/_emdash/api/manifest', 'manifest'],
+      ['/_emdash/api/auth/me', 'auth/me'],
+      [`/_emdash/api/content/posts/${id}`, 'synthetic-post'],
+    ]).get(url.pathname);
+    if (label)
+      requests.set(request, {
+        label,
+        startedMs: Date.now() - started,
+        status: null,
+        responseMs: null,
+      });
+  };
+  const onResponse = (response: Response) => {
+    const entry = requests.get(response.request());
+    if (entry) {
+      entry.status = response.status();
+      entry.responseMs = Date.now() - started;
+    }
+  };
+  page.on('pageerror', onPageError);
+  page.on('console', onConsole);
+  page.on('requestfailed', onRequestFailure);
+  page.on('request', onRequest);
+  page.on('response', onResponse);
+  try {
+    await page.goto(editorUrl);
+    await page.goto(nativePath);
+    await expect(page.locator('main h1')).toHaveText(
+      'Synthetic ordered gallery',
+    );
+  } catch (error) {
+    try {
+      const elapsedMs = Date.now() - started;
+      // Closed pages or interrupted execution must not replace the original error.
+      const [bootLoader, headings] = await Promise.allSettled([
+        page.getByText('Loading EmDash...', { exact: true }).isVisible(),
+        page.locator('main h1').count(),
+      ]);
+      const finalUrl = new URL(page.url());
+      const targetMatch =
+        finalUrl.origin === origin && finalUrl.pathname === nativePath;
+      const navigation =
+        finalUrl.origin !== origin
+          ? 'other-origin'
+          : targetMatch
+            ? 'native-editor'
+            : finalUrl.pathname === new URL(editorUrl).pathname
+              ? 'owner-editor'
+              : /^\/_emdash\/(?:admin\/)?(?:login|auth)(?:\/|$)/.test(
+                    finalUrl.pathname,
+                  )
+                ? 'auth'
+                : 'other';
+      console.log(
+        'GALLERY_NATIVE_NAVIGATION_DIAGNOSTIC',
+        JSON.stringify({
+          elapsedMs,
+          navigation,
+          targetMatch,
+          ...counts,
+          bootLoaderVisible:
+            bootLoader.status === 'fulfilled' ? bootLoader.value : null,
+          mainH1Count: headings.status === 'fulfilled' ? headings.value : null,
+          requests: [...requests.values()],
+        }),
+      );
+    } catch {
+      // Diagnostic collection must never replace the original failure.
+    }
+    throw error;
+  } finally {
+    page.off('pageerror', onPageError);
+    page.off('console', onConsole);
+    page.off('requestfailed', onRequestFailure);
+    page.off('request', onRequest);
+    page.off('response', onResponse);
+  }
   const welcome = page
     .getByRole('dialog')
     .filter({ hasText: 'Welcome to EmDash' });
