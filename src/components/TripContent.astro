@@ -3,6 +3,7 @@ import type { ComponentProps } from 'astro/types';
 import { PortableText } from 'emdash/ui';
 import InlinePhoto from './InlinePhoto.astro';
 import InlineGallery from './InlineGallery.astro';
+import TripCode from './TripCode.astro';
 import type { TripMedia } from '../lib/model';
 interface Props {
   value: ComponentProps<typeof PortableText>['value'];
@@ -12,7 +13,11 @@ const { value, media } = Astro.props;
 Astro.locals.publishedTripMedia = media;
 ---
 
-<PortableText
-  value={value}
-  components={{ type: { image: InlinePhoto, gallery: InlineGallery } }}
-/>
+<div class="rich-text min-w-0">
+  <PortableText
+    value={value}
+    components={{
+      type: { image: InlinePhoto, gallery: InlineGallery, code: TripCode },
+    }}
+  />
+</div>

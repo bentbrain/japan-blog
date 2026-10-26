@@ -63,6 +63,20 @@
   }
 }
 
+@utility rich-text {
+  & :where(:not(pre) > code) {
+    @apply border bg-muted px-1 py-0.5 font-mono text-[0.9em] font-normal wrap-anywhere box-decoration-clone;
+  }
+  & :where(pre) {
+    @apply mb-4 max-w-full overflow-x-auto rounded-none border bg-muted p-4 font-mono text-xs leading-relaxed;
+    /* Override ProseMirror's injected, unlayered pre-wrap rule in the editor. */
+    @apply whitespace-pre!;
+  }
+  & :where(pre code) {
+    @apply border-0 bg-transparent p-0 font-mono font-normal text-inherit;
+  }
+}
+
 /* shadcn/ui state variants, MIT license. */
 /* Custom variants */
 @custom-variant data-open {

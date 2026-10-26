@@ -48,3 +48,20 @@ export function clusterMapPoints<T extends MapPoint>(
   }
   return groups;
 }
+
+// Keep the map coordinate under the pointer fixed as zoom changes.
+export function zoomMapAt(
+  camera: MapCamera,
+  factor: number,
+  anchor: MapPoint = { x: 0, y: 0 },
+): MapCamera {
+  const zoom = Math.max(
+    MIN_MAP_ZOOM,
+    Math.min(MAX_MAP_ZOOM, camera.zoom * factor),
+  );
+  return {
+    zoom,
+    x: camera.x + anchor.x / camera.zoom - anchor.x / zoom,
+    y: camera.y + anchor.y / camera.zoom - anchor.y / zoom,
+  };
+}

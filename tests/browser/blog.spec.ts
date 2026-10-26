@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { Input, BufferSource, ALL_FORMATS } from 'mediabunny';
 import { z } from 'zod';
+import { measurePublicFooter } from '../fixtures/footer-geometry';
 const run = promisify(execFile);
 
 async function expectSystemTheme(page: Page, scheme: 'light' | 'dark') {
@@ -17,7 +18,9 @@ async function expectSystemTheme(page: Page, scheme: 'light' | 'dark') {
   );
   await expect(page.locator('html')).toHaveCSS('color-scheme', scheme);
   if (new URL(page.url()).pathname === '/') {
-    await expect(page.locator('#japan-map svg > path')).toHaveCSS(
+    await expect(
+      page.locator('#japan-map svg[aria-label="Japan media map"] > path'),
+    ).toHaveCSS(
       'fill',
       scheme === 'dark' ? 'rgb(11, 19, 41)' : 'rgb(255, 255, 255)',
     );
@@ -145,43 +148,42 @@ test('shared layout installs the toolbar once and keeps owner content private', 
     ),
   ).toBe(true);
 });
-test('mouse dragging advances the mobile post carousel', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  const gallery = page.locator('.post-media').first();
-  await expect(
-    page
-      .locator('.post-carousel')
-      .first()
-      .getByRole('button', { name: 'Next slide' }),
-  ).toBeEnabled();
-  await gallery.scrollIntoViewIfNeeded();
-  const first = gallery.locator('.media-tile').first();
-  const before = await first.evaluate((el) => el.getBoundingClientRect().left);
-  const box = await gallery.boundingBox();
-  if (!box) throw new Error('Post gallery is missing');
-  await page.mouse.move(box.x + box.width * 0.8, box.y + 60);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width * 0.15, box.y + 60, { steps: 12 });
-  await page.mouse.up();
-  await expect
-    .poll(
-      async () =>
-        before -
-        (await first.evaluate((el) => el.getBoundingClientRect().left)),
-    )
-    .toBeGreaterThan(100);
-});
-test('carousel preserves video playback and keyboard controls', async ({
+test('individual post media stays inline with direct photo links', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  const carousel = page.locator('.post-carousel').first();
-  const next = carousel.getByRole('button', { name: 'Next slide' });
-  await next.click();
-  await next.click();
-  const video = carousel.locator('video').first();
+  await page.goto('/posts/tokyo-after-dark');
+  const mosaic = page.locator('.post-mosaic');
+  await expect(mosaic.locator('.media-tile')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Next slide' })).toHaveCount(0);
+  for (const photo of await mosaic.locator('a.media-tile').all()) {
+    await expect(photo).toHaveAttribute('href', /^\/media\//);
+    await photo.scrollIntoViewIfNeeded();
+    await expect(photo).toBeInViewport();
+  }
+});
+test('post mosaic preserves video playback and keyboard controls', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/posts/tokyo-after-dark');
+  const video = page.locator('.post-mosaic video').first();
+  await video.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() =>
+      video.evaluate(
+        (element) => element instanceof HTMLVideoElement && !element.paused,
+      ),
+    )
+    .toBe(true);
+  await video.press('Space');
+  await expect
+    .poll(() =>
+      video.evaluate(
+        (element) => element instanceof HTMLVideoElement && element.paused,
+      ),
+    )
+    .toBe(true);
   await video.press('Space');
   await expect
     .poll(async () =>
@@ -234,12 +236,15 @@ test('owner attaches, recolours and removes a shop design', async ({
   ).toHaveAttribute('aria-pressed', 'true');
   await page.goto('/');
   const card = page.locator('article').filter({ hasText: 'Shop design post' });
-  await expect(card.locator('[data-slot="carousel-item"]')).toHaveCount(4);
+  await expect(card.locator('.post-media > *')).toHaveCount(4);
   await expect(card.locator('.post-media > :last-child')).toHaveClass(
     /post-design-slide/,
   );
-  await card.getByRole('button', { name: 'Next slide' }).click();
-  await expect(card.getByText('2 / 4', { exact: true })).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Next slide' })).toBeEnabled();
+  for (let index = 0; index < 3; index++)
+    await card.getByRole('button', { name: 'Next slide' }).click();
+  await expect(card.getByText('4 / 4', { exact: true })).toBeVisible();
+  await expect(card.locator('.post-design-link')).toBeInViewport();
   await expect(card.locator('.post-design img')).toHaveAttribute(
     'src',
     /\/black\.webp\?/,
@@ -257,36 +262,23 @@ test('owner attaches, recolours and removes a shop design', async ({
     /\/black\.webp\?/,
   );
   await page.setViewportSize({ width: 390, height: 844 });
-  const carousel = page.locator('.post-carousel');
-  for (let slide = 1; slide < 4; slide++) {
-    await carousel.getByRole('button', { name: 'Next slide' }).click();
-    await expect(
-      carousel.getByText(`${String(slide + 1)} / 4`, { exact: true }),
-    ).toBeVisible();
-  }
-  await expect(
-    carousel.getByRole('button', { name: 'Next slide' }),
-  ).toBeDisabled();
-  await expect
-    .poll(async () =>
-      carousel.locator('.post-design').evaluate((el) => {
-        const viewport = el.closest('[data-slot="carousel-content"]');
-        if (!viewport) return false;
-        const box = el.getBoundingClientRect(),
-          bounds = viewport.getBoundingClientRect();
-        return box.left >= bounds.left - 1 && box.right <= bounds.right + 1;
-      }),
-    )
-    .toBe(true);
+  const mosaic = page.locator('.post-mosaic');
+  await expect(mosaic.locator('.media-tile')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Next slide' })).toHaveCount(0);
+  const shopLink = mosaic.locator('.post-design-link');
+  await shopLink.scrollIntoViewIfNeeded();
+  await expect(shopLink).toBeInViewport();
   expect(
-    await carousel
-      .locator('.post-design img')
-      .evaluate((el) => el.closest('a')),
+    await mosaic.locator('.post-design img').evaluate((el) => el.closest('a')),
   ).toBeNull();
-  await expect(carousel.locator('.post-design').getByRole('link')).toHaveCount(
-    1,
+  await expect(mosaic.locator('.post-design').getByRole('link')).toHaveCount(1);
+  const designBox = await mosaic.locator('.post-design').boundingBox();
+  const articleBox = await page.locator('.single-post').boundingBox();
+  if (!designBox || !articleBox) throw new Error('Post design required');
+  expect(designBox.x).toBeGreaterThanOrEqual(articleBox.x);
+  expect(designBox.x + designBox.width).toBeLessThanOrEqual(
+    articleBox.x + articleBox.width,
   );
-  await expect(carousel.locator('.post-design-link')).toBeInViewport();
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(editorUrl);
   await page.getByRole('button', { name: 'WHITE', exact: true }).click();
@@ -339,26 +331,18 @@ for (const width of [320, 1280]) {
         .getByRole('region', { name: 'newsletter' });
       await expect(signup).toHaveCSS('padding', '0px');
       await expect(signup).toHaveCSS('border-top-width', '0px');
-      const signupBox = await signup.boundingBox();
-      const shopBox = await page
-        .locator('[data-feedback-id="shop-ad"]')
-        .boundingBox();
-      expect(signupBox).not.toBeNull();
-      expect(shopBox).not.toBeNull();
-      if (!signupBox || !shopBox)
-        throw new Error(`Missing signup or shop banner on ${path}`);
+      const {
+        signup: signupBox,
+        shop: shopBox,
+        footer: footerBox,
+        scrollHeight,
+        scrollWidth,
+      } = await measurePublicFooter(page);
       expect(shopBox.y - signupBox.y - signupBox.height).toBe(24);
       expect(shopBox.x).toBe(signupBox.x);
       expect(shopBox.width).toBe(signupBox.width);
-      const footerBox = await page.getByRole('contentinfo').boundingBox();
-      expect(footerBox).not.toBeNull();
-      if (!footerBox) throw new Error(`Missing footer on ${path}`);
-      expect(Math.round(footerBox.y + footerBox.height)).toBe(
-        await page.evaluate(() => document.documentElement.scrollHeight),
-      );
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth),
-      ).toBe(width);
+      expect(Math.round(footerBox.y + footerBox.height)).toBe(scrollHeight);
+      expect(scrollWidth).toBe(width);
     }
   });
 }
@@ -388,7 +372,7 @@ test('journal has map first, full text and playable video', async ({
   await page.getByRole('button', { name: 'Close map preview' }).click();
   await expect(page.locator('.map-detail')).toBeHidden();
 });
-test('mobile gallery uses one column and post media scrolls', async ({
+test('mobile galleries keep bounded horizontal post media without page overflow', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -406,6 +390,12 @@ test('mobile gallery uses one column and post media scrolls', async ({
       .first()
       .evaluate((el) => el.scrollWidth > el.clientWidth),
   ).toBe(true);
+  expect(
+    await page
+      .locator('.post-media')
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(320);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,

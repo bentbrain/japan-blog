@@ -206,7 +206,8 @@ export function createNewsletterAssets(
     async prepare(post) {
       if (!publicPost(post)) throw new Error('Published blog post required');
       const images = [];
-      for (const source of await photoSources(ctx, post)) {
+      const sources = await photoSources(ctx, post);
+      async function preparePhoto(source: (typeof sources)[number]) {
         const assetId =
           source.data.kind === 'video'
             ? source.data.poster?.id
@@ -215,24 +216,32 @@ export function createNewsletterAssets(
         const asset = await ctx.media?.get(assetId);
         if (!asset?.mimeType.startsWith('image/'))
           throw new Error('Published image asset unavailable');
-        images.push(
-          await prepareImage(
-            post,
-            'photo',
-            source.item.id,
-            await photoVersion(source),
-            source.data.title,
-            async () => {
-              if (!ctx.media?.readBytes)
-                throw new Error('Newsletter media transport unavailable');
-              return (
-                await ctx.media.readBytes(assetId, {
-                  maxBytes: 16 * 1024 * 1024,
-                })
-              ).bytes;
-            },
-          ),
+        return prepareImage(
+          post,
+          'photo',
+          source.item.id,
+          await photoVersion(source),
+          source.data.title,
+          async () => {
+            if (!ctx.media?.readBytes)
+              throw new Error('Newsletter media transport unavailable');
+            return (
+              await ctx.media.readBytes(assetId, {
+                maxBytes: 16 * 1024 * 1024,
+              })
+            ).bytes;
+          },
         );
+      }
+      // Keep remote reads bounded without serialising every photo in a digest.
+      for (let offset = 0; offset < sources.length; offset += 4) {
+        const batch = await Promise.allSettled(
+          sources.slice(offset, offset + 4).map(preparePhoto),
+        );
+        for (const result of batch) {
+          if (result.status === 'rejected') throw result.reason;
+          images.push(result.value);
+        }
       }
       const parsed = shopDesignSchema.safeParse(post.data.shop_design);
       if (post.data.shop_design && !parsed.success)
