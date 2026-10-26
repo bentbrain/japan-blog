@@ -5370,6 +5370,30 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "retain native map control and geographic context assertions per PR"
+    },
+    {
+      "file": "tests/browser/map-gallery-preload.spec.ts",
+      "titlePath": [
+        "map-gallery-preload.spec.ts",
+        "map gallery preloads only adjacent photos and reuses them at 390px"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Bounded nearby native photo preloading, decoded DOM reuse, stable navigation geometry and close cleanup."
+    },
+    {
+      "file": "tests/browser/map-gallery-preload.spec.ts",
+      "titlePath": [
+        "map-gallery-preload.spec.ts",
+        "map gallery preloads only adjacent photos and reuses them at 1991px"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Bounded nearby native photo preloading, decoded DOM reuse, stable navigation geometry and close cleanup."
     }
   ]
 }
