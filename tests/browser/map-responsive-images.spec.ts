@@ -174,10 +174,10 @@ for (const width of [390, 671, 672, 1280, 1991])
                 });
                 await fresh.goto(`${baseURL || ''}/?media=${id}#japan-map`);
                 const image = fresh.locator(
-                  '[data-feedback-id="map-preview"] img',
+                  '[data-feedback-id="map-preview"] [data-map-photo="active"] img',
                 );
                 await expect(image).toBeVisible();
-                const measured = await image.evaluate(async (image) => {
+                const measured = await image.evaluate(async (image, id) => {
                   if (!(image instanceof HTMLImageElement))
                     throw new Error('Photo required');
                   await image.decode();
@@ -196,7 +196,9 @@ for (const width of [390, 671, 672, 1280, 1991])
                     selected: image.currentSrc.match(/\/(\d+)\/auto$/)?.[1],
                     resolution: performance
                       .getEntriesByType('resource')
-                      .filter((entry) => entry.name.includes('/map-photo/'))
+                      .filter((entry) =>
+                        entry.name.includes(`/map-photo/${id}/`),
+                      )
                       .map((entry) => ({
                         startMs: entry.startTime,
                         durationMs: entry.duration,
@@ -206,7 +208,7 @@ for (const width of [390, 671, 672, 1280, 1991])
                     )[0]?.startTime,
                     measuredAtMs: performance.now(),
                   };
-                });
+                }, id);
                 const controlContext = await browser.newContext({
                   deviceScaleFactor: dpr,
                 });
@@ -307,7 +309,7 @@ test('gallery to viewer to map keeps the first request small, handles late fonts
   mapNavigation = true;
   await page.getByRole('link', { name: 'VIEW ON MAP', exact: true }).click();
   const popup = page.locator('[data-feedback-id="map-preview"]');
-  const image = popup.locator('img');
+  const image = popup.locator('[data-map-photo="active"] img');
   await expect(image).toBeVisible();
   await image.evaluate(async (image) => {
     if (image instanceof HTMLImageElement) await image.decode();
@@ -380,7 +382,9 @@ test('gallery to viewer to map keeps the first request small, handles late fonts
   await fresh.goto(`${baseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`, {
     waitUntil: 'domcontentloaded',
   });
-  const lateImage = fresh.locator('[data-feedback-id="map-preview"] img');
+  const lateImage = fresh.locator(
+    '[data-feedback-id="map-preview"] [data-map-photo="active"] img',
+  );
   await expect(lateImage).toBeVisible();
   await lateImage.evaluate(async (image) => {
     if (image instanceof HTMLImageElement) await image.decode();
@@ -429,19 +433,21 @@ test('only the active photo resolves before its first image, and closing cancels
   const popup = page.locator('[data-feedback-id="map-preview"]');
   await expect(popup).toBeVisible();
   try {
-    await expect(popup.locator('img')).toHaveCount(0);
+    await expect(popup.locator('[data-map-photo="active"] img')).toHaveCount(0);
     await expect.poll(() => resolutions.length).toBe(1);
     await expect(popup.getByRole('status')).toHaveText('loading photo');
     await popup
       .getByRole('button', { name: 'Next media at this location' })
       .click();
     await expect.poll(() => resolutions.length).toBe(2);
-    await expect(popup.locator('img')).toHaveCount(0);
+    await expect(popup.locator('[data-map-photo="active"] img')).toHaveCount(0);
     await popup.getByRole('button', { name: 'Close map preview' }).click();
     release();
     await expect(popup).toHaveCount(0);
     await expect(
-      page.locator('[data-feedback-id="map-preview"] img'),
+      page.locator(
+        '[data-feedback-id="map-preview"] [data-map-photo="active"] img',
+      ),
     ).toHaveCount(0);
   } finally {
     release();
@@ -461,12 +467,18 @@ test('transient dimension failure keeps controls available and retries before an
     route.fulfill({ contentType: 'application/javascript', body: '' }),
   );
   let calls = 0;
-  await context.route('**/map-photo/**', async (route) => {
-    calls++;
-    if (calls === 1)
-      await route.fulfill({ status: 503, body: 'synthetic transient failure' });
-    else await route.continue();
-  });
+  await context.route(
+    `**/map-photo/${fixtureIds[0] || ''}/**`,
+    async (route) => {
+      calls++;
+      if (calls === 1)
+        await route.fulfill({
+          status: 503,
+          body: 'synthetic transient failure',
+        });
+      else await route.continue();
+    },
+  );
   const page = await context.newPage();
   const requests: string[] = [];
   page.on('request', (r) => {
@@ -477,12 +489,12 @@ test('transient dimension failure keeps controls available and retries before an
   await expect(
     popup.getByRole('button', { name: 'RETRY PHOTO' }),
   ).toBeVisible();
-  await expect(popup.locator('img')).toHaveCount(0);
+  await expect(popup.locator('[data-map-photo="active"] img')).toHaveCount(0);
   await expect(
     popup.getByRole('button', { name: 'Next media at this location' }),
   ).toBeEnabled();
   await popup.getByRole('button', { name: 'RETRY PHOTO' }).click();
-  const image = popup.locator('img');
+  const image = popup.locator('[data-map-photo="active"] img');
   await expect(image).toBeVisible();
   const photo = await image.evaluate(async (image) => {
     if (!(image instanceof HTMLImageElement)) throw new Error('Photo required');
@@ -599,14 +611,18 @@ for (const lateAt of ['before retry', 'after retry'])
             'data-dimension-body',
             'pending',
           );
-        await expect(popup.locator('img')).toHaveCount(0);
+        await expect(
+          popup.locator('[data-map-photo="active"] img'),
+        ).toHaveCount(0);
         await stage('loading');
         await page.clock.fastForward(10_000);
         await expect(
           popup.getByRole('button', { name: 'RETRY PHOTO' }),
         ).toBeVisible({ timeout: 1000 });
         await stage('deadline');
-        await expect(popup.locator('img')).toHaveCount(0);
+        await expect(
+          popup.locator('[data-map-photo="active"] img'),
+        ).toHaveCount(0);
         await expect(page.locator('html')).toHaveAttribute(
           'data-dimension-abort',
           'yes',
@@ -623,12 +639,14 @@ for (const lateAt of ['before retry', 'after retry'])
           await expect(
             popup.getByRole('button', { name: 'RETRY PHOTO' }),
           ).toBeVisible();
-          await expect(popup.locator('img')).toHaveCount(0);
+          await expect(
+            popup.locator('[data-map-photo="active"] img'),
+          ).toHaveCount(0);
         }
         await popup.getByRole('button', { name: 'RETRY PHOTO' }).click();
         await stage('retry-loading');
         await page.clock.runFor(100);
-        const image = popup.locator('img');
+        const image = popup.locator('[data-map-photo="active"] img');
         await expect(image).toBeVisible();
         await image.evaluate(async (image) => {
           if (image instanceof HTMLImageElement) await image.decode();
@@ -743,15 +761,15 @@ for (const action of ['selection', 'close', 'unmount'])
       );
       await page.clock.runFor(100);
       if (action === 'selection') {
-        await expect(popup.locator('img')).toBeVisible();
-        await expect(popup.locator('img')).toHaveAttribute(
-          'alt',
-          /^Synthetic (landscape|square)$/,
-        );
-        await expect(popup.locator('img')).toHaveAttribute(
-          'sizes',
-          /(?:73.33333333333333|55)dvh/,
-        );
+        await expect(
+          popup.locator('[data-map-photo="active"] img'),
+        ).toBeVisible();
+        await expect(
+          popup.locator('[data-map-photo="active"] img'),
+        ).toHaveAttribute('alt', /^Synthetic (landscape|square)$/);
+        await expect(
+          popup.locator('[data-map-photo="active"] img'),
+        ).toHaveAttribute('sizes', /(?:73.33333333333333|55)dvh/);
       } else await expect(popup).toHaveCount(0);
       await page.clock.fastForward(10_000);
       await expect(
@@ -798,7 +816,7 @@ for (const librarySize of [102, 600])
         `${sharedBaseURL || ''}/?media=${fixtureIds[0] || ''}#japan-map`,
       );
       const sourceImage = sourcePage.locator(
-        '[data-feedback-id="map-preview"] img',
+        '[data-feedback-id="map-preview"] [data-map-photo="active"] img',
       );
       await expect(sourceImage).toBeVisible();
       const source = await sourceImage.getAttribute('src');
@@ -1033,7 +1051,7 @@ for (const librarySize of [102, 600])
         for (const entryId of libraryIds)
           expect(serializedPoints).toContain(entryId);
         const popup = page.locator('[data-feedback-id="map-preview"]');
-        const image = popup.locator('img');
+        const image = popup.locator('[data-map-photo="active"] img');
         await expect(image).toBeVisible();
         const photo = await image.evaluate(async (image) => {
           if (!(image instanceof HTMLImageElement))
@@ -1069,7 +1087,12 @@ for (const librarySize of [102, 600])
         } finally {
           await controlContext.close();
         }
-        expect(resolutions).toHaveLength(1);
+        expect(
+          resolutions.filter((url) =>
+            url.includes(`/map-photo/${finalId || ''}/`),
+          ),
+        ).toHaveLength(1);
+        expect(resolutions.length).toBeLessThanOrEqual(3);
         expect(
           requestsForPhoto(photo.srcset, photo.source, requests),
         ).toHaveLength(1);
