@@ -548,6 +548,7 @@ for (const host of ['native', 'standalone']) {
         .filter({ hasText: 'Welcome to EmDash' });
       if (await welcome.isVisible())
         await welcome.getByRole('button', { name: 'Get Started' }).click();
+      await expect(welcome).toHaveCount(0);
     }
     const gallery = page.getByRole('list', { name: 'Post gallery' });
     const tiles = gallery.locator('[data-gallery-id]');
