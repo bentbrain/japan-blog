@@ -33,7 +33,7 @@ type MapItem = MapPoint & {
 const controlClass =
   'size-11 bg-background p-0 text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground';
 
-function MapPhoto({ item }: { item: MapItem }) {
+function MapPhoto({ item, onLoad }: { item: MapItem; onLoad: () => void }) {
   const [photo, setPhoto] = useState(
     item.photoResolution ? undefined : item.photo || { src: item.poster },
   );
@@ -55,6 +55,10 @@ function MapPhoto({ item }: { item: MapItem }) {
       <img
         {...photo}
         alt={item.title}
+        loading="eager"
+        onLoad={(event) => {
+          void event.currentTarget.decode().then(onLoad, onLoad);
+        }}
         className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
       />
     );
@@ -72,6 +76,38 @@ function MapPhoto({ item }: { item: MapItem }) {
     <span role="status" className="self-center">
       loading photo
     </span>
+  );
+}
+
+// Keep only this location's current photo and immediate neighbors alive. Hidden
+// eager images use the same responsive candidates and decoded DOM nodes as the
+// visible photo, without preloading video bodies or the rest of the library.
+function MapPhotos({ items, index }: { items: MapItem[]; index: number }) {
+  const [warm, setWarm] = useState(false);
+  const selected = items[index];
+  const nearby = new Set([
+    index,
+    (index - 1 + items.length) % items.length,
+    (index + 1) % items.length,
+  ]);
+  return items.map((item, position) =>
+    item.kind === 'photo' &&
+    nearby.has(position) &&
+    (position === index || warm || selected?.kind === 'video') ? (
+      <div
+        key={item.id}
+        data-map-photo={position === index ? 'active' : 'preload'}
+        className={position === index ? 'contents' : 'hidden'}
+        aria-hidden={position !== index ? true : undefined}
+      >
+        <MapPhoto
+          item={item}
+          onLoad={() => {
+            setWarm(true);
+          }}
+        />
+      </div>
+    ) : null,
   );
 }
 
@@ -213,9 +249,14 @@ export function JapanMapView({
             event.button !== 0 ||
             !(event.target instanceof Element) ||
             !event.currentTarget.contains(event.target) ||
-            event.target.closest('button')
+            event.target.closest('button, a')
           )
             return;
+          // Pointer capture keeps panning active but does not stop native text
+          // selection. Cancel that default only for canvas gestures, then keep
+          // the map focusable for keyboard pan/zoom after a pointer interaction.
+          event.preventDefault();
+          event.currentTarget.focus({ preventScroll: true });
           event.currentTarget.setPointerCapture(event.pointerId);
           pointers.current.set(event.pointerId, {
             x: event.clientX,
@@ -276,7 +317,7 @@ export function JapanMapView({
             !moved.current &&
             event.target instanceof Element &&
             event.currentTarget.contains(event.target) &&
-            !event.target.closest('button')
+            !event.target.closest('button, a')
           ) {
             const bounds = event.currentTarget.getBoundingClientRect();
             zoomBy(2, {
@@ -368,7 +409,7 @@ export function JapanMapView({
               >
                 <PopoverTrigger
                   disabled={!ready}
-                  className="map-marker flex size-11 items-center justify-center rounded-full border-[1.5px] border-background bg-foreground p-0 text-xs text-white outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="map-marker flex size-11 items-center justify-center rounded-full border-[1.5px] border-background bg-foreground p-0 text-xs text-white outline-none select-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   aria-label={`${group.items[0]?.place || 'location'}, ${String(group.items.length)} items`}
                 >
                   {group.items.length}
@@ -416,9 +457,10 @@ export function JapanMapView({
                     preload="metadata"
                     className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
                   />
-                ) : active === selected.id ? (
-                  <MapPhoto key={selected.id} item={selected} />
                 ) : null}
+                {active === selected.id && (
+                  <MapPhotos items={group.items} index={index} />
+                )}
                 <div className="flex items-center justify-between gap-3">
                   <Button
                     className={controlClass}
