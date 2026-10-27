@@ -17,7 +17,7 @@ test.afterEach(async ({ request, baseURL }) => {
   selectionFixtureId = undefined;
 });
 
-test('map controls zoom, fit and retain geographic context on desktop and mobile', async ({
+test('map controls retain zoom and geographic context without the location button', async ({
   page,
   request,
   baseURL,
@@ -71,21 +71,35 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
   const map = page.locator('#japan-map');
   const zoomIn = map.getByRole('button', { name: 'Zoom in', exact: true });
   const zoomOut = map.getByRole('button', { name: 'Zoom out', exact: true });
-  const fit = map.getByRole('button', { name: 'Fit all media', exact: true });
+  const resetMap = async () => {
+    await page.reload();
+    await expect(zoomIn).toBeEnabled();
+    await expect(
+      map.getByRole('group', { name: 'Map controls' }).getByRole('button'),
+    ).toHaveCount(2);
+  };
   await expect(zoomIn).toBeEnabled();
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 800 });
-    await fit.click();
+    await resetMap();
     const initial = Number(await map.getAttribute('data-zoom'));
     await zoomIn.click();
-    await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial * 2);
     await zoomOut.click();
-    await expect(map).toHaveAttribute('data-zoom', String(initial));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial);
     await zoomIn.focus();
     await page.keyboard.press('Enter');
-    await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
-    await fit.click();
-    await expect(map).toHaveAttribute('data-zoom', String(initial));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial * 2);
+    await resetMap();
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial);
     const svg = map.getByRole('group', { name: 'Japan media map' });
     await svg.dispatchEvent('wheel', {
       deltaY: -120,
@@ -96,15 +110,17 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
     await expect
       .poll(async () => Number(await map.getAttribute('data-zoom')))
       .toBeGreaterThan(initial);
-    await fit.click();
+    await resetMap();
     await svg.dispatchEvent('wheel', {
       deltaY: -120,
       clientX: 200,
       clientY: 250,
     });
-    await expect(map).toHaveAttribute('data-zoom', String(initial));
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial);
     // A real mouse gesture must pan without selecting SVG labels or pin counts.
-    await fit.click();
+    await resetMap();
     const land = svg.locator(':scope > path');
     const transform = await land.getAttribute('transform');
     const label = svg.locator('text').filter({ hasText: 'synthetic tokyo' });
@@ -130,8 +146,10 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
     await page.keyboard.press('ArrowLeft');
     expect(await land.getAttribute('transform')).not.toBe(panned);
     await page.keyboard.press('+');
-    await expect(map).toHaveAttribute('data-zoom', String(initial * 2));
-    await fit.click();
+    await expect
+      .poll(async () => Number(await map.getAttribute('data-zoom')))
+      .toBeCloseTo(initial * 2);
+    await resetMap();
     const marker = map.getByRole('button', {
       // Earlier browser tests can publish nearby media into the same cluster.
       name: /^synthetic tokyo, [1-9]\d* items$/,
@@ -163,7 +181,7 @@ test('map controls zoom, fit and retain geographic context on desktop and mobile
     for (let index = 0; index < 8 && (await zoomOut.isEnabled()); index++)
       await zoomOut.click();
     await expect(zoomOut).toBeDisabled();
-    await fit.click();
+    await resetMap();
     await expect(map.locator('[data-map-context]')).not.toHaveCount(0);
     await expect(page.locator('html')).toHaveJSProperty('scrollWidth', width);
   }
