@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
 import type { MapReference } from '../lib/map';
 import type { MapProjection } from '../lib/map-context';
 import { MapContext } from './MapContext';
+import { MapPlaceLabels } from './MapPlaceLabels';
 import { resolveMapPhoto } from '../lib/map-photo-controller';
 import {
   Popover,
@@ -135,8 +136,12 @@ export function JapanMapView({
   const [active, setActive] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [detailUnavailable, setDetailUnavailable] = useState(false);
+  const [placesUnavailable, setPlacesUnavailable] = useState(false);
   const [detailAttempt, setDetailAttempt] = useState(0);
-  const groups = clusterMapPoints(points, camera.zoom);
+  const groups = useMemo(
+    () => clusterMapPoints(points, camera.zoom),
+    [points, camera.zoom],
+  );
 
   useEffect(() => {
     const element = container.current;
@@ -345,8 +350,17 @@ export function JapanMapView({
             camera={camera}
             size={size}
             projection={projection}
-            pins={groups}
             onUnavailable={setDetailUnavailable}
+            revision={detailAttempt}
+          />
+        )}
+        {projection && ready && camera.zoom >= 16 && (
+          <MapPlaceLabels
+            camera={camera}
+            size={size}
+            projection={projection}
+            pins={groups}
+            onUnavailable={setPlacesUnavailable}
             revision={detailAttempt}
           />
         )}
@@ -354,6 +368,7 @@ export function JapanMapView({
           const x = (reference.x - camera.x) * camera.zoom + size.width / 2;
           const y = (reference.y - camera.y) * camera.zoom + size.height / 2;
           if (
+            (projection && camera.zoom >= 16) ||
             camera.zoom < reference.minZoom ||
             x < 55 ||
             x > size.width - 85 ||
@@ -525,7 +540,7 @@ export function JapanMapView({
         role="group"
         aria-label="Map controls"
       >
-        <div className="flex flex-col border border-border bg-background shadow-sm">
+        <div className="hidden flex-col border border-border bg-background shadow-sm min-[601px]:flex">
           <Button
             className={`${controlClass} rounded-none border-0 border-b border-border`}
             disabled={!ready || camera.zoom >= MAX_MAP_ZOOM}
@@ -561,7 +576,7 @@ export function JapanMapView({
           map data: gsi japan · styled
         </a>
       )}
-      {projection && detailUnavailable && (
+      {projection && (detailUnavailable || placesUnavailable) && (
         <div className="absolute top-3 left-3 flex items-center gap-2 bg-background/90 px-2 py-1 text-[10px]">
           <span role="status">map detail unavailable</span>
           <Button
@@ -569,6 +584,7 @@ export function JapanMapView({
             className="h-auto p-0 text-[10px]"
             onClick={() => {
               setDetailUnavailable(false);
+              setPlacesUnavailable(false);
               setDetailAttempt((attempt) => attempt + 1);
             }}
           >

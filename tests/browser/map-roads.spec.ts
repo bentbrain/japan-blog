@@ -104,7 +104,28 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
           name: 'Zoom in',
           exact: true,
         });
-        await expect(zoomIn).toBeEnabled();
+        await expect(
+          map.getByRole('button', {
+            name: 'Zoom in',
+            exact: true,
+            includeHidden: true,
+          }),
+        ).toBeEnabled();
+        await expect(zoomIn).toBeVisible({ visible: width > 600 });
+        const canvas = map.getByRole('group', { name: 'Japan media map' });
+        async function zoom(key: string) {
+          if (width > 600) {
+            await map
+              .getByRole('button', {
+                name: key === '+' ? 'Zoom in' : 'Zoom out',
+                exact: true,
+              })
+              .click();
+          } else {
+            await canvas.focus();
+            await page.keyboard.press(key);
+          }
+        }
         const evidence = process.env.MAP_ROADS_EVIDENCE;
         for (const state of ['country', 'broad', 'regional', 'street']) {
           const target =
@@ -116,11 +137,9 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
                   ? 96
                   : 3072;
           while (Number(await map.getAttribute('data-zoom')) > target)
-            await map
-              .getByRole('button', { name: 'Zoom out', exact: true })
-              .click();
+            await zoom('-');
           while (Number(await map.getAttribute('data-zoom')) < target)
-            await zoomIn.click();
+            await zoom('+');
           await expect(
             map.locator('[data-map-roads], [data-map-tile]'),
           ).toHaveCount(0);
@@ -180,6 +199,10 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
             }),
           ).toBeVisible();
           if (evidence) {
+            if (width <= 600)
+              await canvas.evaluate((element) => {
+                if (element instanceof SVGElement) element.blur();
+              });
             await page.waitForTimeout(1500);
             await map.screenshot({
               path: `${evidence}-${String(width)}-${theme}-${state}.png`,
@@ -191,6 +214,18 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
           name: 'synthetic tokyo station, 1 items',
           exact: true,
         });
+        const names = map.locator('[data-map-place]');
+        await expect(names.filter({ hasText: 'marunouchi 2' })).toHaveCount(1);
+        await expect(map.locator('[data-map-detail] text')).toHaveCount(0);
+        await expect(map).not.toContainText(/[\u3040-\u30ff\u3400-\u9fff]/);
+        const anchored = await names.evaluateAll((nodes) =>
+          nodes.map((node) => ({
+            id: node.getAttribute('data-map-place'),
+            text: node.textContent,
+            x: Number(node.getAttribute('x')),
+            y: Number(node.getAttribute('y')),
+          })),
+        );
         const beforePan = await marker.boundingBox();
         const bounds = await map.boundingBox();
         if (!beforePan || !bounds) throw new Error('Map bounds required');
@@ -201,6 +236,31 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
         expect(
           await page.evaluate(() => window.getSelection()?.toString()),
         ).toBe('');
+        if (process.env.MAP_ROADS_EVIDENCE)
+          await map.screenshot({
+            path: `${process.env.MAP_ROADS_EVIDENCE}-${String(width)}-${theme}-panned.png`,
+          });
+        const afterNames = await names.evaluateAll((nodes) =>
+          nodes.map((node) => ({
+            id: node.getAttribute('data-map-place'),
+            text: node.textContent,
+            x: Number(node.getAttribute('x')),
+            y: Number(node.getAttribute('y')),
+          })),
+        );
+        for (const before of anchored.filter(
+          (name) =>
+            name.x > 0 && name.x < width - 120 && name.y > 0 && name.y < 300,
+        )) {
+          const after = afterNames.find((name) => name.id === before.id);
+          expect(
+            after,
+            `place ${before.text} must survive a pan`,
+          ).toBeDefined();
+          expect(after?.text).toBe(before.text);
+          expect(after?.x).toBeCloseTo(before.x + 60, 0);
+          expect(after?.y).toBeCloseTo(before.y + 30, 0);
+        }
         const afterPan = await marker.boundingBox();
         expect(afterPan?.x).toBeCloseTo(beforePan.x + 60, 0);
         expect(afterPan?.y).toBeCloseTo(beforePan.y + 30, 0);
@@ -327,10 +387,13 @@ test('private GPS revisions never request external tiles in edit mode or native 
     await page.route('https://toolbar.bent.build/embed.js', (route) =>
       route.fulfill({ contentType: 'application/javascript', body: '' }),
     );
-    await page.route('https://cyberjapandata.gsi.go.jp/**', (route) => {
-      tileRequests.push(route.request().url());
-      return route.abort();
-    });
+    await page.route(
+      /https:\/\/(?:cyberjapandata|maps)\.gsi\.go\.jp\//,
+      (route) => {
+        tileRequests.push(route.request().url());
+        return route.abort();
+      },
+    );
     for (const mode of ['edit', 'preview']) {
       await page.context().addCookies([
         {
