@@ -2,7 +2,8 @@
 import Site from '../../layouts/Site.astro';
 import { OwnerPosts } from '../../components/OwnerPosts';
 import { tokyoDay } from '../../lib/model';
-import { beerCounts } from '../../lib/content';
+import { beerCounts, tripStartDayFromContent } from '../../lib/content';
+import { correctTripTitle } from '../../lib/trip-days';
 import { z } from 'zod';
 const rowSchema = z.object({
   id: z.string(),
@@ -32,10 +33,15 @@ do {
   );
   cursor = page.nextCursor;
 } while (cursor);
+const firstDay = await tripStartDayFromContent(Astro.locals.emdash);
+const displayPosts = posts.map((post) => ({
+  ...post,
+  title: correctTripTitle(post.day, firstDay, post.title),
+}));
 const day = tokyoDay(new Date()),
   counts = await beerCounts(day);
 ---
 
 <Site owner>
-  <OwnerPosts posts={posts} day={day} beers={counts.today} client:load />
+  <OwnerPosts posts={displayPosts} day={day} beers={counts.today} client:load />
 </Site>

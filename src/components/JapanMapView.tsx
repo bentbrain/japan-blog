@@ -1,4 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { Minus, Plus } from 'lucide-react';
+import type { MapReference } from '../lib/map';
+import type { MapProjection } from '../lib/map-context';
+import { MapContext } from './MapContext';
+import { resolveMapPhoto } from '../lib/map-photo-controller';
 import {
   Popover,
   PopoverContent,
@@ -11,6 +16,7 @@ import {
   fitMapPoints,
   MAX_MAP_ZOOM,
   MIN_MAP_ZOOM,
+  zoomMapAt,
   type MapCamera,
   type MapPoint,
 } from '../lib/map-view';
@@ -20,17 +26,103 @@ type MapItem = MapPoint & {
   slug: string | null;
   title: string;
   place: string;
+  kind: 'photo' | 'video';
   src: string;
+  poster: string;
+  photoResolution?: string;
+  photo?: { src: string; srcSet?: string; sizes?: string };
 };
 const controlClass =
   'size-11 bg-background p-0 text-foreground hover:bg-foreground hover:text-background dark:bg-background dark:hover:bg-foreground';
 
+function MapPhoto({ item, onLoad }: { item: MapItem; onLoad: () => void }) {
+  const [photo, setPhoto] = useState(
+    item.photoResolution ? undefined : item.photo || { src: item.poster },
+  );
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!item.photoResolution) return;
+    return resolveMapPhoto({
+      url: item.photoResolution,
+      poster: item.poster,
+      ready: setPhoto,
+      failed: () => {
+        setFailed(true);
+      },
+    });
+  }, [item, attempt]);
+  if (photo)
+    return (
+      <img
+        {...photo}
+        alt={item.title}
+        loading="eager"
+        onLoad={(event) => {
+          void event.currentTarget.decode().then(onLoad, onLoad);
+        }}
+        className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
+      />
+    );
+  return failed ? (
+    <Button
+      variant="link"
+      onClick={() => {
+        setFailed(false);
+        setAttempt((current) => current + 1);
+      }}
+    >
+      RETRY PHOTO
+    </Button>
+  ) : (
+    <span role="status" className="self-center">
+      loading photo
+    </span>
+  );
+}
+
+// Keep only this location's current photo and immediate neighbors alive. Hidden
+// eager images use the same responsive candidates and decoded DOM nodes as the
+// visible photo, without preloading video bodies or the rest of the library.
+function MapPhotos({ items, index }: { items: MapItem[]; index: number }) {
+  const [warm, setWarm] = useState(false);
+  const selected = items[index];
+  const nearby = new Set([
+    index,
+    (index - 1 + items.length) % items.length,
+    (index + 1) % items.length,
+  ]);
+  return items.map((item, position) =>
+    item.kind === 'photo' &&
+    nearby.has(position) &&
+    (position === index || warm || selected?.kind === 'video') ? (
+      <div
+        key={item.id}
+        data-map-photo={position === index ? 'active' : 'preload'}
+        className={position === index ? 'contents' : 'hidden'}
+        aria-hidden={position !== index ? true : undefined}
+      >
+        <MapPhoto
+          item={item}
+          onLoad={() => {
+            setWarm(true);
+          }}
+        />
+      </div>
+    ) : null,
+  );
+}
+
 export function JapanMapView({
   land,
   points,
+  references = [],
+  projection,
 }: {
   land: string;
   points: MapItem[];
+  references?: MapReference[];
+  projection?: MapProjection;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, MapPoint>());
@@ -42,6 +134,8 @@ export function JapanMapView({
   );
   const [active, setActive] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [detailUnavailable, setDetailUnavailable] = useState(false);
+  const [detailAttempt, setDetailAttempt] = useState(0);
   const groups = clusterMapPoints(points, camera.zoom);
 
   useEffect(() => {
@@ -88,15 +182,36 @@ export function JapanMapView({
     };
   }, [points, size]);
 
-  function zoomBy(factor: number) {
+  useEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    function wheel(event: WheelEvent) {
+      // Preserve ordinary page scrolling; Ctrl/Command + scroll zooms the map.
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      if (!element) return;
+      const bounds = element.getBoundingClientRect();
+      const unit =
+        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size.height : 1;
+      const factor =
+        2 ** (-Math.max(-240, Math.min(240, event.deltaY * unit)) / 240);
+      setActive(null);
+      setCamera((current) =>
+        zoomMapAt(current, factor, {
+          x: event.clientX - bounds.left - size.width / 2,
+          y: event.clientY - bounds.top - size.height / 2,
+        }),
+      );
+    }
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => {
+      element.removeEventListener('wheel', wheel);
+    };
+  }, [size]);
+
+  function zoomBy(factor: number, anchor?: MapPoint) {
     setActive(null);
-    setCamera((current) => ({
-      ...current,
-      zoom: Math.max(
-        MIN_MAP_ZOOM,
-        Math.min(MAX_MAP_ZOOM, current.zoom * factor),
-      ),
-    }));
+    setCamera((current) => zoomMapAt(current, factor, anchor));
   }
 
   return (
@@ -140,9 +255,14 @@ export function JapanMapView({
             event.button !== 0 ||
             !(event.target instanceof Element) ||
             !event.currentTarget.contains(event.target) ||
-            event.target.closest('button')
+            event.target.closest('button, a')
           )
             return;
+          // Pointer capture keeps panning active but does not stop native text
+          // selection. Cancel that default only for canvas gestures, then keep
+          // the map focusable for keyboard pan/zoom after a pointer interaction.
+          event.preventDefault();
+          event.currentTarget.focus({ preventScroll: true });
           event.currentTarget.setPointerCapture(event.pointerId);
           pointers.current.set(event.pointerId, {
             x: event.clientX,
@@ -203,9 +323,14 @@ export function JapanMapView({
             !moved.current &&
             event.target instanceof Element &&
             event.currentTarget.contains(event.target) &&
-            !event.target.closest('button')
-          )
-            zoomBy(2);
+            !event.target.closest('button, a')
+          ) {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            zoomBy(2, {
+              x: event.clientX - bounds.left - size.width / 2,
+              y: event.clientY - bounds.top - size.height / 2,
+            });
+          }
         }}
       >
         <path
@@ -215,6 +340,54 @@ export function JapanMapView({
           strokeLinejoin="round"
           d={land}
         />
+        {projection && ready && (
+          <MapContext
+            camera={camera}
+            size={size}
+            projection={projection}
+            pins={groups}
+            onUnavailable={setDetailUnavailable}
+            revision={detailAttempt}
+          />
+        )}
+        {references.map((reference) => {
+          const x = (reference.x - camera.x) * camera.zoom + size.width / 2;
+          const y = (reference.y - camera.y) * camera.zoom + size.height / 2;
+          if (
+            camera.zoom < reference.minZoom ||
+            x < 55 ||
+            x > size.width - 85 ||
+            y < 18 ||
+            y > size.height - 18
+          )
+            return null;
+          // Media pins and their place names take priority over reference labels.
+          if (
+            groups.some(
+              (group) =>
+                Math.abs((group.x - reference.x) * camera.zoom) < 95 &&
+                Math.abs((group.y - reference.y) * camera.zoom) < 30,
+            )
+          )
+            return null;
+          return (
+            <g
+              key={reference.name}
+              data-map-context={reference.kind}
+              className="pointer-events-none fill-foreground/60"
+            >
+              {reference.kind === 'city' && <circle cx={x} cy={y} r="2" />}
+              <text
+                x={x + (reference.kind === 'city' ? 7 : 0)}
+                y={y + 3}
+                textAnchor={reference.kind === 'city' ? 'start' : 'middle'}
+                className="stroke-background font-mono text-[10px] [paint-order:stroke] [stroke-width:3]"
+              >
+                {reference.name}
+              </text>
+            </g>
+          );
+        })}
         {groups.map((group) => {
           const x = (group.x - camera.x) * camera.zoom + size.width / 2;
           const y = (group.y - camera.y) * camera.zoom + size.height / 2;
@@ -252,7 +425,7 @@ export function JapanMapView({
               >
                 <PopoverTrigger
                   disabled={!ready}
-                  className="map-marker flex size-11 items-center justify-center rounded-full border-[1.5px] border-background bg-foreground p-0 text-xs text-white outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  className="map-marker flex size-11 items-center justify-center rounded-full border-[1.5px] border-background bg-foreground p-0 text-xs text-white outline-none select-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   aria-label={`${group.items[0]?.place || 'location'}, ${String(group.items.length)} items`}
                 >
                   {group.items.length}
@@ -286,16 +459,29 @@ export function JapanMapView({
                     ×
                   </Button>
                 </div>
-                <img
-                  src={selected.src}
-                  alt={selected.title}
-                  className="block h-auto max-h-[55dvh] w-auto max-w-full self-center object-contain"
-                />
+                {selected.kind === 'video' ? (
+                  <video
+                    data-visibility-video
+                    muted
+                    loop
+                    key={selected.id}
+                    src={selected.src}
+                    poster={selected.poster}
+                    aria-label={selected.title}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
+                  />
+                ) : null}
+                {active === selected.id && (
+                  <MapPhotos items={group.items} index={index} />
+                )}
                 <div className="flex items-center justify-between gap-3">
                   <Button
                     className={controlClass}
                     disabled={group.items.length < 2}
-                    aria-label="Previous photo at this location"
+                    aria-label="Previous media at this location"
                     onClick={() => {
                       setActive(
                         group.items[
@@ -318,7 +504,7 @@ export function JapanMapView({
                   <Button
                     className={controlClass}
                     disabled={group.items.length < 2}
-                    aria-label="Next photo at this location"
+                    aria-label="Next media at this location"
                     onClick={() => {
                       setActive(
                         group.items[(index + 1) % group.items.length]?.id ??
@@ -334,10 +520,69 @@ export function JapanMapView({
           );
         })}
       </svg>
+      <div
+        className="absolute right-3 bottom-3 flex flex-col gap-2"
+        role="group"
+        aria-label="Map controls"
+      >
+        <div className="flex flex-col border border-border bg-background shadow-sm">
+          <Button
+            className={`${controlClass} rounded-none border-0 border-b border-border`}
+            disabled={!ready || camera.zoom >= MAX_MAP_ZOOM}
+            aria-label="Zoom in"
+            title="Zoom in"
+            onClick={() => {
+              zoomBy(2);
+            }}
+          >
+            <Plus aria-hidden="true" />
+          </Button>
+          <Button
+            className={`${controlClass} rounded-none border-0`}
+            disabled={!ready || camera.zoom <= MIN_MAP_ZOOM}
+            aria-label="Zoom out"
+            title="Zoom out"
+            onClick={() => {
+              zoomBy(0.5);
+            }}
+          >
+            <Minus aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+      {projection && (
+        <a
+          href="https://github.com/gsi-cyberjapan/optimal_bvmap"
+          target="_blank"
+          rel="noreferrer"
+          className="absolute bottom-2 left-3 bg-background/90 text-[10px] text-foreground underline"
+          aria-label="Map source: GSI Japan, custom vector style"
+        >
+          map data: gsi japan · styled
+        </a>
+      )}
+      {projection && detailUnavailable && (
+        <div className="absolute top-3 left-3 flex items-center gap-2 bg-background/90 px-2 py-1 text-[10px]">
+          <span role="status">map detail unavailable</span>
+          <Button
+            variant="link"
+            className="h-auto p-0 text-[10px]"
+            onClick={() => {
+              setDetailUnavailable(false);
+              setDetailAttempt((attempt) => attempt + 1);
+            }}
+          >
+            RETRY MAP
+          </Button>
+        </div>
+      )}
+      <span
+        className={`pointer-events-none absolute left-3 hidden text-[10px] text-foreground/60 min-[601px]:block ${projection ? 'bottom-7' : 'bottom-3'}`}
+      >
+        ctrl / ⌘ + scroll to zoom
+      </span>
       {!points.length && (
-        <span className="absolute bottom-3 left-3">
-          no photos near japan yet
-        </span>
+        <span className="absolute top-3 left-3">no photos near japan yet</span>
       )}
     </div>
   );

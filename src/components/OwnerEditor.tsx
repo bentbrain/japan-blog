@@ -3,6 +3,9 @@ import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { editorExtensions } from '../lib/editor-extensions';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { OwnerQueryProvider } from './OwnerQueryProvider';
+import { ownerMediaQuery } from '../lib/owner-queries';
 import { editorPostSchema, type EditorPost } from '../lib/editor-model';
 import { Button, buttonVariants } from './ui/button';
 import { Input } from './ui/input';
@@ -26,6 +29,8 @@ import {
   AlertDialogTrigger,
 } from './ui/alert-dialog';
 import { Checkbox } from './ui/checkbox';
+import { GalleryOrder } from './GalleryOrder';
+import { captureOrder, selectGalleryItem } from '../lib/gallery-order';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { ShopDesignField } from './ShopDesignField';
@@ -43,6 +48,7 @@ const mediaSchema = z.object({
   status: z.string(),
   data: z.object({
     title: z.string(),
+    captured_at: z.coerce.date(),
     kind: z.enum(['photo', 'video']),
     asset: z.object({ id: z.string(), url: z.string().optional() }).nullish(),
     poster: z.object({ src: z.string().optional() }).nullish(),
@@ -50,7 +56,6 @@ const mediaSchema = z.object({
     poster_url: z.string().nullish(),
   }),
 });
-type Media = z.infer<typeof mediaSchema>;
 
 function EditorForm({
   post,
@@ -59,8 +64,22 @@ function EditorForm({
   post: EditorPost;
   onSaved: (post: EditorPost) => void;
 }) {
-  const [items, setItems] = useState<Media[]>([]);
+  const savePost = useMutation({
+    mutationFn: (input: unknown) => api('/api/trip/posts', input),
+  });
+  const lifecycle = useMutation({
+    mutationFn: ({
+      path,
+      body,
+      method,
+    }: {
+      path: string;
+      body?: unknown;
+      method?: string;
+    }) => api(path, body, method),
+  });
   const [gallery, setGallery] = useState(post.data.gallery);
+  const preserveGalleryOrder = useRef(post.data.gallery.length > 0);
   const [shopDesign, setShopDesign] = useState(post.data.shop_design ?? null);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
@@ -78,6 +97,15 @@ function EditorForm({
     setStatus('');
   }
   const [pickerOpen, setPickerOpen] = useState(false);
+  const media = useQuery({
+    ...ownerMediaQuery,
+    select: (items) =>
+      items
+        .filter((item) => item.status === 'published')
+        .map((item) => mediaSchema.parse(item)),
+    enabled: pickerOpen || gallery.length > 0,
+  });
+  const items = media.data ?? [];
   const [linkOpen, setLinkOpen] = useState(false);
   const [href, setHref] = useState('');
   const [linkError, setLinkError] = useState('');
@@ -88,7 +116,7 @@ function EditorForm({
     editorProps: {
       attributes: {
         class:
-          'min-h-[360px] p-4 outline-none [&_p]:mb-4 [&_h2]:mb-4 [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_a]:underline [&_img]:my-4 [&_img]:max-w-full [&_video]:my-4 [&_video]:max-w-full',
+          'rich-text min-h-[360px] p-4 outline-none [&_p]:mb-4 [&_h2]:mb-4 [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_a]:underline [&_img]:my-4 [&_img]:max-w-full [&_video]:my-4 [&_video]:max-w-full',
         role: 'textbox',
         'aria-label': 'Post content',
         'aria-multiline': 'true',
@@ -105,28 +133,6 @@ function EditorForm({
       italic: current?.isActive('italic') || false,
     }),
   });
-  useEffect(() => {
-    let cancelled = false;
-    api('/api/trip/media')
-      .then((data) => {
-        if (!cancelled)
-          setItems(
-            z
-              .object({ items: z.array(mediaSchema) })
-              .parse(data)
-              .items.filter((item) => item.status === 'published'),
-          );
-      })
-      .catch((error: unknown) => {
-        if (!cancelled)
-          setStatus(
-            error instanceof Error ? error.message : 'Could not load media',
-          );
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
   useEffect(() => {
     const leave = (event: BeforeUnloadEvent) => {
       if (dirty && !deleted.current) event.preventDefault();
@@ -158,7 +164,7 @@ function EditorForm({
           publicationError: z.string().optional(),
         })
         .parse(
-          await api('/api/trip/posts', {
+          await savePost.mutateAsync({
             id: post.id || undefined,
             revision: post.revision || undefined,
             title: values.get('title'),
@@ -206,7 +212,12 @@ function EditorForm({
               item: z.object({ status: z.string() }),
             }),
           })
-          .parse(await api(`${path}/unpublish`, { _rev: post.revision }));
+          .parse(
+            await lifecycle.mutateAsync({
+              path: `${path}/unpublish`,
+              body: { _rev: post.revision },
+            }),
+          );
         onSaved({
           ...post,
           revision: result.data._rev,
@@ -221,7 +232,7 @@ function EditorForm({
           ].join('\n'),
         );
       } else {
-        await api(path, undefined, 'DELETE');
+        await lifecycle.mutateAsync({ path, method: 'DELETE' });
         deleted.current = true;
         window.location.assign('/owner');
       }
@@ -391,9 +402,14 @@ function EditorForm({
                     <a href="/owner/media" className="underline">
                       UPLOAD / EDIT MEDIA →
                     </a>
+                    <p role="status" className="empty:hidden">
+                      {media.isFetching && !media.data
+                        ? 'loading media'
+                        : media.error?.message}
+                    </p>
                     <div className="trip-gallery-field">
                       <div className="trip-gallery-options grid grid-cols-2 gap-3 sm:grid-cols-3">
-                        {items.map((item) => (
+                        {captureOrder(items).map((item) => (
                           <div key={item.id} className="space-y-2">
                             <img
                               src={
@@ -413,9 +429,16 @@ function EditorForm({
                                 onCheckedChange={(checked) => {
                                   setGallery((current) =>
                                     checked
-                                      ? [...current, item.id]
+                                      ? selectGalleryItem(
+                                          current,
+                                          item.id,
+                                          items,
+                                          preserveGalleryOrder.current,
+                                        )
                                       : current.filter((id) => id !== item.id),
                                   );
+                                  if (!checked && gallery.length === 1)
+                                    preserveGalleryOrder.current = false;
                                   markDirty();
                                 }}
                               />
@@ -465,26 +488,15 @@ function EditorForm({
             </TooltipProvider>
             <EditorContent editor={editor} />
           </div>
-          {gallery.length > 0 && (
-            <div className="grid grid-cols-3 gap-2" aria-label="Post gallery">
-              {items
-                .filter((item) => gallery.includes(item.id))
-                .map((item) => (
-                  <img
-                    key={item.id}
-                    src={
-                      item.data.poster?.src ||
-                      item.data.poster_url ||
-                      item.data.asset?.url ||
-                      item.data.source_url ||
-                      ''
-                    }
-                    alt={item.data.title}
-                    className="aspect-[1.15] w-full object-cover"
-                  />
-                ))}
-            </div>
-          )}
+          <GalleryOrder
+            selected={gallery}
+            items={items}
+            onChange={(ids) => {
+              preserveGalleryOrder.current = true;
+              setGallery(ids);
+              markDirty();
+            }}
+          />
         </div>
         <FieldGroup className="gap-4">
           <Field>
@@ -597,53 +609,60 @@ function EditorForm({
             </>
           )}
           <p className="whitespace-pre-wrap empty:hidden" role="status">
-            {status}
+            {status || media.error?.message}
           </p>
         </FieldGroup>
       </div>
     </form>
   );
 }
-export function OwnerEditor({ id, day }: { id?: string; day: string }) {
-  const [post, setPost] = useState<EditorPost>();
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let cancelled = false;
-    if (!id) {
-      setPost({
-        id: '',
-        revision: '',
-        status: 'draft',
-        data: {
-          title: '',
-          day,
-          place: '',
-          gallery: [],
-          document: { type: 'doc', content: [{ type: 'paragraph' }] },
-        },
-      });
-      return;
-    }
-    api(`/api/trip/posts?id=${encodeURIComponent(id)}`)
-      .then((data) => {
-        if (!cancelled) setPost(editorPostSchema.parse(data));
-      })
-      .catch((reason: unknown) => {
-        if (!cancelled)
-          setError(
-            reason instanceof Error ? reason.message : 'Could not load post',
-          );
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [id, day]);
-  return post ? (
-    <EditorForm post={post} onSaved={setPost} />
+export function OwnerEditor(props: { id?: string; day: string }) {
+  return (
+    <OwnerQueryProvider>
+      <PostEditor {...props} />
+    </OwnerQueryProvider>
+  );
+}
+function PostEditor({ id, day }: { id?: string; day: string }) {
+  const client = useQueryClient();
+  const queryKey = ['owner', 'post', id || 'new', day];
+  const query = useQuery({
+    queryKey,
+    queryFn: async ({ signal }) =>
+      id
+        ? editorPostSchema.parse(
+            await api(
+              `/api/trip/posts?id=${encodeURIComponent(id)}`,
+              undefined,
+              'GET',
+              signal,
+            ),
+          )
+        : editorPostSchema.parse({
+            id: '',
+            revision: '',
+            status: 'draft',
+            data: {
+              title: '',
+              day,
+              place: '',
+              gallery: [],
+              document: { type: 'doc', content: [{ type: 'paragraph' }] },
+            },
+          }),
+    staleTime: Infinity,
+  });
+  return query.data ? (
+    <EditorForm
+      post={query.data}
+      onSaved={(post) => {
+        client.setQueryData(queryKey, post);
+      }}
+    />
   ) : (
     <div className="space-y-3">
-      <p role="status">{error || 'loading'}</p>
-      {error && id && (
+      <p role="status">{query.error?.message || 'loading'}</p>
+      {query.isError && id && (
         <a
           className={buttonVariants()}
           href={`/_emdash/admin/content/posts/${encodeURIComponent(id)}`}

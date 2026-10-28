@@ -1,5 +1,7 @@
 import { useEffect, useId, useState, type SubmitEvent } from 'react';
 import { api } from '../lib/api-client';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { ownerCategoriesQuery } from '../lib/owner-queries';
 import {
   categoryCollectionSchema,
   type CategoryCollection,
@@ -22,6 +24,25 @@ export function CreateCategory({
 }: {
   onCreated: (collection: CategoryCollection, name: string) => void;
 }) {
+  const client = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: async (name: string) =>
+      categoryCollectionSchema.parse(
+        await api('/api/trip/categories', { name }),
+      ),
+    onMutate: () =>
+      client.cancelQueries({ queryKey: ownerCategoriesQuery.queryKey }),
+    onSuccess: (collection) => {
+      client.setQueryData(ownerCategoriesQuery.queryKey, collection);
+    },
+    onError: () => {
+      // Cancellation can leave the first load pending with no data or error.
+      // Recover the active query even when category creation was rejected.
+      void client.invalidateQueries({
+        queryKey: ownerCategoriesQuery.queryKey,
+      });
+    },
+  });
   const id = useId();
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -42,9 +63,7 @@ export function CreateCategory({
     setBusy(true);
     setError('');
     try {
-      const collection = categoryCollectionSchema.parse(
-        await api('/api/trip/categories', { name: category.label }),
-      );
+      const collection = await mutation.mutateAsync(category.label);
       const saved = collection.categories.find(
         (item) => item.normalized === category.normalized,
       );

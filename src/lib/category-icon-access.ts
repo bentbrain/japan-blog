@@ -1,42 +1,15 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { z } from 'zod';
 import { categoryNames } from './category-icons';
+import { ownerMediaItems } from './owner-media';
 
 // Owner status uses the latest saved draft, including staged changes to a
 // currently published item. Public routes use the published trip loader.
-export async function visibleCategoryNames(emdash: App.Locals['emdash']) {
-  const names: string[] = [];
-  let cursor: string | undefined;
-  do {
-    const result = await emdash.handleContentList('media_items', {
-      limit: 100,
-      cursor,
-    });
-    if (!result.success) throw new Error('Could not read categories');
-    const page = z
-      .object({
-        items: z.array(
-          z.object({
-            id: z.string(),
-            slug: z.string().nullable(),
-            data: z.record(z.string(), z.unknown()),
-            liveData: z.record(z.string(), z.unknown()).optional(),
-          }),
-        ),
-        nextCursor: z.string().nullish(),
-      })
-      .parse(result.data);
-    for (const item of page.items) {
-      const current = await emdash.handleContentGet('media_items', item.id);
-      if (!current.success || !current.data) continue;
-      const data = z
-        .record(z.string(), z.unknown())
-        .parse(current.data.item.data);
-      names.push(...categoryNames(data.categories).map((name) => name.label));
-    }
-    cursor = page.nextCursor || undefined;
-  } while (cursor);
-  return names;
+export async function visibleCategoryNames(
+  emdash: Parameters<typeof ownerMediaItems>[0],
+) {
+  return (await ownerMediaItems(emdash)).flatMap((item) =>
+    categoryNames(item.data.categories).map((name) => name.label),
+  );
 }
 
 export async function categoryAssetRecord(

@@ -3,9 +3,11 @@ export async function api(
   path: string,
   body?: unknown,
   method = body === undefined ? 'GET' : 'POST',
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const response = await fetch(path, {
     method,
+    signal,
     headers: {
       'X-EmDash-Request': '1',
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),

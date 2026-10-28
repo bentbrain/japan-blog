@@ -187,13 +187,15 @@ test('map previews include Japan while outside media stays in the gallery and po
     await page.getByRole('button', { name: 'Close map preview' }).click();
     const map = page.locator('#japan-map');
     const initialZoom = Number(await map.getAttribute('data-zoom'));
-    const initialLand = await map.locator('path').getAttribute('transform');
+    const initialLand = await map
+      .locator('svg[aria-label="Japan media map"] > path')
+      .getAttribute('transform');
     await expect(map.getByRole('group', { name: 'Map controls' })).toHaveCount(
-      0,
+      1,
     );
     await expect(
       map.getByRole('button', { name: /Zoom (in|out)/ }),
-    ).toHaveCount(0);
+    ).toHaveCount(2);
     const bounds = await map.boundingBox();
     if (!bounds) throw new Error('Map bounds required');
     const session = await page.context().newCDPSession(page);
@@ -234,9 +236,11 @@ test('map previews include Japan while outside media stays in the gallery and po
     await page.mouse.down();
     await page.mouse.move(bounds.x + 110, bounds.y + 120, { steps: 4 });
     await page.mouse.up();
-    expect(await map.locator('path').getAttribute('transform')).not.toBe(
-      initialLand,
-    );
+    expect(
+      await map
+        .locator('svg[aria-label="Japan media map"] > path')
+        .getAttribute('transform'),
+    ).not.toBe(initialLand);
     await page.goto(`/media/${japan.slug}`);
     await page.getByRole('link', { name: 'VIEW ON MAP', exact: true }).click();
     await expect(preview).toBeVisible();
