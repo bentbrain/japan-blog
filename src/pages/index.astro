@@ -3,6 +3,7 @@ import { getEmDashCollection } from 'emdash';
 import TripContent from '../components/TripContent.astro';
 import Site from '../layouts/Site.astro';
 import JapanMap from '../components/JapanMap.astro';
+import Masonry from '../components/Masonry.astro';
 import ShopAd from '../components/ShopAd.astro';
 import { PostMedia } from '../components/PostMedia';
 import { buttonVariants } from '../components/ui/button';
@@ -30,15 +31,15 @@ const posts = entries.map((post) => ({
 ---
 
 <Site>
-  <div class="journal-grid columns-1 gap-4 min-[601px]:columns-2 min-[901px]:columns-3">
-    <section class="journal-card journal-map-card mb-4 min-w-0 [column-span:all]">
+  <Masonry class="journal-grid gap-4 min-[601px]:grid-cols-2 min-[901px]:grid-cols-3">
+    <section class="journal-card journal-map-card col-span-full min-w-0">
       <Card className="journal-card-inner overflow-hidden border gap-0 py-0 shadow-none">
         <JapanMap media={media} />
       </Card>
     </section>
     {posts.map((post) => (
       <article
-        class="journal-card @container/post mb-4 min-w-0 break-inside-avoid"
+        class="journal-card @container/post min-w-0"
         data-feedback-id={`post-${post.data.id}`}
       >
         <Card className="journal-card-inner overflow-hidden border gap-0 py-0 shadow-none">
@@ -66,7 +67,7 @@ const posts = entries.map((post) => ({
         </Card>
       </article>
     ))}
-  </div>
+  </Masonry>
   {nextCursor && (
     <a
       class={buttonVariants({ className: 'pagination my-6' })}

@@ -2,6 +2,7 @@
 import Site from '../layouts/Site.astro';
 import { buttonVariants } from '../components/ui/button';
 import MediaTile from '../components/MediaTile.astro';
+import Masonry from '../components/Masonry.astro';
 import ShopAd from '../components/ShopAd.astro';
 import CategoryIcon from '../components/CategoryIcon.astro';
 import { tripMedia } from '../lib/content';
@@ -63,20 +64,20 @@ const media = allMedia.filter(
         ))}
       </nav>
     )}
-    <div
-      class="gallery-grid columns-1 gap-[7px] min-[601px]:columns-2 min-[901px]:columns-3"
+    <Masonry
+      class="gallery-grid gap-[7px] min-[601px]:grid-cols-2 min-[901px]:grid-cols-3"
       data-feedback-id="gallery-grid"
     >
       {allMedia.map((item) => (
         <div
-          class="mb-[7px] break-inside-avoid"
+          class="min-w-0"
           data-categories={JSON.stringify(item.categories)}
           hidden={category !== 'all' && !item.categories.includes(category)}
         >
           <MediaTile item={item} />
         </div>
       ))}
-    </div>
+    </Masonry>
     <p data-gallery-empty hidden={media.length > 0}>
       no photos yet
     </p>

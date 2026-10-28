@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { settleMasonry } from '../fixtures/masonry-layout';
 
 const createdSchema = z.object({
   data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
@@ -199,6 +200,27 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
             elements.map((element) => element.getAttribute('data-feedback-id')),
           ),
         ).toEqual(expected.map((item) => `media-${item.id}`));
+        for (const photo of await mosaic.locator('.media-tile img').all())
+          await expect(photo).toHaveAttribute('loading', 'lazy');
+        await mosaic.locator('img').evaluateAll(async (images) => {
+          await Promise.all(
+            images.map(async (image) => {
+              if (image instanceof HTMLImageElement) {
+                image.loading = 'eager';
+                await image.decode();
+              }
+            }),
+          );
+        });
+        for (const video of await mosaic.locator('video').all())
+          await expect
+            .poll(() =>
+              video.evaluate((element) =>
+                element instanceof HTMLVideoElement ? element.readyState : 0,
+              ),
+            )
+            .toBeGreaterThanOrEqual(1);
+        await settleMasonry(mosaic.locator('[data-masonry]'));
         const boxes: { x: number; y: number; width: number; height: number }[] =
           [];
         for (const [index, item] of expected.entries()) {
@@ -210,7 +232,6 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
           const photo = tile.getByRole('img');
           if (await photo.count()) {
             await expect(photo).toHaveAttribute('alt', item.title);
-            await expect(photo).toHaveAttribute('loading', 'lazy');
             await photo.evaluate(async (element) => {
               if (element instanceof HTMLImageElement) {
                 element.loading = 'eager';
@@ -228,9 +249,8 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
           const previous = boxes.at(-1);
           if (previous)
             expect(
-              box.x > previous.x ||
-                (Math.abs(box.x - previous.x) < 1 &&
-                  box.y >= previous.y + previous.height + 6),
+              box.y > previous.y + 1 ||
+                (Math.abs(box.y - previous.y) <= 1 && box.x > previous.x),
             ).toBe(true);
           boxes.push(box);
         }
@@ -262,8 +282,10 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
             const last = boxes.at(-1);
             if (!box || !last) throw new Error('Design bounds required');
             expect(box.width).toBeCloseTo(last.width, 0);
-            expect(box.x).toBeCloseTo(last.x, 0);
-            expect(box.y - last.y - last.height).toBeCloseTo(7, 0);
+            expect(
+              box.y > last.y + 1 ||
+                (Math.abs(box.y - last.y) <= 1 && box.x > last.x),
+            ).toBe(true);
             const columnOrder = await design.evaluate((element) =>
               Array.from(
                 element.parentElement?.parentElement?.children ?? [],
@@ -389,70 +411,119 @@ for (const width of [390, 1991]) {
         colorScheme: colorScheme === 'dark' ? 'dark' : 'light',
         reducedMotion: 'reduce',
       });
-      for (const count of [4, 7]) {
-        const post = posts.find((post) => post.count === count);
-        if (!post) throw new Error('Mixed mosaic fixture required');
-        await page.goto(`/posts/${post.slug}`);
-        const mosaic = page.locator('.post-mosaic');
-        await mosaic.locator('img').evaluateAll(async (images) => {
-          await Promise.all(
-            images.map(async (image) => {
-              if (!(image instanceof HTMLImageElement))
-                throw new Error('Image required');
-              image.loading = 'eager';
-              await image.decode();
-            }),
-          );
-        });
-        for (const video of await mosaic.locator('video').all()) {
-          await expect
-            .poll(() =>
-              video.evaluate((element) =>
-                element instanceof HTMLVideoElement ? element.readyState : 0,
+      const metadataReady = Promise.withResolvers<undefined>();
+      let heldMetadata = 0;
+      await page.route('**/demo/mosaic-tall.mp4', async (route) => {
+        heldMetadata++;
+        await metadataReady.promise;
+        await route.fallback();
+      });
+      // A landscape placeholder deliberately differs from the tall video's
+      // intrinsic ratio. Native metadata must trigger a second packing pass.
+      await page.route('**/demo/mosaic-tall.svg', (route) =>
+        route.fulfill({
+          contentType: 'image/svg+xml',
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="360" height="180"><rect width="100%" height="100%" fill="#adc4ff"/></svg>',
+        }),
+      );
+      try {
+        for (const count of [4, 7]) {
+          const post = posts.find((post) => post.count === count);
+          if (!post) throw new Error('Mixed mosaic fixture required');
+          await page.goto(`/posts/${post.slug}`);
+          const mosaic = page.locator('.post-mosaic');
+          await mosaic.locator('img').evaluateAll(async (images) => {
+            await Promise.all(
+              images.map(async (image) => {
+                if (!(image instanceof HTMLImageElement))
+                  throw new Error('Image required');
+                image.loading = 'eager';
+                await image.decode();
+              }),
+            );
+          });
+          let placeholderHeight = 0;
+          if (count === 7) {
+            await expect(mosaic.locator('.media-tile')).toHaveCount(7);
+            await expect(mosaic.locator('.post-design')).toHaveCount(1);
+            await expect.poll(() => heldMetadata).toBeGreaterThan(0);
+            const held = mosaic.locator('video').first();
+            expect(
+              await held.evaluate((video) =>
+                video instanceof HTMLVideoElement ? video.readyState : -1,
               ),
-            )
-            .toBeGreaterThanOrEqual(2);
-        }
-        const geometry = await mosaic
-          .locator('.media-tile, .post-design')
-          .evaluateAll((tiles) => {
-            const boxes = tiles.map((tile) => {
-              const { x, y, width, height } = tile.getBoundingClientRect();
-              return { x, y, width, height };
+            ).toBe(0);
+            placeholderHeight = await held.evaluate(
+              (video) => video.getBoundingClientRect().height,
+            );
+            metadataReady.resolve(undefined);
+          }
+          for (const video of await mosaic.locator('video').all()) {
+            await expect
+              .poll(() =>
+                video.evaluate((element) =>
+                  element instanceof HTMLVideoElement ? element.readyState : 0,
+                ),
+              )
+              .toBeGreaterThanOrEqual(2);
+          }
+          if (count === 7) {
+            const held = mosaic.locator('video').first();
+            expect(
+              await held.evaluate(
+                (video) => video.getBoundingClientRect().height,
+              ),
+            ).toBeGreaterThan(placeholderHeight + 50);
+            for (const video of await mosaic.locator('video').all())
+              await expect(video).toHaveCSS('object-fit', 'contain');
+          }
+          await settleMasonry(mosaic.locator('[data-masonry]'));
+          const geometry = await mosaic
+            .locator('.media-tile, .post-design')
+            .evaluateAll((tiles) => {
+              const boxes = tiles.map((tile) => {
+                const { x, y, width, height } = tile.getBoundingClientRect();
+                return { x, y, width, height };
+              });
+              return boxes.map((box) => {
+                const above = boxes.filter(
+                  (other) =>
+                    other.y + other.height <= box.y + 1 &&
+                    other.x < box.x + box.width - 1 &&
+                    other.x + other.width > box.x + 1,
+                );
+                return {
+                  ...box,
+                  gap: above.length
+                    ? box.y -
+                      Math.max(...above.map((other) => other.y + other.height))
+                    : 0,
+                };
+              });
             });
-            return boxes.map((box) => {
-              const above = boxes.filter(
-                (other) =>
-                  other.y + other.height <= box.y + 1 &&
-                  other.x < box.x + box.width - 1 &&
-                  other.x + other.width > box.x + 1,
-              );
-              return {
-                ...box,
-                gap: above.length
-                  ? box.y -
-                    Math.max(...above.map((other) => other.y + other.height))
-                  : 0,
-              };
+          await writeFile(
+            testInfo.outputPath(`geometry-${String(count)}.json`),
+            JSON.stringify(geometry, null, 2),
+          );
+          await testInfo.attach(`geometry-${String(count)}`, {
+            body: JSON.stringify(geometry, null, 2),
+            contentType: 'application/json',
+          });
+          if (count === 7) {
+            const path = testInfo.outputPath('synthetic-mixed-mosaic.png');
+            await page
+              .locator('article')
+              .screenshot({ path, caret: 'initial' });
+            await testInfo.attach('synthetic-mixed-mosaic', {
+              path,
+              contentType: 'image/png',
             });
-          });
-        await writeFile(
-          testInfo.outputPath(`geometry-${String(count)}.json`),
-          JSON.stringify(geometry, null, 2),
-        );
-        await testInfo.attach(`geometry-${String(count)}`, {
-          body: JSON.stringify(geometry, null, 2),
-          contentType: 'application/json',
-        });
-        if (count === 7) {
-          const path = testInfo.outputPath('synthetic-mixed-mosaic.png');
-          await page.locator('article').screenshot({ path, caret: 'initial' });
-          await testInfo.attach('synthetic-mixed-mosaic', {
-            path,
-            contentType: 'image/png',
-          });
+          }
+          for (const box of geometry)
+            expect.soft(box.gap).toBeLessThanOrEqual(8);
         }
-        for (const box of geometry) expect.soft(box.gap).toBeLessThanOrEqual(8);
+      } finally {
+        metadataReady.resolve(undefined);
       }
     });
   }
@@ -512,8 +583,8 @@ test.describe('CSS post mosaic', () => {
       await page.setViewportSize({ width, height: 1138 });
       await page.goto(`/posts/${post.slug}`);
       await expect(page.locator('.post-mosaic > div').first()).toHaveCSS(
-        'column-count',
-        width < 601 ? '1' : '2',
+        'display',
+        'grid',
       );
       await expect(page.locator('.post-mosaic .media-tile')).toHaveCount(4);
       await page.locator('.post-mosaic img').evaluateAll(async (images) => {
@@ -535,11 +606,19 @@ test.describe('CSS post mosaic', () => {
           }),
         );
       for (const [index, box] of boxes.entries()) {
-        const previous = boxes
+        const prior = boxes[index - 1];
+        if (prior)
+          expect(
+            box.y > prior.y + 1 ||
+              (Math.abs(box.y - prior.y) <= 1 && box.x > prior.x),
+          ).toBe(true);
+        const above = boxes
           .slice(0, index)
-          .findLast((other) => Math.abs(other.x - box.x) < 1);
-        if (previous)
-          expect(box.y - previous.y - previous.height).toBeCloseTo(7, 0);
+          .filter((other) => other.y < box.y - 1);
+        if (above.length)
+          expect(
+            box.y - Math.max(...above.map((other) => other.y + other.height)),
+          ).toBeCloseTo(7, 0);
       }
     }
   });
@@ -557,8 +636,10 @@ test.describe('CSS post mosaic', () => {
         article.style.width = `${String(width)}px`;
       }, width);
       await expect(page.locator('.post-mosaic > div').first()).toHaveCSS(
-        'column-count',
-        width < 553 ? '1' : '2',
+        'grid-template-columns',
+        width < 553
+          ? `${String(width)}px`
+          : `${String((width - 7) / 2)}px ${String((width - 7) / 2)}px`,
       );
       await expect(page.locator('.post-mosaic .media-tile')).toHaveCount(7);
       expect(
