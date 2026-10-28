@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { z } from 'zod';
+import { routeMapContext } from '../fixtures/map-context';
 
 // Only synthetic locations and media enter screenshots.
 test('map has no highway overlay through zoom, pan, themes and preview gestures', async ({
@@ -83,10 +84,11 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
   await page.route('https://toolbar.bent.build/embed.js', (route) =>
     route.fulfill({ contentType: 'application/javascript', body: '' }),
   );
+  if (!process.env.MAP_CONTEXT_LIVE) await routeMapContext(page);
   const tileRequests: string[] = [];
-  await page.route('https://cyberjapandata.gsi.go.jp/**', (route) => {
-    tileRequests.push(route.request().url());
-    return route.abort();
+  page.on('request', (request) => {
+    if (request.url().startsWith('https://cyberjapandata.gsi.go.jp/'))
+      tileRequests.push(request.url());
   });
   try {
     for (const width of [1280, 390]) {
@@ -127,7 +129,33 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
               name: 'Map source: GSI Japan, colours adjusted',
             }),
           ).toHaveCount(0);
+          await expect(map.locator('[data-map-vector-tile]')).not.toHaveCount(
+            0,
+          );
+          if (state === 'regional' || state === 'street') {
+            await expect(
+              map.locator('[data-map-layer="RdCL"]').first(),
+            ).toBeVisible();
+            await expect(
+              map.locator('[data-map-layer="RailCL"]').first(),
+            ).toBeVisible();
+          }
+          if (state === 'street')
+            await expect(
+              map.locator('[data-map-layer="BldA"]').first(),
+            ).toBeVisible();
           await expect(map.getByRole('status')).toHaveCount(0);
+          await expect(map.locator('[data-map-detail-background]')).toHaveCount(
+            1,
+          );
+          await expect(
+            map.locator('[data-map-vector-tile] > rect'),
+          ).toHaveCount(0);
+          await expect(
+            map.getByRole('link', {
+              name: 'Map source: GSI Japan, custom vector style',
+            }),
+          ).toBeVisible();
           await expect(map.locator('svg > path').first()).toHaveAttribute(
             'd',
             /M.+/,
@@ -186,7 +214,42 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
         await page.getByRole('button', { name: 'Close map preview' }).click();
       }
     }
-    expect(tileRequests).toEqual([]);
+    // Failed detail never removes the local outline, media pins or controls.
+    await page.unroute('https://cyberjapandata.gsi.go.jp/**');
+    await page.route('https://cyberjapandata.gsi.go.jp/**', (route) =>
+      route.abort(),
+    );
+    await page.goto(`/?media=${item.id}#japan-map`);
+    await page.getByRole('button', { name: 'Close map preview' }).click();
+    // A hash-only navigation can retain the already-cached tile set. Reload to
+    // exercise a fresh visit during an outage.
+    await page.reload();
+    if (
+      await page.getByRole('button', { name: 'Close map preview' }).isVisible()
+    )
+      await page.getByRole('button', { name: 'Close map preview' }).click();
+    const fallback = page.locator('#japan-map');
+    await expect(fallback.getByRole('status')).toHaveText(
+      'map detail unavailable',
+    );
+    await expect(fallback.locator('svg > path').first()).toHaveAttribute(
+      'd',
+      /M.+/,
+    );
+    await expect(
+      fallback.getByRole('button', { name: /^synthetic tokyo station,/ }),
+    ).toBeEnabled();
+    await page.unroute('https://cyberjapandata.gsi.go.jp/**');
+    await routeMapContext(page);
+    await fallback.getByRole('button', { name: 'RETRY MAP' }).click();
+    await expect(fallback.locator('[data-map-vector-tile]')).not.toHaveCount(0);
+    await expect(fallback.getByRole('status')).toHaveCount(0);
+    expect(tileRequests.length).toBeGreaterThan(0);
+    expect(
+      tileRequests.every((url) =>
+        /optimal_bvmap-v1\/\d+\/\d+\/\d+\.pbf$/.test(url),
+      ),
+    ).toBe(true);
   } finally {
     for (const id of [item.id, nearbyRecord.item.id])
       expect(
@@ -201,6 +264,7 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
 
 test('private GPS revisions never request external tiles in edit mode or native preview', async ({
   page,
+  browser,
   baseURL,
 }) => {
   const api = page.request;
@@ -299,6 +363,29 @@ test('private GPS revisions never request external tiles in edit mode or native 
         page.locator('[data-feedback-id="map-preview"]'),
       ).toBeVisible();
       expect(tileRequests).toEqual([]);
+    }
+    const anonymous = await browser.newContext({ baseURL });
+    try {
+      const publicPage = await anonymous.newPage();
+      await publicPage.route('https://toolbar.bent.build/embed.js', (route) =>
+        route.fulfill({ body: '' }),
+      );
+      await routeMapContext(publicPage);
+      await publicPage.goto(`/?media=${item.id}#japan-map`);
+      await expect(
+        publicPage.locator('[data-feedback-id="map-preview"]'),
+      ).toContainText('synthetic live tokyo');
+      await expect(publicPage.locator('#japan-map')).not.toContainText(
+        'synthetic unpublished sapporo',
+      );
+      await publicPage
+        .getByRole('button', { name: 'Close map preview' })
+        .click();
+      await expect(
+        publicPage.locator('[data-map-vector-tile]'),
+      ).not.toHaveCount(0);
+    } finally {
+      await anonymous.close();
     }
   } finally {
     expect((await api.delete(path, { headers })).ok()).toBe(true);

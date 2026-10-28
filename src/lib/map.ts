@@ -149,6 +149,11 @@ export function tripMap(media: Location[]) {
     },
   );
   return {
+    projection: {
+      worldSize: projection.scale() * 2 * Math.PI,
+      x: projection.translate()[0] - projection.scale() * Math.PI,
+      y: projection.translate()[1] - projection.scale() * Math.PI,
+    },
     projectMedia: (item: Location) =>
       isJapanMapLocation(item)
         ? projection([item.longitude, item.latitude])

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { z } from 'zod';
+import { settleMasonry } from '../fixtures/masonry-layout';
 
 const fixtureRun = crypto.randomUUID();
 const posts: { id: string; day: string }[] = [];
@@ -25,7 +26,23 @@ test.beforeAll(async ({ request, baseURL }) => {
           title: `Synthetic layout post ${day}`,
           day,
           demo: true,
-          content: [],
+          content: Array.from(
+            { length: Number(day.slice(-2)) - 12 },
+            (_, index) => ({
+              _type: 'block',
+              _key: `synthetic-${String(index)}`,
+              style: 'normal',
+              markDefs: [],
+              children: [
+                {
+                  _type: 'span',
+                  _key: `text-${String(index)}`,
+                  text: 'Synthetic content with different post heights for visual reading order.',
+                  marks: [],
+                },
+              ],
+            }),
+          ),
           gallery: [],
         },
       },
@@ -94,6 +111,7 @@ for (const scheme of ['light', 'dark'] satisfies ('light' | 'dark')[]) {
         await page.screenshot({
           path: `${process.env.HOME_MAP_EVIDENCE}/${String(width)}-${scheme}.png`,
         });
+      await settleMasonry(grid, 16);
       const gridBox = await grid.boundingBox();
       const mapBox = await map.boundingBox();
       if (!gridBox || !mapBox)
@@ -116,16 +134,23 @@ for (const scheme of ['light', 'dark'] satisfies ('light' | 'dark')[]) {
       if (!first) throw new Error('Newest post required');
       expect(first.x).toBeCloseTo(gridBox.x, 0);
       expect(first.y - mapBox.y - mapBox.height).toBeCloseTo(16, 0);
+      // Compare displayed positions, so chronological DOM order alone cannot pass.
       for (let index = 1; index < boxes.length; index++) {
         const previous = boxes[index - 1];
         const current = boxes[index];
         if (!previous || !current) throw new Error('Post sequence required');
-        if (Math.abs(current.x - previous.x) < 1)
-          expect(current.y - previous.y - previous.height).toBeCloseTo(16, 0);
-        else {
-          expect(current.x - previous.x - previous.width).toBeCloseTo(16, 0);
-          expect(current.y).toBeCloseTo(first.y, 0);
-        }
+        expect(
+          current.y > previous.y + 1 ||
+            (Math.abs(current.y - previous.y) <= 1 && current.x > previous.x),
+        ).toBe(true);
+        const above = boxes
+          .slice(0, index)
+          .filter((other) => Math.abs(other.x - current.x) < 1);
+        const priorBottom = above.length
+          ? Math.max(...above.map((other) => other.y + other.height))
+          : mapBox.y + mapBox.height;
+        expect(current.y - priorBottom).toBeGreaterThanOrEqual(16);
+        expect(current.y - priorBottom).toBeLessThan(17);
       }
       expect(
         await articles

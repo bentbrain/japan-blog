@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
 import type { MapReference } from '../lib/map';
+import type { MapProjection } from '../lib/map-context';
+import { MapContext } from './MapContext';
 import { resolveMapPhoto } from '../lib/map-photo-controller';
 import {
   Popover,
@@ -115,10 +117,12 @@ export function JapanMapView({
   land,
   points,
   references = [],
+  projection,
 }: {
   land: string;
   points: MapItem[];
   references?: MapReference[];
+  projection?: MapProjection;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const pointers = useRef(new Map<number, MapPoint>());
@@ -130,6 +134,8 @@ export function JapanMapView({
   );
   const [active, setActive] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [detailUnavailable, setDetailUnavailable] = useState(false);
+  const [detailAttempt, setDetailAttempt] = useState(0);
   const groups = clusterMapPoints(points, camera.zoom);
 
   useEffect(() => {
@@ -334,6 +340,16 @@ export function JapanMapView({
           strokeLinejoin="round"
           d={land}
         />
+        {projection && ready && (
+          <MapContext
+            camera={camera}
+            size={size}
+            projection={projection}
+            pins={groups}
+            onUnavailable={setDetailUnavailable}
+            revision={detailAttempt}
+          />
+        )}
         {references.map((reference) => {
           const x = (reference.x - camera.x) * camera.zoom + size.width / 2;
           const y = (reference.y - camera.y) * camera.zoom + size.height / 2;
@@ -534,7 +550,35 @@ export function JapanMapView({
           </Button>
         </div>
       </div>
-      <span className="pointer-events-none absolute bottom-3 left-3 hidden text-[10px] text-foreground/60 min-[601px]:block">
+      {projection && (
+        <a
+          href="https://github.com/gsi-cyberjapan/optimal_bvmap"
+          target="_blank"
+          rel="noreferrer"
+          className="absolute bottom-2 left-3 bg-background/90 text-[10px] text-foreground underline"
+          aria-label="Map source: GSI Japan, custom vector style"
+        >
+          map data: gsi japan · styled
+        </a>
+      )}
+      {projection && detailUnavailable && (
+        <div className="absolute top-3 left-3 flex items-center gap-2 bg-background/90 px-2 py-1 text-[10px]">
+          <span role="status">map detail unavailable</span>
+          <Button
+            variant="link"
+            className="h-auto p-0 text-[10px]"
+            onClick={() => {
+              setDetailUnavailable(false);
+              setDetailAttempt((attempt) => attempt + 1);
+            }}
+          >
+            RETRY MAP
+          </Button>
+        </div>
+      )}
+      <span
+        className={`pointer-events-none absolute left-3 hidden text-[10px] text-foreground/60 min-[601px]:block ${projection ? 'bottom-7' : 'bottom-3'}`}
+      >
         ctrl / ⌘ + scroll to zoom
       </span>
       {!points.length && (
