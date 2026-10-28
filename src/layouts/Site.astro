@@ -48,6 +48,7 @@ const feedback = feedbackConfiguration(
     {privateContent && <meta name="robots" content="noindex" />}
   </head>
   <body
+    data-public-video-playback={!privateContent ? true : undefined}
     class="flex min-h-dvh flex-col"
     data-feedback-redact={privateContent ? true : undefined}
   >
@@ -95,7 +96,9 @@ const feedback = feedbackConfiguration(
         data-feedback-id="beer-counter"
       >
         <Pixel compact />
-        <span>{counts.total} beers</span>
+        <span class="relative">
+          {counts.total} beers<span class="absolute left-full top-0">*</span>
+        </span>
       </div>
     </header>
     <main
@@ -115,6 +118,10 @@ const feedback = feedbackConfiguration(
         <div class="border-t text-xs">
           <div class="mx-auto max-w-[1400px] px-4 py-4 min-[601px]:px-6">
             <a href="/newsletter/privacy">email privacy</a>
+            <p class="mt-3 text-xs leading-relaxed">
+              * as of 23/10/2026 i have stopped counting beers, so this figure
+              is no longer accurate. multiply this amount 4 and + 10 to be safe.
+            </p>
           </div>
         </div>
       </footer>
@@ -129,3 +136,10 @@ const feedback = feedbackConfiguration(
     )}
   </body>
 </html>
+
+<script>
+  import { startPublicVideoPlayback } from '../lib/public-video-playback';
+  if (document.body.hasAttribute('data-public-video-playback')) {
+    startPublicVideoPlayback(document.body);
+  }
+</script>

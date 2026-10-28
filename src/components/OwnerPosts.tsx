@@ -1,5 +1,7 @@
 import { useState, type SubmitEvent } from 'react';
 import { api } from '../lib/api-client';
+import { useMutation } from '@tanstack/react-query';
+import { OwnerQueryProvider } from './OwnerQueryProvider';
 import { Button, buttonVariants } from './ui/button';
 import { Input } from './ui/input';
 import {
@@ -14,15 +16,19 @@ import { Badge } from './ui/badge';
 import { Field, FieldLabel } from './ui/field';
 
 type Post = { id: string; title: string; day: string; status: string };
-export function OwnerPosts({
-  posts,
-  day,
-  beers,
-}: {
-  posts: Post[];
-  day: string;
-  beers: number;
-}) {
+type Props = { posts: Post[]; day: string; beers: number };
+export function OwnerPosts(props: Props) {
+  return (
+    <OwnerQueryProvider>
+      <PostList {...props} />
+    </OwnerQueryProvider>
+  );
+}
+function PostList({ posts, day, beers }: Props) {
+  const mutation = useMutation({
+    mutationFn: (input: { day: FormDataEntryValue | null; count: number }) =>
+      api('/api/trip/beers', input),
+  });
   const [count, setCount] = useState(beers);
   const [status, setStatus] = useState('');
   const [saving, setSaving] = useState(false);
@@ -31,7 +37,7 @@ export function OwnerPosts({
     const values = new FormData(event.currentTarget);
     setSaving(true);
     try {
-      await api('/api/trip/beers', { day: values.get('day'), count });
+      await mutation.mutateAsync({ day: values.get('day'), count });
       setStatus('saved');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Save failed');

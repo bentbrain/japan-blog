@@ -1,56 +1,50 @@
-import { useEffect, useState } from 'react';
-import { api } from '../lib/api-client';
-import {
-  categoryCollectionSchema,
-  type CategoryCollection,
-} from '../lib/category-collection-model';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { OwnerQueryProvider } from './OwnerQueryProvider';
+import { ownerCategoriesQuery } from '../lib/owner-queries';
 import { CreateCategory } from './CreateCategory';
 import { CategoryIconProviderStatus } from './CategoryIconProviderStatus';
 import { CategoryIconStatus } from './CategoryIconStatus';
 
 export function OwnerCategories() {
-  const [collection, setCollection] = useState<CategoryCollection>({
-    categories: [],
-    icons: [],
+  return (
+    <OwnerQueryProvider>
+      <CategoryManager />
+    </OwnerQueryProvider>
+  );
+}
+function CategoryManager() {
+  const client = useQueryClient();
+  const query = useQuery({
+    ...ownerCategoriesQuery,
+    refetchInterval: (query) =>
+      query.state.data?.categories.some(
+        (category) => category.state === 'pending',
+      )
+        ? 15_000
+        : false,
   });
-  const [error, setError] = useState('');
-  const [loaded, setLoaded] = useState(false);
+  const collection = query.data ?? { categories: [], icons: [] };
+  const loaded = query.isSuccess;
+  const error = query.isError ? 'could not load categories' : '';
   useEffect(() => {
-    let active = true;
-    const load = async () => {
-      try {
-        const result = categoryCollectionSchema.parse(
-          await api('/api/trip/categories'),
-        );
-        if (active) {
-          setCollection(result);
-          setError('');
-          setLoaded(true);
-        }
-      } catch {
-        if (active) setError('could not load categories');
-      }
-    };
-    void load();
     const refresh = () => {
-      void load();
+      void client.invalidateQueries({
+        queryKey: ownerCategoriesQuery.queryKey,
+      });
     };
-    const timer = setInterval(refresh, 15000);
     window.addEventListener('category-icons:changed', refresh);
     return () => {
-      active = false;
-      clearInterval(timer);
       window.removeEventListener('category-icons:changed', refresh);
     };
-  }, []);
+  }, [client]);
   return (
     <div className="space-y-8" data-feedback-id="owner-categories">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1>categories</h1>
         <CreateCategory
           onCreated={(result) => {
-            setCollection(result);
-            setLoaded(true);
+            client.setQueryData(ownerCategoriesQuery.queryKey, result);
           }}
         />
       </div>
