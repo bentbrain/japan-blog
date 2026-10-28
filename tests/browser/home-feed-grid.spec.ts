@@ -2,6 +2,7 @@ import { test as sharedTest, expect, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { startIsolatedBrowserServer } from '../fixtures/isolated-browser-server';
 import { z } from 'zod';
+import { settleMasonry } from '../fixtures/masonry-layout';
 import { readFile, writeFile } from 'node:fs/promises';
 
 // Keep file order while giving these fixtures their own CMS lifecycle.
@@ -357,6 +358,8 @@ for (const javaScriptEnabled of [true, false]) {
                 await expect(page.locator('astro-island[ssr]')).toHaveCount(0);
               await page.evaluate(() => document.fonts.ready);
               await page.locator('article').first().scrollIntoViewIfNeeded();
+              if (javaScriptEnabled)
+                await settleMasonry(page.locator('.journal-grid'), 16);
               const metrics = await measure(page);
               await assertBaselineMedia(page);
               const evidence = process.env.FEED_GRID_EVIDENCE;
@@ -387,9 +390,11 @@ for (const javaScriptEnabled of [true, false]) {
               const first = metrics.cards[0];
               if (!first) throw new Error('Newest card required');
               expect(first.x).toBeCloseTo(metrics.left, 1);
-              expect(first.y - metrics.map.y - metrics.map.height).toBeCloseTo(
-                16,
-                1,
+              expect(
+                first.y - metrics.map.y - metrics.map.height,
+              ).toBeGreaterThanOrEqual(16);
+              expect(first.y - metrics.map.y - metrics.map.height).toBeLessThan(
+                17,
               );
               const occupiedColumns = new Set<number>();
               for (let index = 0; index < metrics.cards.length; index++) {
@@ -409,18 +414,31 @@ for (const javaScriptEnabled of [true, false]) {
                 );
                 const previous = metrics.cards[index - 1];
                 if (previous) {
-                  if (Math.abs(card.x - previous.x) < 1) {
-                    expect(card.y - previous.y - previous.height).toBeCloseTo(
-                      16,
-                      1,
-                    );
-                  } else {
-                    expect(card.x - previous.x - previous.width).toBeCloseTo(
-                      16,
-                      1,
-                    );
-                    expect(card.y - first.y).toBeCloseTo(0, 1);
-                  }
+                  expect(
+                    card.y > previous.y + 1 ||
+                      (Math.abs(card.y - previous.y) <= 1 &&
+                        card.x > previous.x),
+                  ).toBe(true);
+                }
+                const above = metrics.cards
+                  .slice(0, index)
+                  .findLast((other) => Math.abs(other.x - card.x) < 1);
+                if (above) {
+                  const gap = card.y - above.y - above.height;
+                  expect(gap).toBeGreaterThanOrEqual(16);
+                  // The no-JS fallback has normal row-height gaps. Enhanced
+                  // masonry packs each column to within one pixel of the gap.
+                  if (javaScriptEnabled) expect(gap).toBeLessThan(17);
+                }
+                if (!javaScriptEnabled) expect(column).toBe(index % columns);
+                for (const other of metrics.cards.slice(0, index)) {
+                  const overlapWidth =
+                    Math.min(card.x + card.width, other.x + other.width) -
+                    Math.max(card.x, other.x);
+                  const overlapHeight =
+                    Math.min(card.y + card.height, other.y + other.height) -
+                    Math.max(card.y, other.y);
+                  expect(overlapWidth > 1 && overlapHeight > 1).toBe(false);
                 }
                 expect(card.x + card.width).toBeLessThanOrEqual(
                   metrics.right + 1,
@@ -441,7 +459,10 @@ for (const javaScriptEnabled of [true, false]) {
                 expect(metrics.cards.length % 6).toBe(1);
                 const final = metrics.cards.at(-1);
                 if (!final) throw new Error('Final card required');
-                expect(final.x + final.width).toBeCloseTo(metrics.right, 1);
+                // A single final item starts at the left in the row-major
+                // no-JS fallback; enhanced packing follows actual row order.
+                if (!javaScriptEnabled)
+                  expect(final.x).toBeCloseTo(metrics.left, 1);
                 await expect(
                   page.getByRole('link', { name: 'EARLIER →' }),
                 ).toHaveCount(0);

@@ -162,10 +162,14 @@ for (const colorScheme of ['light', 'dark'] satisfies ('light' | 'dark')[])
       await expect(page.locator('.journal-card-inner')).toHaveCount(
         postCount + 1,
       );
-      await expect(page.locator('.journal-grid')).toHaveCSS(
-        'column-count',
-        '3',
-      );
+      expect(
+        await page
+          .locator('.journal-grid')
+          .evaluate(
+            (grid) =>
+              getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+          ),
+      ).toBe(3);
       await page.evaluate(() => document.fonts.ready);
       if (process.env.HOME_LOADING_EVIDENCE)
         await page.screenshot({

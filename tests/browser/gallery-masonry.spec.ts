@@ -156,27 +156,26 @@ for (const javaScriptEnabled of [true, false]) {
         { waitUntil: 'domcontentloaded' },
       );
       const grid = page.locator('[data-feedback-id="gallery-grid"]');
+      const photos = grid.locator(':scope > div:not([hidden]) img');
       if (javaScriptEnabled)
         await expect(grid).toHaveAttribute('data-masonry-ready', '');
       // No width/height hints exist in the initial HTML. Hold real bytes and
       // fonts so first render cannot hide missing-dimension or late-load bugs.
-      await expect(grid.locator('img')).toHaveCount(8);
+      await expect(photos).toHaveCount(8);
       expect(
-        await grid
-          .locator('img')
-          .evaluateAll((images) =>
-            images.every(
-              (image) =>
-                !image.hasAttribute('width') && !image.hasAttribute('height'),
-            ),
+        await photos.evaluateAll((images) =>
+          images.every(
+            (image) =>
+              !image.hasAttribute('width') && !image.hasAttribute('height'),
           ),
+        ),
       ).toBe(true);
       if (javaScriptEnabled) {
         await expect.poll(() => heldImages).toBeGreaterThan(0);
         await expect.poll(() => heldFonts).toBeGreaterThan(0);
       }
       imagesReady.resolve(undefined);
-      await grid.locator('img').evaluateAll(async (images) => {
+      await photos.evaluateAll(async (images) => {
         await Promise.all(
           images.map(async (image) => {
             if (image instanceof HTMLImageElement) {
@@ -220,7 +219,7 @@ for (const javaScriptEnabled of [true, false]) {
         });
         await expectPacked(grid, 3);
       }
-      for (const photo of await grid.locator('img').all()) {
+      for (const photo of await photos.all()) {
         const ratio = await photo.evaluate((image) => {
           if (!(image instanceof HTMLImageElement))
             throw new Error('Image required');
@@ -247,7 +246,7 @@ for (const javaScriptEnabled of [true, false]) {
       );
       for (const width of [1280, 601, 600, 390, 901, 900, 1280]) {
         await page.setViewportSize({ width, height: 1000 });
-        await grid.locator('img').evaluateAll(async (images) => {
+        await photos.evaluateAll(async (images) => {
           await Promise.all(
             images
               .filter((image) => image.closest('[hidden]') === null)

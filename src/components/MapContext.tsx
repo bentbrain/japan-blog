@@ -9,7 +9,7 @@ import {
 import type { MapCamera, MapPoint, MapSize } from '../lib/map-view';
 
 const layerStyles = new Map([
-  ['AdmArea', 'fill-background stroke-none'],
+  ['AdmArea', 'fill-background stroke-none dark:fill-muted'],
   ['WA', 'fill-foreground/10 stroke-none dark:fill-foreground/15'],
   ['TpgphArea', 'fill-foreground/5 stroke-none'],
   ['Cstline', 'fill-none stroke-foreground/35 [stroke-width:0.8]'],
@@ -77,16 +77,26 @@ export function MapContext({
               credentials: 'omit',
               referrerPolicy: 'no-referrer',
             });
+            let detail: MapDetail;
             if (response.status === 404) {
-              cache.current.set(key, { paths: [], labels: [] });
+              detail = { paths: [], labels: [] };
             } else {
               if (!response.ok) throw new Error('Map detail unavailable');
               const data = await response.arrayBuffer();
               if (data.byteLength > 2_000_000)
                 throw new Error('Map detail too large');
-              cache.current.set(key, decodeMapDetail(data));
+              if (controller.signal.aborted) return;
+              detail = decodeMapDetail(data);
             }
-            if (!controller.signal.aborted) update();
+            if (controller.signal.aborted) return;
+            cache.current.set(key, detail);
+            // Evict on every insertion. A delayed sibling request may keep the
+            // batch unfinished until a later viewport cancels it.
+            for (const cachedKey of cache.current.keys()) {
+              if (cache.current.size <= 64) break;
+              if (!wanted.includes(cachedKey)) cache.current.delete(cachedKey);
+            }
+            update();
           } catch {
             if (!controller.signal.aborted) failures++;
           }
@@ -94,11 +104,6 @@ export function MapContext({
       ).then(() => {
         if (controller.signal.aborted) return;
         onUnavailable(failures > 0);
-        // A bounded per-map cache reuses nearby tiles through pan/zoom.
-        for (const key of cache.current.keys()) {
-          if (cache.current.size <= 64) break;
-          if (!wanted.includes(key)) cache.current.delete(key);
-        }
       });
     }, 150);
     return () => {
@@ -141,11 +146,6 @@ export function MapContext({
         viewBox="0 0 4096 4096"
         overflow="hidden"
       >
-        <rect
-          width="4096"
-          height="4096"
-          className={tile.z <= 7 ? 'fill-muted' : 'fill-background'}
-        />
         {detail.paths
           .filter(
             (path) =>
@@ -202,6 +202,18 @@ export function MapContext({
     });
   return (
     <g data-map-detail className="pointer-events-none" aria-hidden="true">
+      {/* Empty ocean tiles share the same background as tiles with geometry.
+          Keep the local outline visible until the whole viewport is available. */}
+      {tiles.length > 0 &&
+        tiles.every((tile) => details.has(tile.key)) &&
+        tiles.some((tile) => details.get(tile.key)?.paths.length) && (
+          <rect
+            data-map-detail-background
+            width={size.width}
+            height={size.height}
+            className="fill-background"
+          />
+        )}
       {rendered}
       {visible.map((label) => (
         <text

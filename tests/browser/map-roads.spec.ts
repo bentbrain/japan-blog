@@ -145,6 +145,12 @@ test('map has no highway overlay through zoom, pan, themes and preview gestures'
               map.locator('[data-map-layer="BldA"]').first(),
             ).toBeVisible();
           await expect(map.getByRole('status')).toHaveCount(0);
+          await expect(map.locator('[data-map-detail-background]')).toHaveCount(
+            1,
+          );
+          await expect(
+            map.locator('[data-map-vector-tile] > rect'),
+          ).toHaveCount(0);
           await expect(
             map.getByRole('link', {
               name: 'Map source: GSI Japan, custom vector style',

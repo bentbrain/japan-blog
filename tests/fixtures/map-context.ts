@@ -26,6 +26,7 @@ export async function routeMapContext(page: Page) {
           )
         : Buffer.alloc(0);
     await route.fulfill({
+      status: body.length ? 200 : 404,
       contentType: 'application/x-protobuf',
       body,
       headers: { 'Access-Control-Allow-Origin': '*' },
