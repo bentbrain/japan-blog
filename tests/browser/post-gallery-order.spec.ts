@@ -386,7 +386,21 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
   page.on('response', onResponse);
   try {
     await page.goto(editorUrl);
-    await page.goto(nativePath);
+    // The client-only native app hydrates after document load. Complete its
+    // post navigation before checking the rendered editor and gallery.
+    const [nativePost] = await Promise.all([
+      page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.origin === origin &&
+          url.pathname === `/_emdash/api/content/posts/${id}` &&
+          response.request().method() === 'GET'
+        );
+      }),
+      page.goto(nativePath),
+    ]);
+    expect(nativePost.status()).toBe(200);
+    expect(savedResponse.parse(await nativePost.json()).data.item.id).toBe(id);
     await expect(page.locator('main h1')).toHaveText(
       'Synthetic ordered gallery',
     );
