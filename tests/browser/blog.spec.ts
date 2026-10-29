@@ -431,11 +431,85 @@ test('exports require owner auth and PNG has story dimensions', async ({
 test('rich editor exposes the published trip media picker', async ({
   page,
 }) => {
+  const fixtures = [
+    { id: 'old', captured_at: '2026-10-14T10:00:00+09:00' },
+    { id: 'tie-b', captured_at: '2026-10-15T01:00:00Z' },
+    { id: 'new', captured_at: '2026-10-17T01:00:00Z' },
+    { id: 'tie-a', captured_at: '2026-10-15T10:00:00+09:00' },
+  ].map(({ id, captured_at }) => ({
+    id,
+    status: 'published',
+    _rev: 'synthetic',
+    data: {
+      title: `Synthetic picker ${id}`,
+      kind: id === 'tie-b' ? 'video' : 'photo',
+      captured_at,
+      asset: { id: `asset-${id}`, url: '/synthetic-picker.svg' },
+    },
+  }));
+  await page.route('**/api/trip/media', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          ...fixtures,
+          {
+            id: 'draft',
+            status: 'draft',
+            _rev: 'synthetic',
+            data: { title: 'Synthetic incomplete draft' },
+          },
+        ],
+      },
+    }),
+  );
+  await page.route('**/synthetic-picker.svg', (route) =>
+    route.fulfill({
+      contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#0647ff"/></svg>',
+    }),
+  );
   await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
   await page.waitForURL('**/owner/posts/new');
   await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
-  await expect(page.locator('.trip-gallery-field')).toBeVisible();
-  await expect(page.locator('.trip-gallery-options img').first()).toBeVisible();
+  const picker = page.getByRole('dialog');
+  await expect(picker.locator('.trip-gallery-field')).toBeVisible();
+  await expect(picker.locator('img')).toHaveCount(4);
+  await expect(picker.locator('img').first()).toBeVisible();
+  expect(
+    await picker
+      .locator('img')
+      .evaluateAll((images) =>
+        images.map((image) => image.getAttribute('alt')),
+      ),
+  ).toEqual(
+    ['new', 'tie-a', 'tie-b', 'old'].map((id) => `Synthetic picker ${id}`),
+  );
+  const choice = (id: string) =>
+    picker
+      .locator('.trip-gallery-options > div')
+      .filter({
+        has: page.getByRole('img', {
+          name: `Synthetic picker ${id}`,
+          exact: true,
+        }),
+      })
+      .getByRole('checkbox');
+  for (const id of ['new', 'old']) await choice(id).check();
+  await page.keyboard.press('Escape');
+  await expect(picker).toHaveCount(0);
+  const gallery = page.getByRole('list', { name: 'Post gallery' });
+  expect(
+    await gallery
+      .locator('[data-gallery-id]')
+      .evaluateAll((tiles) =>
+        tiles.map((tile) => tile.getAttribute('data-gallery-id')),
+      ),
+  ).toEqual(['old', 'new']);
+  await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
+  await expect(choice('new')).toBeChecked();
+  await expect(choice('old')).toBeChecked();
+  await choice('old').uncheck();
+  await expect(choice('new')).toBeChecked();
 });
 test('MP4 story export contains a portrait AVC video track', async ({
   page,

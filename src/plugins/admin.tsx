@@ -75,7 +75,7 @@ function GalleryField({
             <DialogTitle>{label}</DialogTitle>
           </DialogHeader>
           <div className="trip-gallery-options mt-3 grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-2">
-            {captureOrder(items).map((item) => (
+            {captureOrder(items, 'desc').map((item) => (
               <div key={item.id}>
                 <img
                   src={

@@ -157,7 +157,21 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
     .getByRole('textbox', { name: 'Post content' })
     .fill('Synthetic gallery fixture.');
   await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
+  const late = fixtures[0],
+    early = fixtures[1],
+    middle = fixtures[2];
+  if (!late || !early || !middle)
+    throw new Error('Three gallery fixtures required');
   const picker = page.getByRole('dialog');
+  const fixtureImages = picker.getByRole('img', {
+    name: /^Synthetic gallery (late|middle|early)$/,
+  });
+  await expect(fixtureImages).toHaveCount(3);
+  expect(
+    await fixtureImages.evaluateAll((images) =>
+      images.map((image) => image.getAttribute('alt')),
+    ),
+  ).toEqual([late.title, middle.title, early.title]);
   for (const fixture of fixtures) {
     await picker
       .locator('.trip-gallery-options > div')
@@ -179,11 +193,6 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
     tiles.evaluateAll((elements) =>
       elements.map((element) => element.getAttribute('data-gallery-id')),
     );
-  const late = fixtures[0],
-    early = fixtures[1],
-    middle = fixtures[2];
-  if (!late || !early || !middle)
-    throw new Error('Three gallery fixtures required');
   await expect.poll(ids).toEqual([early.id, middle.id, late.id]);
   await gallery.locator('img').evaluateAll(async (images) =>
     Promise.all(
@@ -377,7 +386,21 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
   page.on('response', onResponse);
   try {
     await page.goto(editorUrl);
-    await page.goto(nativePath);
+    // The client-only native app hydrates after document load. Complete its
+    // post navigation before checking the rendered editor and gallery.
+    const [nativePost] = await Promise.all([
+      page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          url.origin === origin &&
+          url.pathname === `/_emdash/api/content/posts/${id}` &&
+          response.request().method() === 'GET'
+        );
+      }),
+      page.goto(nativePath),
+    ]);
+    expect(nativePost.status()).toBe(200);
+    expect(savedResponse.parse(await nativePost.json()).data.item.id).toBe(id);
     await expect(page.locator('main h1')).toHaveText(
       'Synthetic ordered gallery',
     );
@@ -433,6 +456,19 @@ test('owner gallery defaults to capture order, supports pointer/touch/keyboard m
     .filter({ hasText: 'Welcome to EmDash' });
   if (await welcome.isVisible())
     await welcome.getByRole('button', { name: 'Get Started' }).click();
+  await page.getByRole('button', { name: 'CHOOSE MEDIA', exact: true }).click();
+  const nativePicker = page.getByRole('dialog');
+  await expect(
+    nativePicker
+      .locator('label')
+      .filter({ hasText: /^Synthetic gallery (late|middle|early)$/ }),
+  ).toHaveText([late.title, middle.title, early.title]);
+  for (const fixture of fixtures)
+    await expect(
+      nativePicker.getByRole('checkbox', { name: fixture.title, exact: true }),
+    ).toBeChecked();
+  await page.keyboard.press('Escape');
+  await expect(nativePicker).toHaveCount(0);
   const nativeGallery = page.getByRole('list', { name: 'Post gallery' });
   await expect(nativeGallery.locator('[data-gallery-id]')).toHaveCount(3);
   await nativeGallery
