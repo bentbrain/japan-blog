@@ -409,7 +409,7 @@ function EditorForm({
                     </p>
                     <div className="trip-gallery-field">
                       <div className="trip-gallery-options grid grid-cols-2 gap-3 sm:grid-cols-3">
-                        {captureOrder(items).map((item) => (
+                        {captureOrder(items, 'desc').map((item) => (
                           <div key={item.id} className="space-y-2">
                             <img
                               src={
