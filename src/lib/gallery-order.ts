@@ -1,9 +1,13 @@
 type CapturedItem = { id: string; data: { captured_at: Date } };
 
-export function captureOrder<T extends CapturedItem>(items: T[]): T[] {
+export function captureOrder<T extends CapturedItem>(
+  items: T[],
+  direction: 'asc' | 'desc' = 'asc',
+): T[] {
+  const sign = direction === 'desc' ? -1 : 1;
   return [...items].sort(
     (a, b) =>
-      a.data.captured_at.getTime() - b.data.captured_at.getTime() ||
+      sign * (a.data.captured_at.getTime() - b.data.captured_at.getTime()) ||
       a.id.localeCompare(b.id),
   );
 }
