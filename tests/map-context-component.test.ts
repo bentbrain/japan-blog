@@ -57,7 +57,6 @@ void test('empty ocean tiles share one viewport background with loaded geometry'
               camera: { x: point[0], y: point[1], zoom: 0.75 },
               size: { ...size, width },
               projection: map.projection,
-              pins: [],
               onUnavailable,
               revision: 0,
             }),
@@ -67,6 +66,11 @@ void test('empty ocean tiles share one viewport background with loaded geometry'
       await act(async () => {
         await setTimeout(200);
       });
+      assert.doesNotMatch(
+        container.textContent || '',
+        /[\u3040-\u30ff\u3400-\u9fff]/,
+        'the geometry overlay must not display Japanese or non-place annotations',
+      );
       const background = container.querySelector(
         '[data-map-detail-background]',
       );
@@ -145,7 +149,6 @@ void test('panning with cancelled delayed requests evicts old completed tiles', 
               camera,
               size,
               projection: map.projection,
-              pins: [],
               onUnavailable,
               revision: 0,
             }),
@@ -170,7 +173,6 @@ void test('panning with cancelled delayed requests evicts old completed tiles', 
             camera: { x: point[0], y: point[1], zoom: 3072 },
             size,
             projection: map.projection,
-            pins: [],
             onUnavailable,
             revision: 0,
           }),
@@ -184,6 +186,104 @@ void test('panning with cancelled delayed requests evicts old completed tiles', 
       fulfilled.slice(before).some((url) => firstViewport.has(url)),
       'old completed tiles must be evicted even when every earlier batch was cancelled',
     );
+  } finally {
+    await update(() => {
+      root.unmount();
+    });
+  }
+});
+
+void test('English place nodes keep their geographic positions and identity across panning and tile arrivals', async (t) => {
+  const { MapPlaceLabels } = await import('../src/components/MapPlaceLabels');
+  const bytes = await readFile(
+    new URL('./fixtures/map-places/16-58211-25806.geojson', import.meta.url),
+    'utf8',
+  );
+  const requests: {
+    url: string;
+    credentials?: RequestCredentials;
+    referrerPolicy?: ReferrerPolicy;
+  }[] = [];
+  let fail = false;
+  const errors: boolean[] = [];
+  const status = (value: boolean) => {
+    errors.push(value);
+  };
+  t.mock.method(
+    globalThis,
+    'fetch',
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      requests.push({
+        url,
+        credentials: init?.credentials,
+        referrerPolicy: init?.referrerPolicy,
+      });
+      if (fail)
+        return Promise.reject(new Error('Synthetic unavailable annotations'));
+      return Promise.resolve(new Response(bytes));
+    },
+  );
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  const stationY = point[1];
+  async function render(x: number, revision = 0) {
+    await update(() => {
+      root.render(
+        createElement(
+          'svg',
+          null,
+          createElement(MapPlaceLabels, {
+            camera: { x, y: stationY, zoom: 1536 },
+            size,
+            projection: map.projection,
+            pins: [],
+            revision,
+            onUnavailable: status,
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      await setTimeout(200);
+    });
+  }
+  try {
+    await render(point[0]);
+    const name = container.querySelector('[data-map-place]');
+    assert.ok(name);
+    assert.equal(name.textContent, 'marunouchi 2');
+    const x = Number(name.getAttribute('x'));
+    const y = Number(name.getAttribute('y'));
+    await render(point[0] - 60 / 1536);
+    assert.equal(container.querySelector('[data-map-place]'), name);
+    assert.ok(Math.abs(Number(name.getAttribute('x')) - x - 60) < 1e-6);
+    assert.equal(Number(name.getAttribute('y')), y);
+    await render(point[0]);
+    assert.equal(container.querySelector('[data-map-place]'), name);
+    assert.equal(Number(name.getAttribute('x')), x);
+    assert.ok(requests.length > 0 && requests.length <= 32);
+    assert.ok(
+      requests.every(
+        (request) =>
+          /^https:\/\/maps\.gsi\.go\.jp\/xyz\/experimental_multil\/\d+\/\d+\/\d+\.geojson$/.test(
+            request.url,
+          ) &&
+          request.credentials === 'omit' &&
+          request.referrerPolicy === 'no-referrer',
+      ),
+    );
+    fail = true;
+    await render(point[0] + 5000 / 1536);
+    assert.equal(errors.at(-1), true);
+    fail = false;
+    await render(point[0] + 5000 / 1536, 1);
+    assert.equal(errors.at(-1), false);
   } finally {
     await update(() => {
       root.unmount();

@@ -190,12 +190,12 @@ test('map previews include Japan while outside media stays in the gallery and po
     const initialLand = await map
       .locator('svg[aria-label="Japan media map"] > path')
       .getAttribute('transform');
-    await expect(map.getByRole('group', { name: 'Map controls' })).toHaveCount(
-      1,
-    );
+    await expect(
+      map.getByRole('group', { name: 'Map controls', includeHidden: true }),
+    ).toHaveCount(1);
     await expect(
       map.getByRole('button', { name: /Zoom (in|out)/ }),
-    ).toHaveCount(2);
+    ).toHaveCount(width > 600 ? 2 : 0);
     const bounds = await map.boundingBox();
     if (!bounds) throw new Error('Map bounds required');
     const session = await page.context().newCDPSession(page);

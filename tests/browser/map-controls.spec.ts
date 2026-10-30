@@ -71,28 +71,51 @@ test('map controls retain zoom and geographic context without the location butto
   const map = page.locator('#japan-map');
   const zoomIn = map.getByRole('button', { name: 'Zoom in', exact: true });
   const zoomOut = map.getByRole('button', { name: 'Zoom out', exact: true });
+  let mobile = false;
+  const svg = map.getByRole('group', { name: 'Japan media map' });
+  const changeZoom = async (key: string) => {
+    if (mobile) {
+      await svg.focus();
+      await page.keyboard.press(key);
+    } else await (key === '+' ? zoomIn : zoomOut).click();
+  };
   const resetMap = async () => {
     await page.reload();
-    await expect(zoomIn).toBeEnabled();
     await expect(
-      map.getByRole('group', { name: 'Map controls' }).getByRole('button'),
-    ).toHaveCount(2);
+      map.getByRole('button', {
+        name: 'Zoom in',
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeEnabled();
+    await expect(zoomIn).toBeVisible({ visible: !mobile });
+    await expect(
+      map
+        .getByRole('group', { name: 'Map controls', includeHidden: true })
+        .getByRole('button'),
+    ).toHaveCount(mobile ? 0 : 2);
   };
   await expect(zoomIn).toBeEnabled();
   for (const width of [1280, 390]) {
+    mobile = width <= 600;
     await page.setViewportSize({ width, height: 800 });
     await resetMap();
     const initial = Number(await map.getAttribute('data-zoom'));
-    await zoomIn.click();
+    await changeZoom('+');
     await expect
       .poll(async () => Number(await map.getAttribute('data-zoom')))
       .toBeCloseTo(initial * 2);
-    await zoomOut.click();
+    await changeZoom('-');
     await expect
       .poll(async () => Number(await map.getAttribute('data-zoom')))
       .toBeCloseTo(initial);
-    await zoomIn.focus();
-    await page.keyboard.press('Enter');
+    if (mobile) {
+      await svg.focus();
+      await page.keyboard.press('+');
+    } else {
+      await zoomIn.focus();
+      await page.keyboard.press('Enter');
+    }
     await expect
       .poll(async () => Number(await map.getAttribute('data-zoom')))
       .toBeCloseTo(initial * 2);
@@ -100,7 +123,6 @@ test('map controls retain zoom and geographic context without the location butto
     await expect
       .poll(async () => Number(await map.getAttribute('data-zoom')))
       .toBeCloseTo(initial);
-    const svg = map.getByRole('group', { name: 'Japan media map' });
     await svg.dispatchEvent('wheel', {
       deltaY: -120,
       ctrlKey: true,
@@ -178,9 +200,14 @@ test('map controls retain zoom and geographic context without the location butto
     await marker.click();
     await expect(preview).toBeVisible();
     await preview.getByRole('button', { name: 'Close map preview' }).click();
-    for (let index = 0; index < 8 && (await zoomOut.isEnabled()); index++)
-      await zoomOut.click();
-    await expect(zoomOut).toBeDisabled();
+    for (
+      let index = 0;
+      index < 8 && Number(await map.getAttribute('data-zoom')) > 0.25;
+      index++
+    )
+      await changeZoom('-');
+    expect(Number(await map.getAttribute('data-zoom'))).toBe(0.25);
+    if (!mobile) await expect(zoomOut).toBeDisabled();
     await resetMap();
     await expect(map.locator('[data-map-context]')).not.toHaveCount(0);
     await expect(page.locator('html')).toHaveJSProperty('scrollWidth', width);

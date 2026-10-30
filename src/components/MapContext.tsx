@@ -6,7 +6,7 @@ import {
   type MapDetail,
   type MapProjection,
 } from '../lib/map-context';
-import type { MapCamera, MapPoint, MapSize } from '../lib/map-view';
+import type { MapCamera, MapSize } from '../lib/map-view';
 
 const layerStyles = new Map([
   ['AdmArea', 'fill-background stroke-none dark:fill-muted'],
@@ -33,14 +33,12 @@ export function MapContext({
   camera,
   size,
   projection,
-  pins,
   onUnavailable,
   revision,
 }: {
   camera: MapCamera;
   size: MapSize;
   projection: MapProjection;
-  pins: MapPoint[];
   onUnavailable: (unavailable: boolean) => void;
   revision: number;
 }) {
@@ -112,7 +110,6 @@ export function MapContext({
     };
   }, [wanted, onUnavailable, revision]);
 
-  const labels: { x: number; y: number; text: string; priority: number }[] = [];
   const rendered = tiles.map((tile) => {
     const detail = details.get(tile.key);
     if (!detail || !detail.paths.length) return null;
@@ -129,12 +126,6 @@ export function MapContext({
         camera.y) *
         camera.zoom +
       size.height / 2;
-    for (const label of detail.labels)
-      labels.push({
-        ...label,
-        x: x + (label.x / 4096) * tileSize,
-        y: y + (label.y / 4096) * tileSize,
-      });
     return (
       <svg
         key={tile.key}
@@ -167,39 +158,6 @@ export function MapContext({
       </svg>
     );
   });
-  const occupied = pins.map((pin) => ({
-    x: (pin.x - camera.x) * camera.zoom + size.width / 2 - 24,
-    y: (pin.y - camera.y) * camera.zoom + size.height / 2 - 24,
-    width: 210,
-    height: 48,
-  }));
-  const visible = labels
-    .toSorted((a, b) => a.priority - b.priority)
-    .filter((label) => {
-      const width = label.text.length * 10 + 12;
-      const box = {
-        x: label.x - width / 2,
-        y: label.y - 10,
-        width,
-        height: 24,
-      };
-      if (
-        box.x < 8 ||
-        box.y < 12 ||
-        box.x + width > size.width - 60 ||
-        box.y + 24 > size.height - 44 ||
-        occupied.some(
-          (other) =>
-            box.x < other.x + other.width &&
-            box.x + width > other.x &&
-            box.y < other.y + other.height &&
-            box.y + box.height > other.y,
-        )
-      )
-        return false;
-      occupied.push(box);
-      return true;
-    });
   return (
     <g data-map-detail className="pointer-events-none" aria-hidden="true">
       {/* Empty ocean tiles share the same background as tiles with geometry.
@@ -215,17 +173,6 @@ export function MapContext({
           />
         )}
       {rendered}
-      {visible.map((label) => (
-        <text
-          key={`${label.text}-${String(label.x)}-${String(label.y)}`}
-          x={label.x}
-          y={label.y + 4}
-          textAnchor="middle"
-          className="fill-foreground stroke-background font-mono text-[11px] [paint-order:stroke] [stroke-width:3]"
-        >
-          {label.text}
-        </text>
-      ))}
     </g>
   );
 }
