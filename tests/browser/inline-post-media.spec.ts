@@ -198,3 +198,119 @@ test('post-only photos stay private until publication and never enter the trip g
     await anonymous.close();
   }
 });
+
+for (const format of ['transparent PNG', 'SVG']) {
+  test(`${format} graphics upload, save and render with visible black ink on white`, async ({
+    page,
+    browser,
+  }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+    await page.waitForURL('**/owner/posts/new');
+    await page
+      .getByLabel('title', { exact: true })
+      .fill(`Sample ${format} graphic`);
+    await page
+      .getByRole('textbox', { name: 'Post content' })
+      .fill('Sample graphic');
+    await page.getByRole('button', { name: '+ MEDIA', exact: true }).click();
+    let externalRequests = 0;
+    await page.route('https://svg-example.invalid/**', (route) => {
+      externalRequests++;
+      return route.abort();
+    });
+    const pixels = new Uint8Array(160 * 80 * 4);
+    for (let y = 20; y < 60; y++)
+      for (let x = 40; x < 120; x++) pixels[(y * 160 + x) * 4 + 3] = 255;
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="80" viewBox="0 0 160 80"><script>window.svgExecuted=true</script><image href="https://svg-example.invalid/tracker.png" width="1" height="1"/><rect x="40" y="20" width="80" height="40" fill="black"/></svg>';
+    await page.getByLabel('post-only photo', { exact: true }).setInputFiles(
+      format === 'SVG'
+        ? {
+            name: 'sample.svg',
+            mimeType: 'image/svg+xml',
+            buffer: Buffer.from(svg),
+          }
+        : {
+            name: 'sample.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from(
+              encode({ width: 160, height: 80, channels: 4, data: pixels }),
+            ),
+          },
+    );
+    await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 30_000 });
+    const image = page.locator('.tiptap > img');
+    await expect
+      .poll(() =>
+        image.evaluate(
+          (image) =>
+            image instanceof HTMLImageElement && image.naturalWidth > 0,
+        ),
+      )
+      .toBe(true);
+    if (format === 'transparent PNG' && process.env.INLINE_GRAPHIC_SCREENSHOT)
+      await page.screenshot({ path: process.env.INLINE_GRAPHIC_SCREENSHOT });
+    const colors = await image.evaluate(async (image) => {
+      if (!(image instanceof HTMLImageElement))
+        throw new Error('Image required');
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = 160;
+      canvas.height = 80;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas required');
+      ctx.drawImage(image, 0, 0, 160, 80);
+      return {
+        background: [...ctx.getImageData(10, 10, 1, 1).data],
+        ink: [...ctx.getImageData(80, 40, 1, 1).data],
+      };
+    });
+    expect(colors.background.slice(0, 3).every((value) => value > 240)).toBe(
+      true,
+    );
+    expect(colors.ink.slice(0, 3).every((value) => value < 20)).toBe(true);
+    expect(externalRequests).toBe(0);
+    expect(
+      await page.evaluate(() => Object.hasOwn(window, 'svgExecuted')),
+    ).toBe(false);
+    await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('draft saved');
+    await page.reload();
+    await expect
+      .poll(() =>
+        page
+          .locator('.tiptap > img')
+          .evaluate(
+            (image) =>
+              image instanceof HTMLImageElement && image.naturalWidth > 0,
+          ),
+      )
+      .toBe(true);
+    await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('published');
+    const anonymous = await browser.newContext();
+    try {
+      const publicPage = await anonymous.newPage();
+      await publicPage.goto('http://127.0.0.1:4391/');
+      const graphic = publicPage
+        .locator('article')
+        .filter({ hasText: `Sample ${format} graphic` })
+        .locator('img')
+        .first();
+      await expect
+        .poll(() =>
+          graphic.evaluate(
+            (image) =>
+              image instanceof HTMLImageElement && image.naturalWidth > 0,
+          ),
+        )
+        .toBe(true);
+      expect(await graphic.getAttribute('src')).toMatch(
+        /\/trip-inline\/.*\.jpg$/,
+      );
+    } finally {
+      await anonymous.close();
+    }
+  });
+}

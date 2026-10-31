@@ -194,18 +194,42 @@ async function prepare(
     );
   }
   progress('making photo preview');
-  const bitmap = await waitForPreparation(
-    createImageBitmap(source).then((value) => {
-      if (signal.aborted) value.close();
-      return value;
-    }),
-    signal,
-  );
+  const svg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name);
+  let bitmap: ImageBitmap | undefined;
+  let svgImage: HTMLImageElement | undefined;
+  let svgUrl: string | undefined;
   try {
-    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    if (svg) {
+      // SVG is decoded only in the browser's isolated image context: scripts
+      // and external resources cannot run, and markup never enters the DOM.
+      svgImage = document.createElement('img');
+      svgUrl = URL.createObjectURL(
+        new Blob([source], { type: 'image/svg+xml' }),
+      );
+      svgImage.src = svgUrl;
+      await waitForPreparation(svgImage.decode(), signal);
+    } else {
+      bitmap = await waitForPreparation(
+        createImageBitmap(source).then((value) => {
+          if (signal.aborted) value.close();
+          return value;
+        }),
+        signal,
+      );
+    }
+    const image = bitmap || svgImage;
+    const width = bitmap?.width ?? svgImage?.naturalWidth ?? 0;
+    const height = bitmap?.height ?? svgImage?.naturalHeight ?? 0;
+    if (!image || width <= 0 || height <= 0)
+      throw new Error('Could not read photo dimensions');
+    const scale = Math.min(1, 1600 / Math.max(width, height));
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    // JPEG has no alpha channel. Composite transparent graphics explicitly so
+    // black ink stays visible rather than disappearing into a black backdrop.
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
     const display = new File(
       [await waitForPreparation(canvasBlob(canvas), signal)],
       'photo.jpg',
@@ -215,6 +239,8 @@ async function prepare(
     );
     return { display, poster: display };
   } finally {
-    bitmap.close();
+    bitmap?.close();
+    svgImage?.removeAttribute('src');
+    if (svgUrl) URL.revokeObjectURL(svgUrl);
   }
 }

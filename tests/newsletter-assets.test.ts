@@ -340,3 +340,28 @@ void test('post-only inline displays appear in email images without trip-library
   f.post.data.content = [];
   assert.equal(await f.service.read(f.post.id, key), null);
 });
+
+void test('mixed inline photos retain document order before deduplicated gallery selections', async () => {
+  const f = fixture();
+  const id = 'post-only-first';
+  f.assets.set(id, {
+    id,
+    filename: 'post-inline-12345678-1234-1234-1234-123456789abc.jpg',
+    mimeType: 'image/jpeg',
+    size: jpeg.length,
+    url: '',
+    createdAt: '',
+    alt: 'post-only first',
+  });
+  f.post.data.content = [id, 'asset-0', id].map((ref) => ({
+    _type: 'image',
+    asset: { _ref: ref },
+  }));
+  f.post.data.gallery = ['photo-1', 'photo-0', 'photo-1'];
+  const prepared = await f.service.prepare(f.post);
+  assert.deepEqual(
+    prepared.images?.map((image) => image.alt),
+    ['post-only first', 'photo-0', 'photo-1'],
+  );
+  assert.deepEqual(f.reads, [id, 'asset-0', 'asset-1']);
+});
