@@ -130,3 +130,29 @@ void test('a stalled conversion is cancelled without waiting for cancellation to
   assert.equal(cancellations, 1);
   assert.equal(dispose.mock.callCount(), 1);
 });
+
+void test('a stalled SVG decode times out and releases its private object URL', async (t) => {
+  let removed = 0;
+  mockDocument(t, (tag) =>
+    tag === 'canvas'
+      ? { getContext: () => ({}) }
+      : {
+          decode: () => new Promise<void>(() => {}),
+          removeAttribute: () => {
+            removed++;
+          },
+        },
+  );
+  t.mock.method(URL, 'createObjectURL', () => 'blob:synthetic-svg');
+  const revoke = t.mock.method(URL, 'revokeObjectURL', () => {});
+  const rejected = assert.rejects(
+    prepareMedia(new File(['<svg/>'], 'sample.svg', { type: 'image/svg+xml' })),
+    /timed out/,
+  );
+  await setImmediate();
+  t.mock.timers.tick(120_001);
+  await rejected;
+  assert.equal(removed, 1);
+  assert.equal(revoke.mock.callCount(), 1);
+  assert.equal(revoke.mock.calls[0]?.arguments[0], 'blob:synthetic-svg');
+});

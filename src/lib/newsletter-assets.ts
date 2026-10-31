@@ -1,6 +1,7 @@
 import type { ContentAccess, MediaAccess, PluginContext } from 'emdash';
 import { z } from 'zod';
 import { galleryIds, mediaSchema } from './model';
+import { isPostInlinePhoto } from './post-inline-media';
 import {
   newsletterHash,
   newsletterPath,
@@ -88,32 +89,54 @@ async function publishedMedia(ctx: NewsletterAssetContext) {
 
 async function photoSources(ctx: NewsletterAssetContext, post: ContentItem) {
   const media = await publishedMedia(ctx);
-  const selected = [
-    ...inlineAssets(post.data.content).flatMap((id) =>
-      media.filter((m) => {
-        const asset = z
-          .object({ asset: z.object({ id: z.string() }) })
-          .safeParse(m.item.data);
-        return (
-          m.item.data.kind === 'photo' &&
-          asset.success &&
-          asset.data.asset.id === id
-        );
-      }),
-    ),
-    ...galleryIds(post.data.gallery).flatMap((id) =>
-      media.filter((m) => m.item.id === id),
-    ),
-  ];
-  return selected
-    .filter(
-      (item, index) =>
-        selected.findIndex((m) => m.item.id === item.item.id) === index,
-    )
-    .map((source) => {
-      if (!source.data) throw new Error('Published image metadata unavailable');
-      return { item: source.item, data: source.data };
+  const sources: {
+    item: { id: string };
+    data: {
+      kind: 'photo' | 'video';
+      title: string;
+      asset?: { id: string } | null;
+      poster?: { id?: string } | null;
+    };
+  }[] = [];
+  function appendLibrary(source: (typeof media)[number]) {
+    if (!source.data) throw new Error('Published image metadata unavailable');
+    sources.push({ item: source.item, data: source.data });
+  }
+  // Resolve both inline sources in document order, before gallery selections.
+  for (const id of inlineAssets(post.data.content)) {
+    const library = media.find((source) => {
+      const photo = z
+        .object({
+          kind: z.literal('photo'),
+          asset: z.object({ id: z.string() }),
+        })
+        .safeParse(source.item.data);
+      return photo.success && photo.data.asset.id === id;
     });
+    if (library) appendLibrary(library);
+    else {
+      const asset = id ? await ctx.media?.get(id) : null;
+      if (asset && isPostInlinePhoto(asset))
+        sources.push({
+          item: { id },
+          data: { kind: 'photo', title: asset.alt || '', asset: { id } },
+        });
+    }
+  }
+  for (const id of galleryIds(post.data.gallery)) {
+    const library = media.find((source) => source.item.id === id);
+    if (library) appendLibrary(library);
+  }
+  const seen = new Set<string>();
+  return sources.filter((source) => {
+    const id =
+      source.data.kind === 'video'
+        ? source.data.poster?.id || source.item.id
+        : source.data.asset?.id || source.item.id;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 async function photoVersion(

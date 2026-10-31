@@ -5442,6 +5442,42 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Unpublished GPS revisions retain native local map and preview behavior without external geographic tile requests in owner edit mode and native preview."
+    },
+    {
+      "file": "tests/browser/inline-post-media.spec.ts",
+      "titlePath": [
+        "inline-post-media.spec.ts",
+        "post-only photos stay private until publication and never enter the trip gallery"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Owner post-only uploads remain outside the trip library, survive draft saves, and become public only through live published post references; staging and unpublishing preserve privacy."
+    },
+    {
+      "file": "tests/browser/inline-post-media.spec.ts",
+      "titlePath": [
+        "inline-post-media.spec.ts",
+        "transparent PNG graphics upload, save and render with visible black ink on white"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Synthetic transparent graphics retain visible black ink on a white JPEG backdrop; SVG rasterization remains isolated without script execution or external requests, and owner upload, draft save and public rendering use the same path."
+    },
+    {
+      "file": "tests/browser/inline-post-media.spec.ts",
+      "titlePath": [
+        "inline-post-media.spec.ts",
+        "SVG graphics upload, save and render with visible black ink on white"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Synthetic transparent graphics retain visible black ink on a white JPEG backdrop; SVG rasterization remains isolated without script execution or external requests, and owner upload, draft save and public rendering use the same path."
     }
   ]
 }

@@ -4,19 +4,27 @@ import { z } from 'zod';
 import { normalizeCategory } from '../lib/category-icons';
 import { shopDesignSchema } from '../lib/shop-design';
 import { isShortVideoDuration } from '../lib/video-duration';
+import { isPostInlinePhoto } from '../lib/post-inline-media';
 
 const publishableMediaSchema = mediaSchema.omit({ id: true, slug: true });
 
-export function embeddedMediaReferences(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap(embeddedMediaReferences);
+export function embeddedMediaReferences(
+  value: unknown,
+  kind?: 'image' | 'video',
+): string[] {
+  if (Array.isArray(value))
+    return value.flatMap((item) => embeddedMediaReferences(item, kind));
   const parsed = z.record(z.string(), z.unknown()).safeParse(value);
   if (!parsed.success) return [];
   const block = parsed.data;
   if (block._type === 'image' || block._type === 'video') {
+    if (kind && block._type !== kind) return [];
     const asset = z.object({ _ref: z.string().min(1) }).safeParse(block.asset);
     return [asset.success ? asset.data._ref : ''];
   }
-  return Object.values(block).flatMap(embeddedMediaReferences);
+  return Object.values(block).flatMap((item) =>
+    embeddedMediaReferences(item, kind),
+  );
 }
 
 export function validateMedia(
@@ -42,6 +50,7 @@ export function createPlugin() {
     version: '1.0.0',
     capabilities: [
       'content:read',
+      'media:read',
       'content:write',
       'hooks.content-policy:register',
     ],
@@ -153,11 +162,28 @@ export function createPlugin() {
               }
               cursor = page?.hasMore ? page.cursor : undefined;
             } while (cursor);
-            if (embedded.some((id) => !located.has(id)))
+            // Post-only display photos have no trip-library record. Permit only
+            // registered assets from the dedicated owner upload path. Videos
+            // and trip media still need their published capture metadata.
+            const postOnly = new Set<string>();
+            for (const id of embeddedMediaReferences(
+              content.content,
+              'image',
+            )) {
+              if (!id || located.has(id)) continue;
+              const asset = await ctx.media?.get(id);
+              if (asset && isPostInlinePhoto(asset)) postOnly.add(id);
+            }
+            if (
+              embedded.some((id) => !located.has(id) && !postOnly.has(id)) ||
+              embeddedMediaReferences(content.content, 'video').some(
+                (id) => !located.has(id),
+              )
+            )
               return {
                 cancel: true,
                 reason:
-                  'Add inline photos and videos to the trip library with their location before publishing.',
+                  'Upload post-only photos in the editor, or publish trip media with its location first.',
               };
           }
         }

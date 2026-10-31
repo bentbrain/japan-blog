@@ -44,6 +44,9 @@ before(async () => {
       'CREATE TABLE ec_media_items(id TEXT PRIMARY KEY, asset TEXT, poster TEXT, status TEXT, deleted_at TEXT, draft_revision_id TEXT)',
     ),
     DB.prepare(
+      'CREATE TABLE ec_posts(id TEXT PRIMARY KEY, content TEXT, status TEXT, deleted_at TEXT, draft_revision_id TEXT)',
+    ),
+    DB.prepare(
       "INSERT INTO media VALUES ('photo','trip/sample/photo.jpg'), ('poster','trip/sample/poster.jpg'), ('private','trip/sample/private.jpg')",
     ),
     DB.prepare('INSERT INTO ec_media_items VALUES (?,?,?,?,NULL,?)').bind(
@@ -90,4 +93,34 @@ void test('public access checks live asset and poster references and revoke imme
     "UPDATE ec_media_items SET deleted_at=NULL,asset='invalid json',poster=NULL",
   ).run();
   assert.equal(await publishedMediaAccess(DB, 'asset', 'photo'), false);
+});
+
+void test('post-only image access follows live post references, never drafts or deleted posts', async () => {
+  const { DB } = platform.env;
+  const key = 'trip-inline/sample/post-inline-sample.jpg';
+  await DB.prepare('INSERT INTO media VALUES (?,?)').bind('inline', key).run();
+  const content = JSON.stringify([
+    { _type: 'block', children: [{ _type: 'span', text: 'sample story' }] },
+    { _type: 'image', asset: { _ref: 'inline' } },
+  ]);
+  await DB.prepare('INSERT INTO ec_posts VALUES (?,?,?,NULL,NULL)')
+    .bind('post', content, 'draft')
+    .run();
+  assert.equal(await publishedMediaAccess(DB, 'asset', 'inline'), false);
+  await DB.prepare(
+    "UPDATE ec_posts SET status='published', draft_revision_id='private-staged-revision'",
+  ).run();
+  assert.equal(await publishedMediaAccess(DB, 'asset', 'inline'), true);
+  assert.equal(await publishedMediaAccess(DB, 'file', key), true);
+  assert.equal(await publishedMediaAccess(DB, 'asset', 'private'), false);
+  await DB.prepare("UPDATE ec_posts SET content='[]'").run();
+  assert.equal(await publishedMediaAccess(DB, 'asset', 'inline'), false);
+  await DB.prepare("UPDATE ec_posts SET content=?, deleted_at='2099-10-16'")
+    .bind(content)
+    .run();
+  assert.equal(await publishedMediaAccess(DB, 'asset', 'inline'), false);
+  await DB.prepare(
+    "UPDATE ec_posts SET deleted_at=NULL, content='invalid json'",
+  ).run();
+  assert.equal(await publishedMediaAccess(DB, 'asset', 'inline'), false);
 });

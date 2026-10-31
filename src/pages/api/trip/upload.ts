@@ -17,7 +17,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const form = await request.formData(),
     original = form.get('original'),
     display = form.get('display'),
-    poster = form.get('poster');
+    poster = form.get('poster'),
+    purpose = form.get('purpose');
+  if (purpose !== null && purpose !== 'post')
+    return Response.json(
+      { error: 'Unsupported upload purpose' },
+      { status: 400 },
+    );
   if (
     !(original instanceof File) ||
     !(display instanceof File) ||
@@ -39,6 +45,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
       { status: 400 },
     );
   const video = display.type === 'video/mp4';
+  if (purpose === 'post' && video)
+    return Response.json(
+      { error: 'Choose a photo for this post' },
+      { status: 400 },
+    );
   try {
     const metadata = await extractMetadata(original, video);
     if (
@@ -58,7 +69,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     });
     async function upload(file: File, suffix: string) {
       const bytes = new Uint8Array(await file.arrayBuffer()),
-        key = `trip/${id}/${suffix}`;
+        key = `${purpose === 'post' ? 'trip-inline' : 'trip'}/${id}/${suffix}`;
       if (file.type === 'image/jpeg' && (bytes[0] !== 255 || bytes[1] !== 216))
         throw new Error('Invalid image');
       if (file.type === 'video/mp4') await extractMetadata(file, true);
@@ -74,7 +85,25 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const item = itemResult.parse(result.data).item;
       return { id: item.id, url: `/_emdash/api/media/file/${item.storageKey}` };
     }
-    const asset = await upload(display, video ? 'video.mp4' : 'photo.jpg');
+    const asset = await upload(
+      display,
+      purpose === 'post'
+        ? `post-inline-${id}.jpg`
+        : video
+          ? 'video.mp4'
+          : 'photo.jpg',
+    );
+    if (purpose === 'post')
+      return Response.json(
+        {
+          asset: {
+            ...asset,
+            url: `/_emdash/api/media/asset/${asset.id}/post-inline-${id}.jpg`,
+          },
+          sourceUrl: asset.url,
+        },
+        { status: 201 },
+      );
     const thumbnail = video ? await upload(poster, 'poster.jpg') : asset;
     const result = await locals.emdash.handleContentCreate('media_items', {
       slug: id,
