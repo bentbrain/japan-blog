@@ -5442,6 +5442,18 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Unpublished GPS revisions retain native local map and preview behavior without external geographic tile requests in owner edit mode and native preview."
+    },
+    {
+      "file": "tests/browser/inline-post-media.spec.ts",
+      "titlePath": [
+        "inline-post-media.spec.ts",
+        "post-only photos stay private until publication and never enter the trip gallery"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Owner post-only uploads remain outside the trip library, survive draft saves, and become public only through live published post references; staging and unpublishing preserve privacy."
     }
   ]
 }

@@ -1,6 +1,7 @@
 import type { ContentAccess, MediaAccess, PluginContext } from 'emdash';
 import { z } from 'zod';
 import { galleryIds, mediaSchema } from './model';
+import { isPostInlinePhoto } from './post-inline-media';
 import {
   newsletterHash,
   newsletterPath,
@@ -105,7 +106,15 @@ async function photoSources(ctx: NewsletterAssetContext, post: ContentItem) {
       media.filter((m) => m.item.id === id),
     ),
   ];
-  return selected
+  const sources: {
+    item: { id: string };
+    data: {
+      kind: 'photo' | 'video';
+      title: string;
+      asset?: { id: string } | null;
+      poster?: { id?: string } | null;
+    };
+  }[] = selected
     .filter(
       (item, index) =>
         selected.findIndex((m) => m.item.id === item.item.id) === index,
@@ -114,6 +123,16 @@ async function photoSources(ctx: NewsletterAssetContext, post: ContentItem) {
       if (!source.data) throw new Error('Published image metadata unavailable');
       return { item: source.item, data: source.data };
     });
+  for (const id of new Set(inlineAssets(post.data.content))) {
+    if (!id || sources.some((source) => source.data.asset?.id === id)) continue;
+    const asset = await ctx.media?.get(id);
+    if (asset && isPostInlinePhoto(asset))
+      sources.push({
+        item: { id },
+        data: { kind: 'photo', title: asset.alt || '', asset: { id } },
+      });
+  }
+  return sources;
 }
 
 async function photoVersion(

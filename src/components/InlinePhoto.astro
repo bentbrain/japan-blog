@@ -1,7 +1,9 @@
 ---
 import { z } from 'zod';
+import { env } from 'cloudflare:workers';
 import { responsiveImage, inlineImageSizes } from '../lib/responsive-image';
 import { mediaUrl } from '../lib/model';
+import { isPostInlinePhoto } from '../lib/post-inline-media';
 interface Props {
   node: unknown;
   columns?: number;
@@ -21,6 +23,27 @@ const reference = node?.asset._ref || node?.asset.id;
 const item = Astro.locals.publishedTripMedia?.find(
   (media) => media.asset?.id === reference && media.kind === 'photo',
 );
+// Resolve only dedicated post displays, never a URL supplied by document data.
+// Their public file route separately checks the live published post reference.
+const stored =
+  (!item || !mediaUrl(item)) && reference
+    ? await env.DB.prepare(
+        'SELECT filename, mime_type, storage_key FROM media WHERE id=?',
+      )
+        .bind(reference)
+        .first<{ filename: string; mime_type: string; storage_key: string }>()
+    : undefined;
+const postPhoto =
+  stored &&
+  stored.storage_key.startsWith('trip-inline/') &&
+  isPostInlinePhoto({ filename: stored.filename, mimeType: stored.mime_type })
+    ? `/_emdash/api/media/file/${stored.storage_key}`
+    : undefined;
+const nativePhoto =
+  item && stored && !stored.storage_key.startsWith('trip-private/')
+    ? `/_emdash/api/media/file/${stored.storage_key}`
+    : undefined;
+const source = item ? mediaUrl(item) || nativePhoto : postPhoto;
 let href: string | undefined;
 if (node?.link) {
   try {
@@ -35,7 +58,7 @@ const photo = responsiveImage(item ? mediaUrl(item) : '', sizes);
 const blank = node?.link?.blank && !href?.startsWith('#');
 ---
 
-{item && (
+{source && (
   <figure class="my-4 space-y-2">
     {href ? (
       <a
@@ -44,20 +67,20 @@ const blank = node?.link?.blank && !href?.startsWith('#');
         rel={blank ? 'noopener noreferrer' : undefined}
       >
         <img
-          src={mediaUrl(item)}
+          src={source}
           srcset={Astro.locals.privateMediaRender ? undefined : photo.srcSet}
           sizes={photo.sizes}
-          alt={node?.alt || item.title}
+          alt={node?.alt || item?.title || ''}
           loading="lazy"
           class="h-auto w-full"
         />
       </a>
     ) : (
       <img
-        src={mediaUrl(item)}
+        src={source}
         srcset={Astro.locals.privateMediaRender ? undefined : photo.srcSet}
         sizes={photo.sizes}
-        alt={node?.alt || item.title}
+        alt={node?.alt || item?.title || ''}
         loading="lazy"
         class="h-auto w-full"
       />

@@ -97,6 +97,9 @@ function EditorForm({
     setStatus('');
   }
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [inlineUploading, setInlineUploading] = useState(false);
+  const [inlineStatus, setInlineStatus] = useState('');
+  const inlineBusy = useRef(false);
   const media = useQuery({
     ...ownerMediaQuery,
     select: (items) =>
@@ -135,16 +138,66 @@ function EditorForm({
   });
   useEffect(() => {
     const leave = (event: BeforeUnloadEvent) => {
-      if (dirty && !deleted.current) event.preventDefault();
+      if ((dirty || inlineBusy.current) && !deleted.current)
+        event.preventDefault();
     };
     window.addEventListener('beforeunload', leave);
     return () => {
       window.removeEventListener('beforeunload', leave);
     };
   }, [dirty]);
+  async function uploadInlinePhoto(file: File) {
+    if (!editor || inlineBusy.current) return;
+    inlineBusy.current = true;
+    setInlineUploading(true);
+    setInlineStatus('preparing photo');
+    try {
+      const { prepareMedia } = await import('../lib/prepare-media');
+      const prepared = await prepareMedia(file, setInlineStatus);
+      const body = new FormData();
+      body.set('purpose', 'post');
+      body.set('original', file);
+      body.set('display', prepared.display);
+      body.set('poster', prepared.poster);
+      setInlineStatus('uploading photo');
+      const response = await fetch('/api/trip/upload', {
+        method: 'POST',
+        headers: { 'X-EmDash-Request': '1' },
+        body,
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!response.ok)
+        throw new Error('Photo upload failed. Choose the photo again.');
+      const { asset } = z
+        .object({ asset: z.object({ id: z.string(), url: z.string() }) })
+        .parse(await response.json());
+      const node = {
+        type: 'image',
+        attrs: {
+          src: asset.url,
+          mediaId: asset.id,
+          provider: 'local',
+          alt: file.name,
+        },
+      };
+      const { $from } = editor.state.selection;
+      const chain = editor.chain().focus();
+      if ($from.depth > 1) chain.insertContentAt($from.after(1), node).run();
+      else chain.insertContent(node).run();
+      setInlineStatus('');
+      setPickerOpen(false);
+    } catch (error) {
+      setInlineStatus(
+        error instanceof Error ? error.message : 'Photo upload failed',
+      );
+    } finally {
+      inlineBusy.current = false;
+      setInlineUploading(false);
+    }
+  }
   async function save(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!editor || busy.current) return;
+    if (!editor || busy.current || inlineBusy.current) return;
     if (shopDesign && !shopDesignSchema.safeParse(shopDesign).success) {
       setStatus('use a product link from shop.bent.build');
       return;
@@ -391,7 +444,12 @@ function EditorForm({
                     </div>
                   </DialogContent>
                 </Dialog>
-                <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+                <Dialog
+                  open={pickerOpen}
+                  onOpenChange={(open) => {
+                    if (!inlineBusy.current) setPickerOpen(open);
+                  }}
+                >
                   <DialogTrigger render={<Button type="button" size="sm" />}>
                     + MEDIA
                   </DialogTrigger>
@@ -399,6 +457,29 @@ function EditorForm({
                     <DialogHeader>
                       <DialogTitle>media</DialogTitle>
                     </DialogHeader>
+                    <Field>
+                      <FieldLabel htmlFor="post-inline-photo">
+                        post-only photo
+                      </FieldLabel>
+                      <Input
+                        id="post-inline-photo"
+                        type="file"
+                        accept="image/*,.heic,.heif"
+                        disabled={inlineUploading || saving}
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = '';
+                          if (file) void uploadInlinePhoto(file);
+                        }}
+                      />
+                      <p className="text-xs">
+                        inline only · stays out of the trip gallery
+                      </p>
+                      <p role="status" className="empty:hidden">
+                        {inlineStatus}
+                      </p>
+                    </Field>
+                    <Separator />
                     <a href="/owner/media" className="underline">
                       UPLOAD / EDIT MEDIA →
                     </a>
@@ -449,7 +530,7 @@ function EditorForm({
                             <Button
                               type="button"
                               size="sm"
-                              disabled={!item.data.asset}
+                              disabled={!item.data.asset || inlineUploading}
                               onClick={() => {
                                 if (!editor || !item.data.asset) return;
                                 const mediaNode = {
@@ -526,14 +607,14 @@ function EditorForm({
             }}
           />
           <Separator />
-          <Button type="submit" disabled={saving || !editor}>
+          <Button type="submit" disabled={saving || inlineUploading || !editor}>
             SAVE DRAFT
           </Button>
           <Button
             type="submit"
             data-publish="true"
             variant="default"
-            disabled={saving || !editor}
+            disabled={saving || inlineUploading || !editor}
           >
             PUBLISH
           </Button>
@@ -551,7 +632,7 @@ function EditorForm({
               {(post.status === 'published' || post.status === 'scheduled') && (
                 <Button
                   type="button"
-                  disabled={saving}
+                  disabled={saving || inlineUploading}
                   onClick={() => {
                     void mutatePost('unpublish');
                   }}
@@ -571,7 +652,12 @@ function EditorForm({
                 }}
               >
                 <AlertDialogTrigger
-                  render={<Button type="button" disabled={saving} />}
+                  render={
+                    <Button
+                      type="button"
+                      disabled={saving || inlineUploading}
+                    />
+                  }
                 >
                   DELETE POST
                 </AlertDialogTrigger>
@@ -589,14 +675,14 @@ function EditorForm({
                     <AlertDialogCancel
                       ref={cancelDelete}
                       type="button"
-                      disabled={saving}
+                      disabled={saving || inlineUploading}
                     >
                       CANCEL
                     </AlertDialogCancel>
                     <AlertDialogAction
                       type="button"
                       variant="default"
-                      disabled={saving}
+                      disabled={saving || inlineUploading}
                       onClick={() => {
                         void mutatePost('delete');
                       }}

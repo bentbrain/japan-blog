@@ -316,3 +316,27 @@ void test('JPEG optimisation strips hidden metadata, retries oversized output an
     /too large/,
   );
 });
+
+void test('post-only inline displays appear in email images without trip-library records and revoke with the reference', async () => {
+  const f = fixture();
+  const id = 'post-only-asset';
+  f.assets.set(id, {
+    id,
+    filename: 'post-inline-12345678-1234-1234-1234-123456789abc.jpg',
+    mimeType: 'image/jpeg',
+    size: jpeg.length,
+    url: '',
+    createdAt: '',
+  });
+  f.post.data.gallery = [];
+  f.post.data.content = [{ _type: 'image', asset: { _ref: id } }];
+  const prepared = await f.service.prepare(f.post);
+  assert.ok(prepared.images);
+  assert.equal(prepared.images.length, 1);
+  assert.deepEqual(f.reads, [id]);
+  const url = new URL(prepared.images[0]?.src || '');
+  const key = url.searchParams.get('key') || '';
+  assert.ok(await f.service.read(f.post.id, key));
+  f.post.data.content = [];
+  assert.equal(await f.service.read(f.post.id, key), null);
+});
