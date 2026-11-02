@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
+import { Selection, type Transaction } from '@tiptap/pm/state';
 import { editorExtensions } from '../lib/editor-extensions';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
@@ -117,6 +118,15 @@ function EditorForm({
     content: post.data.document,
     immediatelyRender: false,
     editorProps: {
+      handlePaste: (_view, event) => {
+        const files = Array.from(event.clipboardData?.files ?? []).filter(
+          (file) => file.type.startsWith('image/'),
+        );
+        if (!files.length) return false;
+        event.preventDefault();
+        void uploadInlinePhotos(files);
+        return true;
+      },
       attributes: {
         class:
           'rich-text min-h-[360px] p-4 outline-none [&_p]:mb-4 [&_h2]:mb-4 [&_h2]:text-base [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_a]:underline [&_img]:my-4 [&_img]:max-w-full [&_video]:my-4 [&_video]:max-w-full',
@@ -146,54 +156,89 @@ function EditorForm({
       window.removeEventListener('beforeunload', leave);
     };
   }, [dirty]);
-  async function uploadInlinePhoto(file: File) {
-    if (!editor || inlineBusy.current) return;
+  async function uploadInlinePhotos(files: File[]) {
+    if (!editor) return;
+    if (inlineBusy.current || busy.current) {
+      setInlineStatus(
+        'wait for the current operation, then paste or choose the photo again',
+      );
+      return;
+    }
+    let bookmark = editor.state.selection.getBookmark();
+    const trackPosition = ({ transaction }: { transaction: Transaction }) => {
+      bookmark = bookmark.map(transaction.mapping);
+    };
+    editor.on('transaction', trackPosition);
     inlineBusy.current = true;
     setInlineUploading(true);
     setInlineStatus('preparing photo');
-    try {
-      const { prepareMedia } = await import('../lib/prepare-media');
-      const prepared = await prepareMedia(file, setInlineStatus);
-      const body = new FormData();
-      body.set('purpose', 'post');
-      body.set('original', file);
-      body.set('display', prepared.display);
-      body.set('poster', prepared.poster);
-      setInlineStatus('uploading photo');
-      const response = await fetch('/api/trip/upload', {
-        method: 'POST',
-        headers: { 'X-EmDash-Request': '1' },
-        body,
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!response.ok)
-        throw new Error('Photo upload failed. Choose the photo again.');
-      const { asset } = z
-        .object({ asset: z.object({ id: z.string(), url: z.string() }) })
-        .parse(await response.json());
-      const node = {
-        type: 'image',
-        attrs: {
-          src: asset.url,
-          mediaId: asset.id,
-          provider: 'local',
-          alt: file.name,
-        },
-      };
-      const { $from } = editor.state.selection;
-      const chain = editor.chain().focus();
-      if ($from.depth > 1) chain.insertContentAt($from.after(1), node).run();
-      else chain.insertContent(node).run();
-      setInlineStatus('');
-      setPickerOpen(false);
-    } catch (error) {
-      setInlineStatus(
-        error instanceof Error ? error.message : 'Photo upload failed',
-      );
-    } finally {
-      inlineBusy.current = false;
-      setInlineUploading(false);
+    const errors: string[] = [];
+    for (const file of files) {
+      try {
+        const { prepareMedia } = await import('../lib/prepare-media');
+        const prepared = await prepareMedia(file, setInlineStatus);
+        const body = new FormData();
+        body.set('purpose', 'post');
+        body.set('original', file);
+        body.set('display', prepared.display);
+        body.set('poster', prepared.poster);
+        setInlineStatus('uploading photo');
+        const response = await fetch('/api/trip/upload', {
+          method: 'POST',
+          headers: { 'X-EmDash-Request': '1' },
+          body,
+          signal: AbortSignal.timeout(60_000),
+        });
+        if (!response.ok)
+          throw new Error(
+            'Photo upload failed. Paste or choose the photo again.',
+          );
+        const { asset } = z
+          .object({ asset: z.object({ id: z.string(), url: z.string() }) })
+          .parse(await response.json());
+        const node = {
+          type: 'image',
+          attrs: {
+            src: asset.url,
+            mediaId: asset.id,
+            provider: 'local',
+            alt: file.name,
+          },
+        };
+        if (editor.isDestroyed) break;
+        const selection = bookmark.resolve(editor.state.doc);
+        const { $from } = selection;
+        const position =
+          $from.depth > 1
+            ? $from.after(1)
+            : { from: selection.from, to: selection.to };
+        const inserted = editor.commands.insertContentAt(position, node, {
+          updateSelection: false,
+        });
+        if (!inserted)
+          throw new Error('Could not insert photo. Paste or choose it again.');
+        // Text bookmarks can stay in the paragraph preceding a block image.
+        // Advance explicitly so a clipboard batch retains its original order.
+        editor.state.doc.descendants((child, position) => {
+          if (child.type.name === 'image' && child.attrs.mediaId === asset.id) {
+            bookmark = Selection.near(
+              editor.state.doc.resolve(position + child.nodeSize),
+            ).getBookmark();
+            return false;
+          }
+        });
+        setInlineStatus('');
+        setPickerOpen(false);
+      } catch (error) {
+        errors.push(
+          error instanceof Error ? error.message : 'Photo upload failed',
+        );
+      }
     }
+    editor.off('transaction', trackPosition);
+    inlineBusy.current = false;
+    setInlineUploading(false);
+    setInlineStatus(errors.join('\n'));
   }
   async function save(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -469,13 +514,16 @@ function EditorForm({
                         onChange={(event) => {
                           const file = event.currentTarget.files?.[0];
                           event.currentTarget.value = '';
-                          if (file) void uploadInlinePhoto(file);
+                          if (file) void uploadInlinePhotos([file]);
                         }}
                       />
                       <p className="text-xs">
                         inline only · stays out of the trip gallery
                       </p>
-                      <p role="status" className="empty:hidden">
+                      <p
+                        role="status"
+                        className="whitespace-pre-wrap empty:hidden"
+                      >
                         {inlineStatus}
                       </p>
                     </Field>
@@ -568,6 +616,12 @@ function EditorForm({
               </div>
             </TooltipProvider>
             <EditorContent editor={editor} />
+            <p
+              role="status"
+              className="whitespace-pre-wrap px-4 pb-4 empty:hidden"
+            >
+              {pickerOpen ? '' : inlineStatus}
+            </p>
           </div>
           <GalleryOrder
             selected={gallery}
@@ -695,7 +749,7 @@ function EditorForm({
             </>
           )}
           <p className="whitespace-pre-wrap empty:hidden" role="status">
-            {status || media.error?.message}
+            {status}
           </p>
         </FieldGroup>
       </div>

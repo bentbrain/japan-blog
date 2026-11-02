@@ -5478,6 +5478,54 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Synthetic transparent graphics retain visible black ink on a white JPEG backdrop; SVG rasterization remains isolated without script execution or external requests, and owner upload, draft save and public rendering use the same path."
+    },
+    {
+      "file": "tests/browser/editor-paste.spec.ts",
+      "titlePath": [
+        "editor-paste.spec.ts",
+        "clipboard photos upload inline at the paste position without opening media"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "clipboard photo regression"
+    },
+    {
+      "file": "tests/browser/editor-paste.spec.ts",
+      "titlePath": [
+        "editor-paste.spec.ts",
+        "clipboard upload errors stay visible and a later paste retries successfully"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "clipboard photo regression"
+    },
+    {
+      "file": "tests/browser/editor-paste.spec.ts",
+      "titlePath": [
+        "editor-paste.spec.ts",
+        "multiple clipboard images keep their paste position while the owner moves the cursor"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "clipboard photo regression"
+    },
+    {
+      "file": "tests/browser/editor-paste.spec.ts",
+      "titlePath": [
+        "editor-paste.spec.ts",
+        "media picker errors do not linger in the post status after closing the picker"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "media status regression"
     }
   ]
 }
