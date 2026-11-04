@@ -5526,6 +5526,18 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "media status regression"
+    },
+    {
+      "file": "tests/browser/legacy-post-image.spec.ts",
+      "titlePath": [
+        "legacy-post-image.spec.ts",
+        "an existing URL image is imported before republishing without weakening media eligibility"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Saved legacy URL images import through owner-only reconciliation before publication; source failures, original bytes, repeat saves and draft privacy are covered."
     }
   ]
 }

@@ -4,6 +4,7 @@ import { Selection, type Transaction } from '@tiptap/pm/state';
 import { editorExtensions } from '../lib/editor-extensions';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
+import { uploadPostPhoto } from '../lib/upload-post-photo';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { OwnerQueryProvider } from './OwnerQueryProvider';
 import { ownerMediaQuery } from '../lib/owner-queries';
@@ -175,27 +176,7 @@ function EditorForm({
     const errors: string[] = [];
     for (const file of files) {
       try {
-        const { prepareMedia } = await import('../lib/prepare-media');
-        const prepared = await prepareMedia(file, setInlineStatus);
-        const body = new FormData();
-        body.set('purpose', 'post');
-        body.set('original', file);
-        body.set('display', prepared.display);
-        body.set('poster', prepared.poster);
-        setInlineStatus('uploading photo');
-        const response = await fetch('/api/trip/upload', {
-          method: 'POST',
-          headers: { 'X-EmDash-Request': '1' },
-          body,
-          signal: AbortSignal.timeout(60_000),
-        });
-        if (!response.ok)
-          throw new Error(
-            'Photo upload failed. Paste or choose the photo again.',
-          );
-        const { asset } = z
-          .object({ asset: z.object({ id: z.string(), url: z.string() }) })
-          .parse(await response.json());
+        const asset = await uploadPostPhoto(file, setInlineStatus);
         const node = {
           type: 'image',
           attrs: {
@@ -240,6 +221,55 @@ function EditorForm({
     setInlineUploading(false);
     setInlineStatus(errors.join('\n'));
   }
+  async function importSavedImages() {
+    if (!editor || !post.id) return;
+    const sources = new Set<string>();
+    editor.state.doc.descendants((node) => {
+      const source: unknown = node.attrs.mediaId;
+      if (
+        node.type.name === 'image' &&
+        typeof source === 'string' &&
+        /^https?:\/\//i.test(source)
+      )
+        sources.add(source);
+    });
+    for (const source of sources) {
+      setStatus('importing saved image');
+      const response = await fetch('/api/trip/post-image-source', {
+        method: 'POST',
+        headers: {
+          'X-EmDash-Request': '1',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id: post.id, revision: post.revision, source }),
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (!response.ok) {
+        if (response.status === 409)
+          throw new Error('Post changed. Reload before importing its images.');
+        if (response.status === 401)
+          throw new Error('Sign in again before importing saved images.');
+        throw new Error('Could not import the saved image. Try again.');
+      }
+      const blob = await response.blob();
+      const asset = await uploadPostPhoto(
+        new File([blob], 'saved-image', { type: blob.type }),
+        setStatus,
+      );
+      if (editor.isDestroyed) throw new Error('Editor closed before saving');
+      const transaction = editor.state.tr;
+      editor.state.doc.descendants((node, position) => {
+        if (node.type.name === 'image' && node.attrs.mediaId === source)
+          transaction.setNodeMarkup(position, undefined, {
+            ...node.attrs,
+            src: asset.url,
+            mediaId: asset.id,
+            provider: 'local',
+          });
+      });
+      editor.view.dispatch(transaction);
+    }
+  }
   async function save(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editor || busy.current || inlineBusy.current) return;
@@ -254,8 +284,9 @@ function EditorForm({
       submitted.submitter.dataset.publish === 'true';
     busy.current = true;
     setSaving(true);
-    const submittedGeneration = editGeneration.current;
     try {
+      await importSavedImages();
+      const submittedGeneration = editGeneration.current;
       const result = z
         .object({
           post: editorPostSchema,
