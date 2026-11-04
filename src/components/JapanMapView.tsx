@@ -485,7 +485,7 @@ export function JapanMapView({
                     aria-label={selected.title}
                     controls
                     playsInline
-                    preload="metadata"
+                    preload="none"
                     className="block h-auto max-h-[55dvh] w-auto max-w-full shrink-0 self-center object-contain"
                   />
                 ) : null}

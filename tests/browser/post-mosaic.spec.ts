@@ -212,7 +212,11 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
             }),
           );
         });
-        for (const video of await mosaic.locator('video').all())
+        // Deferred videos load when the reader reaches them. Exercise that
+        // transition before checking the layout with intrinsic dimensions.
+        for (const video of await mosaic.locator('video').all()) {
+          await expect(video).toHaveAttribute('preload', 'none');
+          await video.scrollIntoViewIfNeeded();
           await expect
             .poll(() =>
               video.evaluate((element) =>
@@ -220,6 +224,10 @@ for (const width of [320, 390, 585, 601, 848, 1991]) {
               ),
             )
             .toBeGreaterThanOrEqual(1);
+        }
+        await page.evaluate(() => {
+          scrollTo(0, 0);
+        });
         await settleMasonry(mosaic.locator('[data-masonry]'));
         const boxes: { x: number; y: number; width: number; height: number }[] =
           [];
@@ -446,6 +454,7 @@ for (const width of [390, 1991]) {
           if (count === 7) {
             await expect(mosaic.locator('.media-tile')).toHaveCount(7);
             await expect(mosaic.locator('.post-design')).toHaveCount(1);
+            await mosaic.locator('video').first().scrollIntoViewIfNeeded();
             await expect.poll(() => heldMetadata).toBeGreaterThan(0);
             const held = mosaic.locator('video').first();
             expect(
@@ -459,6 +468,8 @@ for (const width of [390, 1991]) {
             metadataReady.resolve(undefined);
           }
           for (const video of await mosaic.locator('video').all()) {
+            await expect(video).toHaveAttribute('preload', 'none');
+            await video.scrollIntoViewIfNeeded();
             await expect
               .poll(() =>
                 video.evaluate((element) =>
@@ -467,6 +478,9 @@ for (const width of [390, 1991]) {
               )
               .toBeGreaterThanOrEqual(2);
           }
+          await page.evaluate(() => {
+            scrollTo(0, 0);
+          });
           if (count === 7) {
             const held = mosaic.locator('video').first();
             expect(

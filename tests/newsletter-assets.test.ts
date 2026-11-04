@@ -363,5 +363,7 @@ void test('mixed inline photos retain document order before deduplicated gallery
     prepared.images?.map((image) => image.alt),
     ['post-only first', 'photo-0', 'photo-1'],
   );
-  assert.deepEqual(f.reads, [id, 'asset-0', 'asset-1']);
+  // Reads run in parallel; the images above must retain document order.
+  // Check that each source is read once without depending on request timing.
+  assert.deepEqual(f.reads.toSorted(), ['asset-0', 'asset-1', id]);
 });
