@@ -119,11 +119,13 @@ test('an existing URL image is imported before republishing without weakening me
   let imports = 0;
   let rejectSource = true;
   let uploads = 0;
+  let sourceRequests = 0;
   let releaseSource: (() => void) | undefined;
   const sourceReleased = new Promise<void>((resolve) => {
     releaseSource = resolve;
   });
   page.on('request', (request) => {
+    if (request.url().endsWith('/api/trip/post-image-source')) sourceRequests++;
     if (request.url().endsWith('/api/trip/upload')) {
       uploads++;
       expect(request.postDataBuffer()?.includes(graphic)).toBe(true);
@@ -250,4 +252,62 @@ test('an existing URL image is imported before republishing without weakening me
   await expect(page.getByRole('status')).toHaveText('published');
   expect(imports).toBe(3);
   expect(uploads).toBe(2);
+
+  // Older deletion history can restore a duplicate with its original URL even
+  // when reconciliation itself stays out of history.
+  const duplicateResult = await page.request.post(
+    '/_emdash/api/content/posts',
+    {
+      headers,
+      data: {
+        slug: 'synthetic-duplicate-history',
+        data: {
+          title: 'Synthetic duplicate history',
+          day: '2026-10-15',
+          gallery: [],
+          content: ['first', 'second'].map((key) => ({
+            _type: 'image',
+            _key: key,
+            asset: { _ref: sourceInput.source },
+            alt: 'Synthetic duplicate image',
+          })),
+        },
+      },
+    },
+  );
+  expect(duplicateResult.status()).toBe(201);
+  const duplicateId = created.parse(await duplicateResult.json()).data.item.id;
+  await page.goto(`/owner/posts/${duplicateId}`);
+  await expect(editor.locator('img')).toHaveCount(2);
+  await editor.locator('img').last().click();
+  await page.keyboard.press('Backspace');
+  await expect(editor.locator('img')).toHaveCount(1);
+  const beforeSources = sourceRequests;
+  const beforeUploads = uploads;
+  await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('draft saved');
+  expect(sourceRequests).toBe(beforeSources + 1);
+  expect(uploads).toBe(beforeUploads + 1);
+  // The real endpoint correctly rejects the old URL after the first save.
+  // Restored history must reuse the already imported asset, never refetch it.
+  await page.unroute('**/api/trip/post-image-source');
+  await editor.focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(editor.locator('img')).toHaveCount(2);
+  await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('draft saved');
+  await editor.focus();
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(editor.locator('img')).toHaveCount(1);
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(editor.locator('img')).toHaveCount(2);
+  await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('published');
+  for (let index = 0; index < 2; index++)
+    await expect(editor.locator('img').nth(index)).toHaveAttribute(
+      'src',
+      /^\/_emdash\/api\/media\/asset\//,
+    );
+  expect(sourceRequests).toBe(beforeSources + 1);
+  expect(uploads).toBe(beforeUploads + 1);
 });

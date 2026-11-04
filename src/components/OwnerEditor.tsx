@@ -102,6 +102,10 @@ function EditorForm({
   const [inlineUploading, setInlineUploading] = useState(false);
   const [inlineStatus, setInlineStatus] = useState('');
   const inlineBusy = useRef(false);
+  const importedSavedImages = useRef({
+    postId: post.id,
+    assets: new Map<string, Awaited<ReturnType<typeof uploadPostPhoto>>>(),
+  });
   const media = useQuery({
     ...ownerMediaQuery,
     select: (items) =>
@@ -223,6 +227,10 @@ function EditorForm({
   }
   async function importSavedImages() {
     if (!editor || !post.id) return;
+    if (importedSavedImages.current.postId !== post.id) {
+      importedSavedImages.current.postId = post.id;
+      importedSavedImages.current.assets.clear();
+    }
     const sources = new Set<string>();
     editor.state.doc.descendants((node) => {
       const source: unknown = node.attrs.mediaId;
@@ -234,28 +242,40 @@ function EditorForm({
         sources.add(source);
     });
     for (const source of sources) {
-      setStatus('importing saved image');
-      const response = await fetch('/api/trip/post-image-source', {
-        method: 'POST',
-        headers: {
-          'X-EmDash-Request': '1',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ id: post.id, revision: post.revision, source }),
-        signal: AbortSignal.timeout(45_000),
-      });
-      if (!response.ok) {
-        if (response.status === 409)
-          throw new Error('Post changed. Reload before importing its images.');
-        if (response.status === 401)
-          throw new Error('Sign in again before importing saved images.');
-        throw new Error('Could not import the saved image. Try again.');
+      // Undo may restore a URL from an older document revision. Reuse the
+      // already authorized upload instead of fetching that historical URL again.
+      let asset = importedSavedImages.current.assets.get(source);
+      if (!asset) {
+        setStatus('importing saved image');
+        const response = await fetch('/api/trip/post-image-source', {
+          method: 'POST',
+          headers: {
+            'X-EmDash-Request': '1',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: post.id,
+            revision: post.revision,
+            source,
+          }),
+          signal: AbortSignal.timeout(45_000),
+        });
+        if (!response.ok) {
+          if (response.status === 409)
+            throw new Error(
+              'Post changed. Reload before importing its images.',
+            );
+          if (response.status === 401)
+            throw new Error('Sign in again before importing saved images.');
+          throw new Error('Could not import the saved image. Try again.');
+        }
+        const blob = await response.blob();
+        asset = await uploadPostPhoto(
+          new File([blob], 'saved-image', { type: blob.type }),
+          setStatus,
+        );
+        importedSavedImages.current.assets.set(source, asset);
       }
-      const blob = await response.blob();
-      const asset = await uploadPostPhoto(
-        new File([blob], 'saved-image', { type: blob.type }),
-        setStatus,
-      );
       if (editor.isDestroyed) throw new Error('Editor closed before saving');
       const transaction = editor.state.tr;
       editor.state.doc.descendants((node, position) => {
