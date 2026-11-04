@@ -175,6 +175,7 @@ export function startIsolatedBrowserServer(
         'package.json',
         'pnpm-lock.yaml',
         'pnpm-workspace.yaml',
+        'patches',
       ]
     ).map((path) => copy(join(source, path), join(directory, path)));
     await interruptible(Promise.all(copies), signal);

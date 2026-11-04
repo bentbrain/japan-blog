@@ -4,6 +4,7 @@ import { Selection, type Transaction } from '@tiptap/pm/state';
 import { editorExtensions } from '../lib/editor-extensions';
 import { z } from 'zod';
 import { api } from '../lib/api-client';
+import { uploadPostPhoto } from '../lib/upload-post-photo';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { OwnerQueryProvider } from './OwnerQueryProvider';
 import { ownerMediaQuery } from '../lib/owner-queries';
@@ -101,6 +102,12 @@ function EditorForm({
   const [inlineUploading, setInlineUploading] = useState(false);
   const [inlineStatus, setInlineStatus] = useState('');
   const inlineBusy = useRef(false);
+  const importedSavedImages = useRef({
+    postId: post.id,
+    assets: new Map<string, Awaited<ReturnType<typeof uploadPostPhoto>>>(),
+    revisions: new Map<string, string>(),
+    proofs: new Map<string, string>(),
+  });
   const media = useQuery({
     ...ownerMediaQuery,
     select: (items) =>
@@ -175,27 +182,7 @@ function EditorForm({
     const errors: string[] = [];
     for (const file of files) {
       try {
-        const { prepareMedia } = await import('../lib/prepare-media');
-        const prepared = await prepareMedia(file, setInlineStatus);
-        const body = new FormData();
-        body.set('purpose', 'post');
-        body.set('original', file);
-        body.set('display', prepared.display);
-        body.set('poster', prepared.poster);
-        setInlineStatus('uploading photo');
-        const response = await fetch('/api/trip/upload', {
-          method: 'POST',
-          headers: { 'X-EmDash-Request': '1' },
-          body,
-          signal: AbortSignal.timeout(60_000),
-        });
-        if (!response.ok)
-          throw new Error(
-            'Photo upload failed. Paste or choose the photo again.',
-          );
-        const { asset } = z
-          .object({ asset: z.object({ id: z.string(), url: z.string() }) })
-          .parse(await response.json());
+        const asset = await uploadPostPhoto(file, setInlineStatus);
         const node = {
           type: 'image',
           attrs: {
@@ -240,6 +227,90 @@ function EditorForm({
     setInlineUploading(false);
     setInlineStatus(errors.join('\n'));
   }
+  async function importSavedImages() {
+    if (!editor || !post.id) return;
+    if (importedSavedImages.current.postId !== post.id) {
+      importedSavedImages.current.postId = post.id;
+      importedSavedImages.current.assets.clear();
+      importedSavedImages.current.revisions.clear();
+      importedSavedImages.current.proofs.clear();
+    }
+    for (const [source, revisionId] of Object.entries(
+      post.imageSourceRevisions,
+    ))
+      importedSavedImages.current.revisions.set(source, revisionId);
+    for (const [source, proof] of Object.entries(post.imageSourceProofs))
+      importedSavedImages.current.proofs.set(source, proof);
+    const sources = new Set<string>();
+    editor.state.doc.descendants((node) => {
+      const source: unknown = node.attrs.mediaId;
+      if (
+        node.type.name === 'image' &&
+        typeof source === 'string' &&
+        /^https?:\/\//i.test(source)
+      )
+        sources.add(source);
+    });
+    for (const source of sources) {
+      // Undo may restore a URL from an older document revision. Reuse the
+      // already authorized upload instead of fetching that historical URL again.
+      let asset = importedSavedImages.current.assets.get(source);
+      if (!asset) {
+        setStatus('importing saved image');
+        const response = await fetch('/api/trip/post-image-source', {
+          method: 'POST',
+          headers: {
+            'X-EmDash-Request': '1',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: post.id,
+            revision: post.revision,
+            source,
+            sourceProof: importedSavedImages.current.proofs.get(source),
+            sourceRevision: importedSavedImages.current.proofs.has(source)
+              ? undefined
+              : importedSavedImages.current.revisions.get(source),
+          }),
+          signal: AbortSignal.timeout(45_000),
+        });
+        if (!response.ok) {
+          if (response.status === 409)
+            throw new Error(
+              'Post changed. Reload before importing its images.',
+            );
+          if (response.status === 401)
+            throw new Error('Sign in again before importing saved images.');
+          throw new Error('Could not import the saved image. Try again.');
+        }
+        const blob = await response.blob();
+        asset = await uploadPostPhoto(
+          new File([blob], 'saved-image', { type: blob.type }),
+          setStatus,
+        );
+        importedSavedImages.current.assets.set(source, asset);
+      }
+      if (editor.isDestroyed) throw new Error('Editor closed before saving');
+      const transaction = editor.state.tr;
+      editor.state.doc.descendants((node, position) => {
+        if (node.type.name === 'image' && node.attrs.mediaId === source)
+          transaction.setNodeMarkup(position, undefined, {
+            ...node.attrs,
+            src: asset.url,
+            mediaId: asset.id,
+            provider: 'local',
+          });
+      });
+      // Reconciliation is part of this save, not a newer owner edit. Keep it
+      // dirty until the save succeeds without advancing the owner edit counter.
+      editor.view.dispatch(
+        transaction
+          .setMeta('preventUpdate', true)
+          .setMeta('addToHistory', false),
+      );
+      setDirty(true);
+    }
+  }
   async function save(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editor || busy.current || inlineBusy.current) return;
@@ -256,6 +327,7 @@ function EditorForm({
     setSaving(true);
     const submittedGeneration = editGeneration.current;
     try {
+      await importSavedImages();
       const result = z
         .object({
           post: editorPostSchema,
