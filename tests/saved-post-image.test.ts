@@ -142,3 +142,52 @@ void test('non-image responses fail without returning upstream details', async (
   assert.equal(response.status, 422);
   assert.ok(!(await response.text()).includes('private upstream error'));
 });
+
+void test('every redirect remains HTTPS on the original host without credentials or custom ports', async (t) => {
+  let destination = '';
+  const calls: string[] = [];
+  t.mock.method(globalThis, 'fetch', (url: string | URL | Request) => {
+    calls.push(
+      typeof url === 'string'
+        ? url
+        : url instanceof Request
+          ? url.url
+          : url.href,
+    );
+    return Promise.resolve(
+      calls.length === 1
+        ? new Response(null, {
+            status: 302,
+            headers: { Location: destination },
+          })
+        : new Response('synthetic', {
+            headers: { 'Content-Type': 'image/png' },
+          }),
+    );
+  });
+  for (destination of [
+    'http://93.184.216.34/image.png',
+    'https://93.184.216.34:8443/image.png',
+    'https://user:password@93.184.216.34/image.png',
+    'https://93.184.216.35/image.png',
+  ]) {
+    calls.length = 0;
+    const response = await savedPostImage(
+      input,
+      'https://jp.bent.build',
+      getPost,
+    );
+    assert.equal(response.status, 422, destination);
+    assert.deepEqual(calls, [source]);
+  }
+  destination = '/redirected.png';
+  calls.length = 0;
+  const response = await savedPostImage(
+    input,
+    'https://jp.bent.build',
+    getPost,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), 'synthetic');
+  assert.deepEqual(calls, [source, 'https://93.184.216.34/redirected.png']);
+});

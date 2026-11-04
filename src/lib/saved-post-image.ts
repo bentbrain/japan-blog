@@ -15,18 +15,41 @@ const savedPost = z.object({
   }),
 });
 
-// Only fetch an image already present in this saved revision. EmDash validates
-// DNS and public addresses, rechecks redirects and bounds the response to 8 MiB.
-// Restrict redirects to the original host and never forward owner credentials.
+// Revalidate every redirect before EmDash checks DNS/public addresses and
+// bounds each response to 8 MiB. All hops share one deadline and omit credentials.
+async function readSavedImage(url: URL) {
+  const http = createHttpAccess('saved-post-image', [url.hostname]);
+  const signal = AbortSignal.timeout(30_000);
+  let current = url;
+  for (let redirects = 0; redirects <= 5; redirects++) {
+    if (
+      current.protocol !== 'https:' ||
+      current.hostname !== url.hostname ||
+      current.username ||
+      current.password ||
+      current.port
+    )
+      throw new Error('Image redirect rejected');
+    const response = await http.fetch(current.href, {
+      signal,
+      credentials: 'omit',
+      redirect: 'manual',
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('Location');
+    await response.body?.cancel();
+    if (!location) throw new Error('Image redirect required');
+    current = new URL(location, current);
+  }
+  throw new Error('Too many image redirects');
+}
+
+// Only fetch an image already present in this saved revision.
 export async function savedPostImage(
   input: z.infer<typeof savedImageInput>,
   origin: string,
   getPost: (id: string) => Promise<unknown>,
-  readImage = (url: URL) =>
-    createHttpAccess('saved-post-image', [url.hostname]).fetch(url.href, {
-      signal: AbortSignal.timeout(30_000),
-      credentials: 'omit',
-    }),
+  readImage = readSavedImage,
 ) {
   const post = savedPost.safeParse(await getPost(input.id));
   if (!post.success)

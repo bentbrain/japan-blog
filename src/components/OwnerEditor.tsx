@@ -267,7 +267,10 @@ function EditorForm({
             provider: 'local',
           });
       });
-      editor.view.dispatch(transaction);
+      // Reconciliation is part of this save, not a newer owner edit. Keep it
+      // dirty until the save succeeds without advancing the owner edit counter.
+      editor.view.dispatch(transaction.setMeta('preventUpdate', true));
+      setDirty(true);
     }
   }
   async function save(event: SubmitEvent<HTMLFormElement>) {
@@ -284,9 +287,9 @@ function EditorForm({
       submitted.submitter.dataset.publish === 'true';
     busy.current = true;
     setSaving(true);
+    const submittedGeneration = editGeneration.current;
     try {
       await importSavedImages();
-      const submittedGeneration = editGeneration.current;
       const result = z
         .object({
           post: editorPostSchema,

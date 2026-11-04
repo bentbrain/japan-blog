@@ -113,14 +113,19 @@ test('an existing URL image is imported before republishing without weakening me
   let imports = 0;
   let rejectSource = true;
   let uploads = 0;
+  let releaseSource: (() => void) | undefined;
+  const sourceReleased = new Promise<void>((resolve) => {
+    releaseSource = resolve;
+  });
   page.on('request', (request) => {
     if (request.url().endsWith('/api/trip/upload')) {
       uploads++;
       expect(request.postDataBuffer()?.includes(graphic)).toBe(true);
     }
   });
-  await page.route('**/api/trip/post-image-source', (route) => {
+  await page.route('**/api/trip/post-image-source', async (route) => {
     imports++;
+    if (!rejectSource) await sourceReleased;
     return rejectSource
       ? route.fulfill({
           status: 422,
@@ -146,7 +151,31 @@ test('an existing URL image is imported before republishing without weakening me
       response.url().endsWith('/api/trip/upload') && response.status() === 201,
   );
   await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+  await expect.poll(() => imports).toBe(2);
+  await page
+    .getByLabel('title', { exact: true })
+    .fill('Edited during source import');
+  if (!releaseSource) throw new Error('Source release required');
+  releaseSource();
+  await expect(page.getByRole('status')).toHaveText(
+    'draft saved\nnewer edits unsaved',
+  );
+  const firstSave: unknown = await (
+    await page.request.get(`/api/trip/posts?id=${id}`)
+  ).json();
+  expect(
+    z.object({ data: z.object({ title: z.string() }) }).parse(firstSave).data
+      .title,
+  ).toBe('Synthetic legacy image');
+  await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('draft saved');
+  const nextSave: unknown = await (
+    await page.request.get(`/api/trip/posts?id=${id}`)
+  ).json();
+  expect(
+    z.object({ data: z.object({ title: z.string() }) }).parse(nextSave).data
+      .title,
+  ).toBe('Edited during source import');
   const displayUrl = z
     .object({ sourceUrl: z.string() })
     .parse(await (await uploaded).json()).sourceUrl;
