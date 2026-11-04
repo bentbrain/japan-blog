@@ -1,11 +1,16 @@
 import { createHttpAccess } from 'emdash';
 import { z } from 'zod';
 import { embeddedMediaReferences } from '../plugins/trip-policy';
+import {
+  savedImageProof,
+  type SavedImageBinding,
+} from './saved-image-recovery';
 
 export const savedImageInput = z.object({
   id: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
   revision: z.string().min(1).max(2048),
   source: z.url().max(8192),
+  sourceProof: savedImageProof.optional(),
   sourceRevision: z
     .string()
     .regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
@@ -15,7 +20,12 @@ const savedPost = z.object({
   success: z.literal(true),
   data: z.object({
     _rev: z.string(),
-    item: z.object({ data: z.object({ content: z.unknown() }) }),
+    item: z.object({
+      id: z.string().optional(),
+      type: z.string().optional(),
+      createdAt: z.string().optional(),
+      data: z.object({ content: z.unknown() }),
+    }),
   }),
 });
 
@@ -78,13 +88,17 @@ async function readSavedImage(url: URL) {
 }
 
 // Require the current concurrency token and an exact same-post saved image.
-// A retained native snapshot can authorize a reference restored by owner Undo.
+// A server attestation survives native pruning while owner Undo remains active.
 export async function savedPostImage(
   input: z.infer<typeof savedImageInput>,
   origin: string,
   getPost: (id: string) => Promise<unknown>,
   readImage = readSavedImage,
   getRevision?: (id: string) => Promise<unknown>,
+  recovery?: {
+    principalId: string;
+    verify: (proof: string, binding: SavedImageBinding) => Promise<boolean>;
+  },
 ) {
   const post = savedPost.safeParse(await getPost(input.id));
   if (!post.success)
@@ -95,7 +109,24 @@ export async function savedPostImage(
       { status: 409 },
     );
   let content = post.data.data.item.data.content;
-  if (input.sourceRevision) {
+  if (input.sourceProof) {
+    const item = post.data.data.item;
+    if (
+      input.sourceRevision ||
+      !recovery ||
+      item.id !== input.id ||
+      item.type !== 'posts' ||
+      !item.createdAt ||
+      !(await recovery.verify(input.sourceProof, {
+        origin,
+        postId: input.id,
+        createdAt: item.createdAt,
+        principalId: recovery.principalId,
+        source: input.source,
+      }))
+    )
+      return Response.json({ error: 'Saved image required' }, { status: 400 });
+  } else if (input.sourceRevision) {
     const historical = historicalPost.safeParse(
       await getRevision?.(input.sourceRevision),
     );
@@ -107,7 +138,10 @@ export async function savedPostImage(
       return Response.json({ error: 'Saved image required' }, { status: 400 });
     content = historical.data.data.item.data.content;
   }
-  if (!embeddedMediaReferences(content, 'image').includes(input.source))
+  if (
+    !input.sourceProof &&
+    !embeddedMediaReferences(content, 'image').includes(input.source)
+  )
     return Response.json({ error: 'Saved image required' }, { status: 400 });
   const url = new URL(input.source);
   if (

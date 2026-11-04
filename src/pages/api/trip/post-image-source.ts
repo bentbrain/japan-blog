@@ -1,5 +1,7 @@
 import type { APIRoute } from 'astro';
+import { env } from 'cloudflare:workers';
 import { savedImageInput, savedPostImage } from '../../../lib/saved-post-image';
+import { savedImageRecovery } from '../../../lib/saved-image-recovery';
 
 export const POST: APIRoute = async ({ request, locals, url }) => {
   if (!locals.user || locals.user.role < 50)
@@ -15,5 +17,13 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
     (id) => locals.emdash.handleContentGet('posts', id),
     undefined,
     (revisionId) => locals.emdash.handleRevisionGet(revisionId),
+    {
+      principalId: locals.user.id,
+      verify: async (proof, binding) =>
+        (await savedImageRecovery(env.EMDASH_ENCRYPTION_KEY)).verify(
+          proof,
+          binding,
+        ),
+    },
   );
 };

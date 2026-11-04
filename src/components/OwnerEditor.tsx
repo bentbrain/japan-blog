@@ -106,6 +106,7 @@ function EditorForm({
     postId: post.id,
     assets: new Map<string, Awaited<ReturnType<typeof uploadPostPhoto>>>(),
     revisions: new Map<string, string>(),
+    proofs: new Map<string, string>(),
   });
   const media = useQuery({
     ...ownerMediaQuery,
@@ -232,11 +233,14 @@ function EditorForm({
       importedSavedImages.current.postId = post.id;
       importedSavedImages.current.assets.clear();
       importedSavedImages.current.revisions.clear();
+      importedSavedImages.current.proofs.clear();
     }
     for (const [source, revisionId] of Object.entries(
       post.imageSourceRevisions,
     ))
       importedSavedImages.current.revisions.set(source, revisionId);
+    for (const [source, proof] of Object.entries(post.imageSourceProofs))
+      importedSavedImages.current.proofs.set(source, proof);
     const sources = new Set<string>();
     editor.state.doc.descendants((node) => {
       const source: unknown = node.attrs.mediaId;
@@ -263,7 +267,10 @@ function EditorForm({
             id: post.id,
             revision: post.revision,
             source,
-            sourceRevision: importedSavedImages.current.revisions.get(source),
+            sourceProof: importedSavedImages.current.proofs.get(source),
+            sourceRevision: importedSavedImages.current.proofs.has(source)
+              ? undefined
+              : importedSavedImages.current.revisions.get(source),
           }),
           signal: AbortSignal.timeout(45_000),
         });

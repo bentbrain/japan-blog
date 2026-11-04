@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
-import { RevisionRepository } from 'emdash';
+import { env } from 'cloudflare:workers';
+import { savedImageProofs } from '../../../lib/saved-image-recovery';
 import {
   legacyImageReferences,
   savedImageRevisions,
@@ -31,11 +32,14 @@ const portableBlocks = z.array(
 );
 const postImageState = z.object({
   id: z.string(),
+  createdAt: z.string(),
   data: z.record(z.string(), z.unknown()),
   draftRevisionId: z.string().nullish(),
   liveRevisionId: z.string().nullish(),
 });
 export const GET: APIRoute = async ({ locals, url }) => {
+  if (!locals.user || locals.user.role < 50)
+    return Response.json({ error: 'Sign in required' }, { status: 401 });
   const id = url.searchParams.get('id');
   if (!id) return Response.json({ error: 'Post required' }, { status: 400 });
   const result = await locals.emdash.handleContentGet('posts', id);
@@ -81,6 +85,16 @@ export const GET: APIRoute = async ({ locals, url }) => {
       data.content,
       imageState.draftRevisionId ?? imageState.liveRevisionId,
     ),
+    imageSourceProofs: await savedImageProofs(
+      legacyImageReferences(data.content),
+      {
+        origin: url.origin,
+        postId: id,
+        createdAt: imageState.createdAt,
+        principalId: locals.user.id,
+      },
+      env.EMDASH_ENCRYPTION_KEY,
+    ),
     status: result.data.item.status,
     data: {
       title: await editorTitle(locals.emdash, data.day, data.title),
@@ -92,7 +106,7 @@ export const GET: APIRoute = async ({ locals, url }) => {
     },
   });
 };
-export const POST: APIRoute = async ({ locals, request }) => {
+export const POST: APIRoute = async ({ locals, request, url }) => {
   const input = postInputSchema.safeParse(await request.json());
   if (!input.success || !locals.user)
     return Response.json({ error: 'Choose a title and day' }, { status: 400 });
@@ -112,6 +126,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
     );
   }
   let previousImageSources: Record<string, string> = {};
+  let previousImageProofs: Record<string, string> = {};
   if (id) {
     const previous = await locals.emdash.handleContentGet('posts', id);
     if (!previous.success || !previous.data)
@@ -122,20 +137,22 @@ export const POST: APIRoute = async ({ locals, request }) => {
         { status: 409 },
       );
     const item = postImageState.parse(previous.data.item);
-    let snapshotId = item.draftRevisionId ?? item.liveRevisionId;
-    // Native creation can leave an initial draft without any history snapshot.
-    // Preserve its actual saved state before an owner save replaces references.
-    // This does not fetch deleted images or alter the live/current post revision.
-    if (!snapshotId && legacyImageReferences(item.data.content).length) {
-      const snapshot = await new RevisionRepository(locals.emdash.db).create({
-        collection: 'posts',
-        entryId: item.id,
-        data: item.data,
-        authorId: locals.user.id,
-      });
-      snapshotId = snapshot.id;
-    }
-    previousImageSources = savedImageRevisions(item.data.content, snapshotId);
+    previousImageSources = savedImageRevisions(
+      item.data.content,
+      item.draftRevisionId ?? item.liveRevisionId,
+    );
+    // Attest only the actual saved state before replacing it. No image fetch,
+    // extra history entry or retention change is needed for a deleted source.
+    previousImageProofs = await savedImageProofs(
+      legacyImageReferences(item.data.content),
+      {
+        origin: url.origin,
+        postId: item.id,
+        createdAt: item.createdAt,
+        principalId: locals.user.id,
+      },
+      env.EMDASH_ENCRYPTION_KEY,
+    );
   }
   const actor = { id: locals.user.id, role: locals.user.role };
   const data = { ...fields, content };
@@ -173,6 +190,19 @@ export const POST: APIRoute = async ({ locals, request }) => {
           currentImageState.data.content,
           currentImageState.draftRevisionId ?? currentImageState.liveRevisionId,
         ),
+      },
+      imageSourceProofs: {
+        ...previousImageProofs,
+        ...(await savedImageProofs(
+          legacyImageReferences(currentImageState.data.content),
+          {
+            origin: url.origin,
+            postId,
+            createdAt: currentImageState.createdAt,
+            principalId: locals.user.id,
+          },
+          env.EMDASH_ENCRYPTION_KEY,
+        )),
       },
       status: current.data.item.status,
       data: {

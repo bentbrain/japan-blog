@@ -442,12 +442,16 @@ for (const scenario of ['distinct images', 'sole image']) {
         post: z.object({
           revision: z.string(),
           imageSourceRevisions: z.record(z.string(), z.string()),
+          imageSourceProofs: z.record(z.string(), z.string()),
         }),
       })
       .parse(await (await savedResponse).json()).post;
     const sourceRevision = savedState.imageSourceRevisions[sourceB];
-    if (!sourceRevision) throw new Error('Verified saved snapshot required');
+    const sourceProof = savedState.imageSourceProofs[sourceB];
+    if (!sourceProof)
+      throw new Error('Verified saved reference proof required');
     if (scenario === 'distinct images') {
+      if (!sourceRevision) throw new Error('Verified saved snapshot required');
       const request = {
         id,
         revision: savedState.revision,
@@ -530,6 +534,19 @@ for (const scenario of ['distinct images', 'sole image']) {
         (
           await page.request.post(endpoint, {
             headers,
+            data: {
+              id: other.item.id,
+              revision: other._rev,
+              source: sourceB,
+              sourceProof,
+            },
+          })
+        ).status(),
+      ).toBe(400);
+      expect(
+        (
+          await page.request.post(endpoint, {
+            headers,
             data: { ...request, id: other.item.id, revision: other._rev },
           })
         ).status(),
@@ -570,6 +587,93 @@ for (const scenario of ['distinct images', 'sole image']) {
         ).status(),
       ).toBe(400);
     }
+    // Saves do not add an editor history event, but native revision retention
+    // still prunes the only saved snapshot that contains the deleted image.
+    for (let save = 0; save < 52; save++) {
+      const response = page.waitForResponse(
+        (response) =>
+          response.url().endsWith('/api/trip/posts') &&
+          response.request().method() === 'POST',
+      );
+      await page
+        .getByRole('button', { name: 'SAVE DRAFT', exact: true })
+        .click();
+      expect((await response).status()).toBe(200);
+      await expect(page.getByRole('status')).toHaveText('draft saved');
+    }
+    const retained = z
+      .object({
+        data: z.object({
+          items: z.array(
+            z.object({
+              id: z.string(),
+              data: z.object({ content: z.unknown() }),
+            }),
+          ),
+        }),
+      })
+      .parse(
+        await (
+          await page.request.get(
+            `/_emdash/api/content/posts/${id}/revisions?limit=100`,
+          )
+        ).json(),
+      ).data.items;
+    expect(retained).toHaveLength(50);
+    if (sourceRevision)
+      expect(retained.map((item) => item.id)).not.toContain(sourceRevision);
+    expect(JSON.stringify(retained)).not.toContain(sourceB);
+    const current = z
+      .object({ revision: z.string() })
+      .parse(await (await page.request.get(`/api/trip/posts?id=${id}`)).json());
+    const proofInput = {
+      id,
+      revision: current.revision,
+      source: sourceB,
+      sourceProof,
+    };
+    const endpoint = '/api/trip/post-image-source';
+    for (const input of [
+      { ...proofInput, sourceProof: sourceProof.replace(/^v1/, 'v2') },
+      {
+        ...proofInput,
+        source: 'https://legacy.example.invalid/never-saved.png',
+      },
+      { ...proofInput, revision: saved.revision },
+      { ...proofInput, sourceRevision: '01K00000000000000000000000' },
+    ]) {
+      expect(
+        (await page.request.post(endpoint, { headers, data: input })).status(),
+      ).toBeGreaterThanOrEqual(400);
+    }
+    // Native pruning removed every saved snapshot containing this reference.
+    // The proof still authorizes it; the reserved host has no available bytes.
+    expect(
+      (await page.request.post(endpoint, { data: proofInput })).status(),
+    ).toBe(403);
+    // Refresh the actual native authentication session without navigating or
+    // replacing the still-mounted editor and its owner Undo history.
+    expect(
+      (
+        await page.request.post('/_emdash/api/auth/logout', { headers })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await page.request.post(endpoint, { headers, data: proofInput })
+      ).status(),
+    ).toBe(401);
+    expect(
+      (
+        await page.request.post('/_emdash/api/auth/dev-bypass', { headers })
+      ).status(),
+    ).toBe(200);
+    const authorized = await page.request.post(endpoint, {
+      headers,
+      data: proofInput,
+    });
+    expect(authorized.status()).toBe(422);
+    expect(authorized.headers()['cache-control']).toContain('no-store');
     expect(acquiredB).toBe(0); // Deleting an unavailable source must not acquire it.
     expect(uploaded).toBe(images.length - 1);
     await editor.focus();
@@ -614,5 +718,23 @@ for (const scenario of ['distinct images', 'sole image']) {
     expect(uploaded).toBe(images.length);
     await page.reload();
     await expect(editor.locator('img')).toHaveCount(images.length);
+    const latest = z
+      .object({ revision: z.string() })
+      .parse(await (await page.request.get(`/api/trip/posts?id=${id}`)).json());
+    expect(
+      (
+        await page.request.delete(`/_emdash/api/content/posts/${id}`, {
+          headers,
+        })
+      ).status(),
+    ).toBe(200);
+    expect(
+      (
+        await page.request.post(endpoint, {
+          headers,
+          data: { ...proofInput, revision: latest.revision },
+        })
+      ).status(),
+    ).toBe(404);
   });
 }
