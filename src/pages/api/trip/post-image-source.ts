@@ -9,7 +9,11 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   );
   if (!input.success)
     return Response.json({ error: 'Saved image required' }, { status: 400 });
-  return savedPostImage(input.data, url.origin, (id) =>
-    locals.emdash.handleContentGet('posts', id),
+  return savedPostImage(
+    input.data,
+    url.origin,
+    (id) => locals.emdash.handleContentGet('posts', id),
+    undefined,
+    (revisionId) => locals.emdash.handleRevisionGet(revisionId),
   );
 };

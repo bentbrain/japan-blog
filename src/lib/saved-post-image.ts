@@ -6,6 +6,10 @@ export const savedImageInput = z.object({
   id: z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
   revision: z.string().min(1).max(2048),
   source: z.url().max(8192),
+  sourceRevision: z
+    .string()
+    .regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
+    .optional(),
 });
 const savedPost = z.object({
   success: z.literal(true),
@@ -14,6 +18,35 @@ const savedPost = z.object({
     item: z.object({ data: z.object({ content: z.unknown() }) }),
   }),
 });
+
+const historicalPost = z.object({
+  success: z.literal(true),
+  data: z.object({
+    item: z.object({
+      id: z.string(),
+      collection: z.literal('posts'),
+      entryId: z.string(),
+      data: z.object({ content: z.unknown() }),
+    }),
+  }),
+});
+
+export function legacyImageReferences(content: unknown) {
+  return embeddedMediaReferences(content, 'image').filter((source) =>
+    /^https?:\/\//i.test(source),
+  );
+}
+
+// These are native snapshot IDs, never the mutable content concurrency token.
+export function savedImageRevisions(
+  content: unknown,
+  revisionId: string | null | undefined,
+) {
+  if (!revisionId) return {};
+  return Object.fromEntries(
+    legacyImageReferences(content).map((source) => [source, revisionId]),
+  );
+}
 
 // Revalidate every redirect before EmDash checks DNS/public addresses and
 // bounds each response to 8 MiB. All hops share one deadline and omit credentials.
@@ -44,12 +77,14 @@ async function readSavedImage(url: URL) {
   throw new Error('Too many image redirects');
 }
 
-// Only fetch an image already present in this saved revision.
+// Require the current concurrency token and an exact same-post saved image.
+// A retained native snapshot can authorize a reference restored by owner Undo.
 export async function savedPostImage(
   input: z.infer<typeof savedImageInput>,
   origin: string,
   getPost: (id: string) => Promise<unknown>,
   readImage = readSavedImage,
+  getRevision?: (id: string) => Promise<unknown>,
 ) {
   const post = savedPost.safeParse(await getPost(input.id));
   if (!post.success)
@@ -59,12 +94,20 @@ export async function savedPostImage(
       { error: 'Post changed. Reload before importing its images.' },
       { status: 409 },
     );
-  if (
-    !embeddedMediaReferences(
-      post.data.data.item.data.content,
-      'image',
-    ).includes(input.source)
-  )
+  let content = post.data.data.item.data.content;
+  if (input.sourceRevision) {
+    const historical = historicalPost.safeParse(
+      await getRevision?.(input.sourceRevision),
+    );
+    if (
+      !historical.success ||
+      historical.data.data.item.id !== input.sourceRevision ||
+      historical.data.data.item.entryId !== input.id
+    )
+      return Response.json({ error: 'Saved image required' }, { status: 400 });
+    content = historical.data.data.item.data.content;
+  }
+  if (!embeddedMediaReferences(content, 'image').includes(input.source))
     return Response.json({ error: 'Saved image required' }, { status: 400 });
   const url = new URL(input.source);
   if (

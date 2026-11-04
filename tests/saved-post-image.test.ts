@@ -191,3 +191,123 @@ void test('every redirect remains HTTPS on the original host without credentials
   assert.equal(await response.text(), 'synthetic');
   assert.deepEqual(calls, [source, 'https://93.184.216.34/redirected.png']);
 });
+
+void test('historical image recovery requires a verified same-post snapshot and a fresh current token', async () => {
+  const revisionId = '01K00000000000000000000001';
+  let reads = 0;
+  let historyReads = 0;
+  const current = async () => {
+    const post = await getPost();
+    post.data.item.data.content = [];
+    return post;
+  };
+  const snapshot = {
+    success: true,
+    data: {
+      item: {
+        id: revisionId,
+        collection: 'posts',
+        entryId: input.id,
+        data: { content: [{ _type: 'image', asset: { _ref: source } }] },
+      },
+    },
+  };
+  const history = () => {
+    historyReads++;
+    return Promise.resolve(snapshot);
+  };
+  const read = () => {
+    reads++;
+    return Promise.resolve(
+      new Response('synthetic', { headers: { 'Content-Type': 'image/png' } }),
+    );
+  };
+  const request = { ...input, sourceRevision: revisionId };
+  assert.equal(
+    (
+      await savedPostImage(
+        { ...request, revision: 'stale' },
+        'https://jp.bent.build',
+        current,
+        read,
+        history,
+      )
+    ).status,
+    409,
+  );
+  assert.equal(historyReads, 0);
+  assert.equal(
+    (
+      await savedPostImage(
+        request,
+        'https://jp.bent.build',
+        current,
+        read,
+        history,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(reads, 1);
+  for (const item of [
+    { ...snapshot.data.item, entryId: '01K00000000000000000000002' },
+    { ...snapshot.data.item, collection: 'media_items' },
+    { ...snapshot.data.item, id: '01K00000000000000000000003' },
+    {
+      ...snapshot.data.item,
+      data: { content: [{ _type: 'video', asset: { _ref: source } }] },
+    },
+    { ...snapshot.data.item, data: { content: [] } },
+  ]) {
+    const result = await savedPostImage(
+      request,
+      'https://jp.bent.build',
+      current,
+      read,
+      () => Promise.resolve({ success: true, data: { item } }),
+    );
+    assert.equal(result.status, 400);
+  }
+  assert.equal(
+    (
+      await savedPostImage(
+        { ...request, source: 'https://93.184.216.34/invented.png' },
+        'https://jp.bent.build',
+        current,
+        read,
+        history,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await savedPostImage(
+        request,
+        'https://jp.bent.build',
+        current,
+        read,
+        () => Promise.resolve({ success: false, error: { code: 'NOT_FOUND' } }),
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await savedPostImage(request, 'https://jp.bent.build', current, read))
+      .status,
+    400,
+  );
+  assert.equal(
+    (
+      await savedPostImage(
+        input,
+        'https://jp.bent.build',
+        current,
+        read,
+        history,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(reads, 1, 'unauthorized history never acquires bytes');
+});

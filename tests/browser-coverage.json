@@ -5538,6 +5538,30 @@
       "perPrContracts": [],
       "representatives": [],
       "disposition": "Saved legacy URL images import through owner-only reconciliation before publication; source failures, original bytes, repeat saves and draft privacy are covered."
+    },
+    {
+      "file": "tests/browser/legacy-post-image.spec.ts",
+      "titlePath": [
+        "legacy-post-image.spec.ts",
+        "saved legacy history recovers a never-imported distinct images after deletion and save"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Real current-token and same-post historical-reference authorization for deleted, never-imported images restored by Undo; retry, Redo, save and publication remain supported."
+    },
+    {
+      "file": "tests/browser/legacy-post-image.spec.ts",
+      "titlePath": [
+        "legacy-post-image.spec.ts",
+        "saved legacy history recovers a never-imported sole image after deletion and save"
+      ],
+      "perPrBrowser": true,
+      "fullBrowser": true,
+      "perPrContracts": [],
+      "representatives": [],
+      "disposition": "Real current-token and same-post historical-reference authorization for deleted, never-imported images restored by Undo; retry, Redo, save and publication remain supported."
     }
   ]
 }

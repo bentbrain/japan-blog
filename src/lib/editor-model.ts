@@ -25,6 +25,7 @@ const documentSchema = z.object({
 export const editorPostSchema = z.object({
   id: z.string(),
   revision: z.string(),
+  imageSourceRevisions: z.record(z.string(), z.string()).default({}),
   status: z.string(),
   data: z.object({
     title: z.string(),

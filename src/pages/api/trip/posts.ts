@@ -1,4 +1,9 @@
 import type { APIRoute } from 'astro';
+import { RevisionRepository } from 'emdash';
+import {
+  legacyImageReferences,
+  savedImageRevisions,
+} from '../../../lib/saved-post-image';
 import { z } from 'zod';
 import { getSchema } from '@tiptap/core';
 import { editorExtensions } from '../../../lib/editor-extensions';
@@ -24,6 +29,12 @@ async function editorTitle(
 const portableBlocks = z.array(
   z.looseObject({ _type: z.string(), _key: z.string() }),
 );
+const postImageState = z.object({
+  id: z.string(),
+  data: z.record(z.string(), z.unknown()),
+  draftRevisionId: z.string().nullish(),
+  liveRevisionId: z.string().nullish(),
+});
 export const GET: APIRoute = async ({ locals, url }) => {
   const id = url.searchParams.get('id');
   if (!id) return Response.json({ error: 'Post required' }, { status: 400 });
@@ -62,9 +73,14 @@ export const GET: APIRoute = async ({ locals, url }) => {
       { status: 422 },
     );
   }
+  const imageState = postImageState.parse(result.data.item);
   return Response.json({
     id,
     revision: result.data._rev,
+    imageSourceRevisions: savedImageRevisions(
+      data.content,
+      imageState.draftRevisionId ?? imageState.liveRevisionId,
+    ),
     status: result.data.item.status,
     data: {
       title: await editorTitle(locals.emdash, data.day, data.title),
@@ -95,6 +111,32 @@ export const POST: APIRoute = async ({ locals, request }) => {
       { status: 400 },
     );
   }
+  let previousImageSources: Record<string, string> = {};
+  if (id) {
+    const previous = await locals.emdash.handleContentGet('posts', id);
+    if (!previous.success || !previous.data)
+      return Response.json({ error: 'Post not found' }, { status: 404 });
+    if (previous.data._rev !== revision)
+      return Response.json(
+        { error: 'Post changed. Reload before saving.' },
+        { status: 409 },
+      );
+    const item = postImageState.parse(previous.data.item);
+    let snapshotId = item.draftRevisionId ?? item.liveRevisionId;
+    // Native creation can leave an initial draft without any history snapshot.
+    // Preserve its actual saved state before an owner save replaces references.
+    // This does not fetch deleted images or alter the live/current post revision.
+    if (!snapshotId && legacyImageReferences(item.data.content).length) {
+      const snapshot = await new RevisionRepository(locals.emdash.db).create({
+        collection: 'posts',
+        entryId: item.id,
+        data: item.data,
+        authorId: locals.user.id,
+      });
+      snapshotId = snapshot.id;
+    }
+    previousImageSources = savedImageRevisions(item.data.content, snapshotId);
+  }
   const actor = { id: locals.user.id, role: locals.user.role };
   const data = { ...fields, content };
   const saved = id
@@ -120,10 +162,18 @@ export const POST: APIRoute = async ({ locals, request }) => {
   const current = await locals.emdash.handleContentGet('posts', postId);
   if (!current.success || !current.data)
     return Response.json(current, { status: 500 });
+  const currentImageState = postImageState.parse(current.data.item);
   return Response.json({
     post: {
       id: postId,
       revision: current.data._rev,
+      imageSourceRevisions: {
+        ...previousImageSources,
+        ...savedImageRevisions(
+          currentImageState.data.content,
+          currentImageState.draftRevisionId ?? currentImageState.liveRevisionId,
+        ),
+      },
       status: current.data.item.status,
       data: {
         ...fields,

@@ -311,3 +311,308 @@ test('an existing URL image is imported before republishing without weakening me
   expect(sourceRequests).toBe(beforeSources + 1);
   expect(uploads).toBe(beforeUploads + 1);
 });
+
+for (const scenario of ['distinct images', 'sole image']) {
+  test(`saved legacy history recovers a never-imported ${scenario} after deletion and save`, async ({
+    page,
+  }) => {
+    await page.request.post('/_emdash/api/setup/dev-bypass', {
+      headers: { 'X-EmDash-Request': '1' },
+      data: {},
+    });
+    await page.route('https://toolbar.bent.build/embed.js', (route) =>
+      route.fulfill({ body: '' }),
+    );
+    await page.goto('/_emdash/api/auth/dev-bypass?redirect=/owner/posts/new');
+    const headers = {
+      'X-EmDash-Request': '1',
+      Origin: 'http://127.0.0.1:4391',
+    };
+    const sourceA = 'https://legacy.example.invalid/history-a.png';
+    const sourceB = 'https://legacy.example.invalid/history-b.png';
+    const images =
+      scenario === 'distinct images' ? [sourceA, sourceB] : [sourceB];
+    const data = {
+      title: `Synthetic ${scenario}`,
+      day: '2026-10-15',
+      gallery: [],
+      content: [
+        {
+          _type: 'block',
+          _key: 'text',
+          style: 'normal',
+          children: [
+            {
+              _type: 'span',
+              _key: 'span',
+              text: 'Synthetic history',
+              marks: [],
+            },
+          ],
+          markDefs: [],
+        },
+        ...images.map((source, index) => ({
+          _type: 'image',
+          _key: `image-${String(index)}`,
+          asset: { _ref: source },
+          alt: `Synthetic image ${String(index)}`,
+        })),
+      ],
+    };
+    const result = await page.request.post('/_emdash/api/content/posts', {
+      headers,
+      data: { slug: `synthetic-history-${String(images.length)}`, data },
+    });
+    expect(result.status()).toBe(201);
+    const id = created.parse(await result.json()).data.item.id;
+    // Exercise both an existing native revision and a newly created saved draft
+    // whose initial content has not yet received a native revision ID.
+    if (scenario === 'distinct images') {
+      const current = z
+        .object({ data: z.object({ _rev: z.string() }) })
+        .parse(
+          await (
+            await page.request.get(`/_emdash/api/content/posts/${id}`)
+          ).json(),
+        );
+      expect(
+        (
+          await page.request.put(`/_emdash/api/content/posts/${id}`, {
+            headers,
+            data: { _rev: current.data._rev, data },
+          })
+        ).ok(),
+      ).toBe(true);
+    }
+    const saved = z
+      .object({ revision: z.string() })
+      .parse(await (await page.request.get(`/api/trip/posts?id=${id}`)).json());
+    const graphic = Buffer.from(
+      encode({
+        width: 160,
+        height: 80,
+        channels: 3,
+        data: new Uint8Array(160 * 80 * 3).fill(100),
+      }),
+    );
+    await page.route('https://legacy.example.invalid/*.png', (route) =>
+      route.fulfill({ contentType: 'image/png', body: graphic }),
+    );
+    let acquiredA = 0;
+    let acquiredB = 0;
+    let uploaded = 0;
+    let rejectRestored = true;
+    page.on('request', (request) => {
+      if (request.url().endsWith('/api/trip/upload')) uploaded++;
+    });
+    await page.route('**/api/trip/post-image-source', async (route) => {
+      // Always execute real current-revision + historical-reference authorization.
+      // Only substitute image bytes after the real source acquisition fails on
+      // the reserved, nonexistent synthetic host.
+      const response = await route.fetch();
+      if (response.status() !== 422) return route.fulfill({ response });
+      const input = z
+        .object({ source: z.string() })
+        .parse(route.request().postDataJSON());
+      if (input.source === sourceB && rejectRestored) {
+        rejectRestored = false;
+        return route.fulfill({
+          status: 422,
+          json: { error: 'Synthetic unavailable source' },
+        });
+      }
+      if (input.source === sourceA) acquiredA++;
+      if (input.source === sourceB) acquiredB++;
+      return route.fulfill({ contentType: 'image/png', body: graphic });
+    });
+    await page.goto(`/owner/posts/${id}`);
+    const editor = page.getByRole('textbox', { name: 'Post content' });
+    await expect(editor.locator('img')).toHaveCount(images.length);
+    await editor.locator('img').last().click();
+    await page.keyboard.press('Backspace');
+    const savedResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/trip/posts') &&
+        response.request().method() === 'POST',
+    );
+    await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('draft saved');
+    const savedState = z
+      .object({
+        post: z.object({
+          revision: z.string(),
+          imageSourceRevisions: z.record(z.string(), z.string()),
+        }),
+      })
+      .parse(await (await savedResponse).json()).post;
+    const sourceRevision = savedState.imageSourceRevisions[sourceB];
+    if (!sourceRevision) throw new Error('Verified saved snapshot required');
+    if (scenario === 'distinct images') {
+      const request = {
+        id,
+        revision: savedState.revision,
+        source: sourceB,
+        sourceRevision,
+      };
+      const endpoint = '/api/trip/post-image-source';
+      // This URL is absent from the new saved document. It remains in a real
+      // immutable snapshot, which must belong to this exact post and collection.
+      expect(
+        (
+          await page.request.post(endpoint, {
+            headers,
+            data: { ...request, sourceRevision: undefined },
+          })
+        ).status(),
+      ).toBe(400);
+      expect(
+        (
+          await page.request.post(endpoint, {
+            headers,
+            data: { ...request, revision: saved.revision },
+          })
+        ).status(),
+      ).toBe(409);
+      expect(
+        (
+          await page.request.post(endpoint, {
+            headers,
+            data: { ...request, sourceRevision: '01K00000000000000000000000' },
+          })
+        ).status(),
+      ).toBe(400);
+      expect(
+        (
+          await page.request.post(endpoint, {
+            headers,
+            data: {
+              ...request,
+              source: 'https://legacy.example.invalid/invented.png',
+            },
+          })
+        ).status(),
+      ).toBe(400);
+      expect(
+        (await page.request.post(endpoint, { data: request })).status(),
+      ).toBe(403);
+      const anonymous = await page.context().browser()?.newContext();
+      if (!anonymous) throw new Error('Browser required');
+      try {
+        expect(
+          (
+            await anonymous.request.post('http://127.0.0.1:4391' + endpoint, {
+              headers,
+              data: request,
+            })
+          ).status(),
+        ).toBe(401);
+      } finally {
+        await anonymous.close();
+      }
+      const native = z.object({
+        data: z.object({
+          _rev: z.string(),
+          item: z.object({
+            id: z.string(),
+            draftRevisionId: z.string().nullish(),
+          }),
+        }),
+      });
+      const other = native.parse(
+        await (
+          await page.request.post('/_emdash/api/content/posts', {
+            headers,
+            data: { slug: 'synthetic-other-history', data },
+          })
+        ).json(),
+      ).data;
+      expect(
+        (
+          await page.request.post(endpoint, {
+            headers,
+            data: { ...request, id: other.item.id, revision: other._rev },
+          })
+        ).status(),
+      ).toBe(400);
+      const beer = native.parse(
+        await (
+          await page.request.post('/_emdash/api/content/beers', {
+            headers,
+            data: {
+              slug: 'synthetic-history-beer',
+              data: { title: 'Synthetic history', day: '2026-10-15', count: 0 },
+            },
+          })
+        ).json(),
+      ).data;
+      const changedBeer = native.parse(
+        await (
+          await page.request.put(`/_emdash/api/content/beers/${beer.item.id}`, {
+            headers,
+            data: {
+              _rev: beer._rev,
+              data: { title: 'Synthetic history', day: '2026-10-15', count: 1 },
+            },
+          })
+        ).json(),
+      ).data;
+      if (!changedBeer.item.draftRevisionId)
+        throw new Error('Native beer revision required');
+      expect(
+        (
+          await page.request.post(endpoint, {
+            headers,
+            data: {
+              ...request,
+              sourceRevision: changedBeer.item.draftRevisionId,
+            },
+          })
+        ).status(),
+      ).toBe(400);
+    }
+    expect(acquiredB).toBe(0); // Deleting an unavailable source must not acquire it.
+    expect(uploaded).toBe(images.length - 1);
+    await editor.focus();
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(editor.locator('img')).toHaveCount(images.length);
+    await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText(
+      'Could not import the saved image. Try again.',
+    );
+    // A genuine partial failure remains retryable without importing A again.
+    rejectRestored = false;
+    await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+    try {
+      await expect(page.getByRole('status')).toHaveText('draft saved');
+    } finally {
+      if (process.env.HISTORY_IMAGE_SCREENSHOT)
+        await page.screenshot({
+          path: `${process.env.HISTORY_IMAGE_SCREENSHOT}-${String(images.length)}.png`,
+        });
+    }
+    await editor.focus();
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(editor.locator('img')).toHaveCount(images.length - 1);
+    await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('draft saved');
+    await editor.focus();
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(editor.locator('img')).toHaveCount(images.length);
+    await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
+    await expect(page.getByRole('status')).toHaveText('published');
+    if (process.env.HISTORY_IMAGE_SCREENSHOT)
+      await page.screenshot({
+        path: `${process.env.HISTORY_IMAGE_SCREENSHOT}-published-${String(images.length)}.png`,
+      });
+    for (const image of await editor.locator('img').all())
+      await expect(image).toHaveAttribute(
+        'src',
+        /^\/_emdash\/api\/media\/asset\//,
+      );
+    expect(acquiredA).toBe(images.length - 1);
+    expect(acquiredB).toBe(1);
+    expect(uploaded).toBe(images.length);
+    await page.reload();
+    await expect(editor.locator('img')).toHaveCount(images.length);
+  });
+}

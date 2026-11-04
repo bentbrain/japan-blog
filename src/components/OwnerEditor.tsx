@@ -105,6 +105,7 @@ function EditorForm({
   const importedSavedImages = useRef({
     postId: post.id,
     assets: new Map<string, Awaited<ReturnType<typeof uploadPostPhoto>>>(),
+    revisions: new Map<string, string>(),
   });
   const media = useQuery({
     ...ownerMediaQuery,
@@ -230,7 +231,12 @@ function EditorForm({
     if (importedSavedImages.current.postId !== post.id) {
       importedSavedImages.current.postId = post.id;
       importedSavedImages.current.assets.clear();
+      importedSavedImages.current.revisions.clear();
     }
+    for (const [source, revisionId] of Object.entries(
+      post.imageSourceRevisions,
+    ))
+      importedSavedImages.current.revisions.set(source, revisionId);
     const sources = new Set<string>();
     editor.state.doc.descendants((node) => {
       const source: unknown = node.attrs.mediaId;
@@ -257,6 +263,7 @@ function EditorForm({
             id: post.id,
             revision: post.revision,
             source,
+            sourceRevision: importedSavedImages.current.revisions.get(source),
           }),
           signal: AbortSignal.timeout(45_000),
         });
