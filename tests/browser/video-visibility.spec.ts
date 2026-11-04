@@ -1,5 +1,6 @@
 import { test, expect, type Locator } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 const createdSchema = z.object({
   data: z.object({ item: z.object({ id: z.string() }), _rev: z.string() }),
@@ -244,6 +245,14 @@ async function state(video: Locator) {
 test('media viewer stays paused offscreen and starts muted when scrolled into view', async ({
   page,
 }) => {
+  const requests: string[] = [];
+  page.on('request', (request) => {
+    if (
+      request.url().includes('/demo/visibility-') &&
+      request.url().includes('.mp4')
+    )
+      requests.push(request.url());
+  });
   const item = media[0];
   if (!item) throw new Error('Fixture required');
   await page.addInitScript(() => {
@@ -257,10 +266,14 @@ test('media viewer stays paused offscreen and starts muted when scrolled into vi
   const video = page.locator('.viewer video');
   await expect(video).toHaveCount(1);
   expect((await state(video)).paused).toBe(true);
+  // Allow the browser's speculative loader a chance to fetch hidden metadata.
+  await page.waitForTimeout(500);
+  expect(requests).toEqual([]);
   await video.scrollIntoViewIfNeeded();
   await expect.poll(async () => (await state(video)).paused).toBe(false);
   await expect.poll(async () => (await state(video)).time).toBeGreaterThan(0.2);
   expect((await state(video)).muted).toBe(true);
+  expect(requests.length).toBeGreaterThan(0);
 });
 
 async function moving(video: Locator) {
@@ -333,6 +346,14 @@ for (const width of [390, 1280]) {
   test(`carousel selection and clipped public galleries pause inactive video at ${String(width)}px`, async ({
     page,
   }) => {
+    const requested = new Set<string>();
+    page.on('request', (request) => {
+      if (
+        request.url().includes('/demo/visibility-') &&
+        request.url().includes('.mp4')
+      )
+        requested.add(new URL(request.url()).pathname);
+    });
     await page.setViewportSize({ width, height: 800 });
     for (const path of ['/']) {
       await page.goto(path);
@@ -353,10 +374,33 @@ for (const width of [390, 1280]) {
       await videos.first().scrollIntoViewIfNeeded();
       await moving(videos.first());
       await stopped(videos.nth(1));
+      if (process.env.VIDEO_LOADING_EVIDENCE) {
+        await videos.first().evaluate((element) => {
+          if (element instanceof HTMLVideoElement) {
+            element.pause();
+            element.currentTime = 0;
+          }
+        });
+        await page.evaluate(() => document.fonts.ready);
+        await carousel.screenshot({
+          path: join(
+            process.env.VIDEO_LOADING_EVIDENCE,
+            `carousel-${String(width)}.png`,
+          ),
+          animations: 'disabled',
+        });
+      }
+      expect(requested).toEqual(new Set(['/demo/visibility-portrait.mp4']));
       await carousel.getByRole('button', { name: 'Next slide' }).click();
       await videos.nth(1).scrollIntoViewIfNeeded();
       await moving(videos.nth(1));
       await stopped(videos.first());
+      expect(requested).toEqual(
+        new Set([
+          '/demo/visibility-portrait.mp4',
+          '/demo/visibility-landscape.mp4',
+        ]),
+      );
       await carousel.getByRole('button', { name: 'Previous slide' }).click();
       await videos.first().scrollIntoViewIfNeeded();
       await moving(videos.first());
@@ -456,10 +500,13 @@ test('pending automatic play cannot restart an offscreen or removed video', asyn
         this.addEventListener(
           'release-pending-play',
           () => {
-            void this.play().then(() => {
-              this.setAttribute('data-pending-play', 'settled');
-              resolve();
-            }, reject);
+            // Pausing before the first bytes arrive legitimately aborts play.
+            // Both completion paths must settle before testing the stopped clock.
+            void this.play()
+              .then(resolve, reject)
+              .finally(() => {
+                this.setAttribute('data-pending-play', 'settled');
+              });
           },
           { once: true },
         );
@@ -591,14 +638,36 @@ test('owner layouts and unrelated preview videos do not join public playback', a
 
 test('native rich-text public video joins the shared controller without a second media element', async ({
   page,
+  browser,
+  baseURL,
 }) => {
   await page.goto(`/posts/${postSlug}`);
   const video = page.locator('.rich-text .emdash-video video');
   await expect(video).toHaveCount(1);
+  await expect(video).toHaveAttribute('preload', 'none');
   await video.scrollIntoViewIfNeeded();
   await moving(video);
   expect((await state(video)).muted).toBe(true);
   expect((await state(video)).loop).toBe(true);
+  // Native controls remain usable without the visibility controller or React.
+  const context = await browser.newContext({
+    javaScriptEnabled: false,
+    baseURL,
+  });
+  try {
+    const fallback = await context.newPage();
+    await fallback.goto(`/media/${nativeId}`);
+    const player = fallback.locator('.viewer video');
+    await expect(player).toHaveAttribute('controls', '');
+    await expect(player).toHaveAttribute('preload', 'none');
+    expect((await state(player)).paused).toBe(true);
+    await player.press('Space');
+    await moving(player);
+    await player.press('Space');
+    await stopped(player);
+  } finally {
+    await context.close();
+  }
 });
 
 for (const target of ['video', 'ancestor']) {
