@@ -47,6 +47,12 @@ test('an existing URL image is imported before republishing without weakening me
             asset: { _ref: 'https://legacy.example.invalid/synthetic.png' },
             alt: 'Synthetic saved image',
           },
+          {
+            _type: 'image',
+            _key: 'legacy-image-two',
+            asset: { _ref: 'https://legacy.example.invalid/second.png' },
+            alt: 'Second synthetic saved image',
+          },
         ],
       },
     },
@@ -105,7 +111,7 @@ test('an existing URL image is imported before republishing without weakening me
       data: new Uint8Array(160 * 80 * 3).fill(80),
     }),
   );
-  await page.route('https://legacy.example.invalid/synthetic.png', (route) =>
+  await page.route('https://legacy.example.invalid/*.png', (route) =>
     route.fulfill({ contentType: 'image/png', body: graphic }),
   );
   // Source acquisition is isolated; preparation, upload, stored-reference save
@@ -135,16 +141,19 @@ test('an existing URL image is imported before republishing without weakening me
   });
   await page.goto(`/owner/posts/${id}`);
   const editor = page.getByRole('textbox', { name: 'Post content' });
-  await expect(editor.locator('img')).toHaveCount(1);
+  await expect(editor.locator('img')).toHaveCount(2);
   await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText(
     'Could not import the saved image. Try again.',
   );
   expect(uploads).toBe(0);
-  await expect(editor.locator('img')).toHaveAttribute(
+  await expect(editor.locator('img').first()).toHaveAttribute(
     'src',
     'https://legacy.example.invalid/synthetic.png',
   );
+  await editor.locator('p').first().click();
+  await page.keyboard.insertText(' owner edit');
+  await expect(editor).toContainText(' owner edit');
   rejectSource = false;
   const uploaded = page.waitForResponse(
     (response) =>
@@ -176,10 +185,28 @@ test('an existing URL image is imported before republishing without weakening me
     z.object({ data: z.object({ title: z.string() }) }).parse(nextSave).data
       .title,
   ).toBe('Edited during source import');
+  // Internal imports must never consume Undo or reappear through Redo.
+  await editor.focus();
+  await page.keyboard.press('ControlOrMeta+z');
+  for (let index = 0; index < 2; index++)
+    await expect(editor.locator('img').nth(index)).toHaveAttribute(
+      'src',
+      /^\/_emdash\/api\/media\/asset\//,
+    );
+  await expect(editor).not.toContainText(' owner edit');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect(editor).toContainText(' owner edit');
+  for (let index = 0; index < 2; index++)
+    await expect(editor.locator('img').nth(index)).toHaveAttribute(
+      'src',
+      /^\/_emdash\/api\/media\/asset\//,
+    );
+  await page.getByRole('button', { name: 'SAVE DRAFT', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('draft saved');
   const displayUrl = z
     .object({ sourceUrl: z.string() })
     .parse(await (await uploaded).json()).sourceUrl;
-  const imageUrl = await editor.locator('img').getAttribute('src');
+  const imageUrl = await editor.locator('img').first().getAttribute('src');
   if (!imageUrl) throw new Error('Imported image required');
   const anonymous = await browser.newContext();
   try {
@@ -210,17 +237,17 @@ test('an existing URL image is imported before republishing without weakening me
   if (process.env.LEGACY_IMAGE_SCREENSHOT)
     await page.screenshot({ path: process.env.LEGACY_IMAGE_SCREENSHOT });
   await expect(page.getByRole('status')).toHaveText('published');
-  await expect(editor.locator('img')).toHaveAttribute(
+  await expect(editor.locator('img').first()).toHaveAttribute(
     'src',
     /^\/_emdash\/api\/media\/asset\//,
   );
   await page.reload();
-  await expect(editor.locator('img')).toHaveAttribute(
+  await expect(editor.locator('img').first()).toHaveAttribute(
     'src',
     /^\/_emdash\/api\/media\/asset\//,
   );
   await page.getByRole('button', { name: 'PUBLISH', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('published');
-  expect(imports).toBe(2);
-  expect(uploads).toBe(1);
+  expect(imports).toBe(3);
+  expect(uploads).toBe(2);
 });

@@ -269,7 +269,11 @@ function EditorForm({
       });
       // Reconciliation is part of this save, not a newer owner edit. Keep it
       // dirty until the save succeeds without advancing the owner edit counter.
-      editor.view.dispatch(transaction.setMeta('preventUpdate', true));
+      editor.view.dispatch(
+        transaction
+          .setMeta('preventUpdate', true)
+          .setMeta('addToHistory', false),
+      );
       setDirty(true);
     }
   }
