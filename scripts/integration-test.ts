@@ -157,8 +157,17 @@ async function run() {
   assert.ok(ready, logs);
   for (const path of ['/.env', '/.git/config', '/wp-login.php']) {
     const response = await fetch(base + path);
+    const body = await response.text();
+    // A checkout has a .git directory; a worktree has a .git file. Vite can
+    // reject the former before forwarding it to the Worker. Verify that denial
+    // explicitly rather than requiring the request to bypass Vite's protection.
+    if (path === '/.git/config' && response.status === 403) {
+      assert.match(body, /<h1>403 Restricted<\/h1>/);
+      assert.match(body, /outside of Vite serving allow list/);
+      continue;
+    }
     assert.equal(response.status, 404, path);
-    assert.equal(await response.text(), '', `CMS rendered probe ${path}`);
+    assert.equal(body, '', `CMS rendered probe ${path}`);
     assert.equal(response.headers.get('Cache-Control'), 'no-store');
   }
   console.log(
