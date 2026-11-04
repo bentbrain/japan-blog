@@ -5,6 +5,14 @@ import { fileURLToPath } from 'node:url';
 // the shared browser server keep the application's ordinary configuration.
 export default {
   ...base,
+  // This server runs beside the shared browser server. Its distinct config
+  // must not replace that server's optimized React, Tiptap or Workers modules.
+  vite: {
+    ...base.vite,
+    cacheDir: fileURLToPath(
+      new URL('../../node_modules/.vite-map-library', import.meta.url),
+    ),
+  },
   integrations: [
     ...base.integrations,
     {
