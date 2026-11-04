@@ -155,6 +155,12 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.ok(ready, logs);
+  for (const path of ['/.env', '/.git/config', '/wp-login.php']) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 404, path);
+    assert.equal(await response.text(), '', `CMS rendered probe ${path}`);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  }
   console.log(
     JSON.stringify({
       phase: 'integration-server-ready',

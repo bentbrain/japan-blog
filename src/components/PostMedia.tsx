@@ -109,7 +109,7 @@ export function PostMedia({
                   poster={posterUrl(item)}
                   controls
                   playsInline
-                  preload="metadata"
+                  preload="none"
                   aria-label={item.title}
                   className="block size-full object-contain"
                 />

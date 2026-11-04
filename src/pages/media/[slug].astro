@@ -3,7 +3,7 @@ import Site from '../../layouts/Site.astro';
 import { buttonVariants } from '../../components/ui/button';
 import ShopAd from '../../components/ShopAd.astro';
 import { tripMedia } from '../../lib/content';
-import { mediaUrl, formatDay, tokyoDay } from '../../lib/model';
+import { mediaUrl, posterUrl, formatDay, tokyoDay } from '../../lib/model';
 import { responsiveImage } from '../../lib/responsive-image';
 import { isJapanMapLocation } from '../../lib/map';
 const media = await tripMedia();
@@ -42,9 +42,10 @@ const previous = media[(index - 1 + media.length) % media.length],
         muted
         loop
         src={mediaUrl(item)}
+        poster={posterUrl(item)}
         controls
         playsinline
-        preload="metadata"
+        preload="none"
         aria-label={item.title}
       ></video>
     ) : (

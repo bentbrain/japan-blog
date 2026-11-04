@@ -12,6 +12,11 @@ type ExportedHandlerScheduledHandler<
   E = unknown,
   P = unknown,
 > = import('@cloudflare/workers-types').ExportedHandlerScheduledHandler<E, P>;
+type ExportedHandlerFetchHandler<
+  E = unknown,
+  M = unknown,
+  P = unknown,
+> = import('@cloudflare/workers-types').ExportedHandlerFetchHandler<E, M, P>;
 
 declare namespace App {
   interface Locals {

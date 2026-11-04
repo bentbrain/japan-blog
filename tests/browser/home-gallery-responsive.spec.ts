@@ -253,18 +253,6 @@ async function openGallery(page: Page, route = 'home') {
       }),
     ),
   );
-  await expect
-    .poll(() =>
-      card
-        .locator('video')
-        .evaluateAll((videos) =>
-          videos.every(
-            (video) =>
-              video instanceof HTMLVideoElement && video.readyState >= 1,
-          ),
-        ),
-    )
-    .toBe(true);
   await card.evaluate((element) => {
     window.scrollTo(
       0,
@@ -347,6 +335,16 @@ for (const route of ['home']) {
         const media = slide.locator('.media-tile img, video');
         if (i < 4) {
           await expect(media).toHaveCSS('object-fit', 'contain');
+          // Selecting a video starts playback; inactive slides need no metadata.
+          await expect
+            .poll(() =>
+              media.evaluate((element) =>
+                element instanceof HTMLVideoElement
+                  ? element.readyState >= 1
+                  : element instanceof HTMLImageElement && element.complete,
+              ),
+            )
+            .toBe(true);
           const dimensions = await media.evaluate((element) => ({
             width:
               element instanceof HTMLVideoElement

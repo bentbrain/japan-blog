@@ -25,7 +25,7 @@ const photo = Astro.locals.privateMediaRender
       poster={posterUrl(item)}
       controls
       playsinline
-      preload="metadata"
+      preload="none"
       aria-label={item.title}
     ></video>
     {!inline && (
