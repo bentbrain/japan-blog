@@ -205,6 +205,18 @@ async function run() {
       /<section data-feedback-id="newsletter-signup"[\s\S]*?<\/section>/,
     )?.[0];
     assert.ok(signup, `Missing public signup on ${path}`);
+    assert.equal(
+      (html.match(/data-feedback-id="newsletter-signup"/g) ?? []).length,
+      1,
+    );
+    const footerStart = html.indexOf('<footer');
+    const signupStart = html.indexOf('data-feedback-id="newsletter-signup"');
+    if (path === '/') {
+      assert.ok(signupStart < html.indexOf('journal-map-card'));
+      assert.ok(signupStart < footerStart);
+    } else {
+      assert.ok(signupStart > footerStart);
+    }
     assert.ok(!signup.includes('<h2'), `Visible newsletter heading on ${path}`);
     assert.ok(
       !signup.includes('get new journal entries by email.'),
