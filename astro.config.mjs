@@ -6,10 +6,24 @@ import { defineConfig } from 'astro/config';
 import emdash from 'emdash/astro';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
+import { builtinModules, createRequire } from 'node:module';
+
+// Use Astro's own Vite/Rolldown version for the native build plugin.
+const astroRequire = createRequire(import.meta.resolve('astro'));
+const { esmExternalRequirePlugin } = astroRequire('vite');
+const workerBuiltins = esmExternalRequirePlugin({
+  external: builtinModules.flatMap((name) => [name, `node:${name}`]),
+});
+workerBuiltins.apply = 'build';
+workerBuiltins.applyToEnvironment = (environment) =>
+  environment.config.consumer === 'server';
+
 export default defineConfig({
   site: 'https://jp.bent.build',
   output: 'server',
-  vite: { plugins: [tailwindcss()] },
+  vite: {
+    plugins: [workerBuiltins, tailwindcss()],
+  },
   adapter: cloudflare({
     imageService: 'passthrough',
     persistState: process.env.TEST_EPHEMERAL === '1' ? false : undefined,
